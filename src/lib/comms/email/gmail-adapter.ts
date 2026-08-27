@@ -18,7 +18,8 @@ export function createGmailSyncPorts(params: {
   connectedEmail: string
   accessToken: string
 }): SyncPorts {
-  const gmail = GmailClient.forAccessToken(params.accessToken)
+  // GMAIL_MOCK_URL routes the client at the Gmail mock in Gate-1 isolation.
+  const gmail = GmailClient.forAccessToken(params.accessToken, process.env.GMAIL_MOCK_URL)
   return {
     connectedEmail: params.connectedEmail,
     listThreadIds: (query) => gmail.listThreadIds(query),

@@ -9,10 +9,12 @@ import { parseGmailMessage, type ParsedEmail } from './parse'
 export class GmailClient {
   constructor(private readonly gmail: gmail_v1.Gmail) {}
 
-  static forAccessToken(accessToken: string): GmailClient {
+  // `rootUrl` points the googleapis client at a mock server (Gate-1 isolation);
+  // omit for the real Gmail API.
+  static forAccessToken(accessToken: string, rootUrl?: string): GmailClient {
     const auth = new google.auth.OAuth2()
     auth.setCredentials({ access_token: accessToken })
-    return new GmailClient(google.gmail({ version: 'v1', auth }))
+    return new GmailClient(google.gmail({ version: 'v1', auth, rootUrl }))
   }
 
   /** All thread ids matching `query`, following pagination. */

@@ -115,10 +115,17 @@ export function parseGmailMessage(msg: GmailMessageLike): ParsedEmail {
     .map((s) => s.trim())
     .filter(Boolean)
 
+  // Key on the RFC5322 Message-ID header (falling back to the Gmail API id when a
+  // message lacks one). This is what makes sent-mail dedup work: the outbound
+  // send path pre-sets this exact header, so when the Sent-folder copy syncs back
+  // it resolves to the same providerMessageId and the @unique constraint
+  // short-circuits the insert. See docs/agent-d-handoff.md.
+  const messageIdHeader = headers['message-id']
+
   return {
-    providerMessageId: `gmail:${id}`,
+    providerMessageId: `gmail:${messageIdHeader ?? id}`,
     providerThreadId: `gmail:${threadId}`,
-    messageIdHeader: headers['message-id'],
+    messageIdHeader,
     inReplyTo: headers['in-reply-to'],
     references,
     fromAddress: firstAddress(headers['from']),

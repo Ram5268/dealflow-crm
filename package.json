@@ -27,7 +27,10 @@
     "mock:compliance": "tsx contracts/mocks/compliance/server.ts",
     "mocks:up": "tsx contracts/mocks/index.ts",
     "boot-standalone": "tsx scripts/boot-standalone.ts",
-    "boot:all": "tsx scripts/boot-all.ts"
+    "boot:all": "tsx scripts/boot-all.ts",
+    "mocks:start": "tsx scripts/mocks-start.ts",
+    "comms:isolated": "tsx scripts/comms-isolated.ts",
+    "gate1:smoke": "tsx scripts/gate1-smoke.ts"
   },
   "keywords": [],
   "author": "",

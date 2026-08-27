@@ -71,7 +71,8 @@ describe('parseGmailMessage', () => {
 
   it('normalizes headers, addresses, thread/message ids, bodies, and date', () => {
     const p = parseGmailMessage(msg)
-    expect(p.providerMessageId).toBe('gmail:abc123')
+    // providerMessageId keys on the Message-ID header (dedup design), not the API id.
+    expect(p.providerMessageId).toBe('gmail:<m-1@mail.gmail.com>')
     expect(p.providerThreadId).toBe('gmail:thread9')
     expect(p.fromAddress).toBe('ryan@elliman.com')
     expect(p.toAddresses).toEqual(['alice@example.com', 'bob@example.com'])
