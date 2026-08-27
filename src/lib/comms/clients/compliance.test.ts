@@ -73,4 +73,23 @@ describe('addInternalDnc', () => {
     fetchMock.mockResolvedValue({ ok: false, status: 502, json: async () => ({}) })
     await expect(addInternalDnc({ phone: '+1' })).rejects.toThrow(/HTTP 502/)
   })
+
+  it('fills every default when C returns an empty 201 body', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 201, json: async () => ({}) })
+    const r = await addInternalDnc({ phone: '+15551239999' })
+    expect(r.id).toBe('')
+    expect(r.phone).toBe('+15551239999')
+    expect(r.source).toBe('internal')
+    expect(typeof r.addedAt).toBe('string')
+    expect(r.added).toBe(true)
+  })
+})
+
+describe('scrub — malformed body', () => {
+  it('fails closed when results is not an array', async () => {
+    fetchMock.mockResolvedValue(ok({ results: 'nope' }))
+    const r = await scrub(['+15551112222'])
+    expect(r[0].callable).toBe(false)
+    expect(r[0].reasons).toEqual(['vendor_error'])
+  })
 })

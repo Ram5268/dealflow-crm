@@ -4,12 +4,21 @@ import type { ThreadAggregate } from './thread-reconstruct'
 
 const db = vi.hoisted(() => ({
   contactEmail: { findMany: vi.fn() },
-  message: { findMany: vi.fn(), createMany: vi.fn() },
+  message: { findMany: vi.fn(), createMany: vi.fn(), findUnique: vi.fn() },
   emailThread: { upsert: vi.fn() },
+  oAuthCredential: { update: vi.fn() },
 }))
+const events = vi.hoisted(() => ({ notifyMessageReceived: vi.fn() }))
 vi.mock('../../prisma', () => ({ prisma: db }))
+vi.mock('../events', () => events)
 
-import { resolveContact, saveMessages, upsertThread } from './gmail-adapter'
+import {
+  resolveContact,
+  saveMessages,
+  upsertThread,
+  emitMessageReceived,
+  createGmailSyncPorts,
+} from './gmail-adapter'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -119,5 +128,60 @@ describe('upsertThread', () => {
     expect(arg.update.contactId).toBe('cA')
     expect(arg.update.leadId).toBe('lA')
     expect(arg.where).toEqual({ providerThreadId: 'gmail:T' })
+  })
+})
+
+describe('emitMessageReceived', () => {
+  it('looks up the row id and NOTIFYs the message.received shape', async () => {
+    db.message.findUnique.mockResolvedValue({ id: 'db1' })
+    await emitMessageReceived({ ...row('gmail:<x>'), contactId: 'c1', leadId: 'l1' })
+    expect(events.notifyMessageReceived).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'db1', channel: 'email', contactId: 'c1', leadId: 'l1' }),
+    )
+  })
+
+  it('skips the NOTIFY when the row is missing', async () => {
+    db.message.findUnique.mockResolvedValue(null)
+    await emitMessageReceived(row('gmail:<y>'))
+    expect(events.notifyMessageReceived).not.toHaveBeenCalled()
+  })
+})
+
+describe('createGmailSyncPorts', () => {
+  it('wires a SyncPorts object', () => {
+    const ports = createGmailSyncPorts({
+      orgId: 'o',
+      credentialId: 'cred',
+      connectedEmail: 'ryan@elliman.com',
+      accessToken: 'AT',
+    })
+    expect(ports.connectedEmail).toBe('ryan@elliman.com')
+    expect(typeof ports.listThreadIds).toBe('function')
+    expect(typeof ports.resolveContact).toBe('function')
+    expect(typeof ports.upsertThread).toBe('function')
+    expect(typeof ports.setHistoryId).toBe('function')
+  })
+
+  it('the DB-backed ports delegate to the module functions', async () => {
+    db.contactEmail.findMany.mockResolvedValue([])
+    db.emailThread.upsert.mockResolvedValue({ id: 'tid' })
+    db.message.findMany.mockResolvedValue([])
+    db.message.findUnique.mockResolvedValue({ id: 'db1' })
+    db.oAuthCredential.update.mockResolvedValue({})
+
+    const ports = createGmailSyncPorts({
+      orgId: 'o',
+      credentialId: 'cred',
+      connectedEmail: 'r@e.com',
+      accessToken: 'AT',
+    })
+    expect(await ports.resolveContact(['x@y.com'])).toBeNull()
+    expect(await ports.upsertThread(agg({}))).toEqual({ id: 'tid' })
+    expect(await ports.saveMessages([])).toEqual({ insertedIds: [] })
+    await ports.emitMessageReceived(row('gmail:<z>'))
+    await ports.setHistoryId('999')
+    expect(db.oAuthCredential.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'cred' }, data: { gmailHistoryId: '999' } }),
+    )
   })
 })

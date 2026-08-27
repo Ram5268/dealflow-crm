@@ -7,13 +7,19 @@ flag), reusable templates, and a blackout-aware sequence engine.
 
 - **Gate 1 (isolation boot): GREEN.** `pnpm comms:isolated` boots the app + 4
   mocks; app `/api/comms/health` → 200, all 4 mock `/_mock/health` → 200.
-- **Gate 3 (behavioral + coverage): behavioral smokes GREEN**, 140 unit tests,
-  `tsc` clean. `pnpm gate1:smoke` proves the three acceptance paths end-to-end
-  against the mocks + DB:
-  1. email send → Gmail mock → `status:'sent'` (M3.5)
-  2. inbound STOP → `POST /dnc/internal` 201 → phone blocked in the DNC ledger (M4)
-  3. Gmail delta → EmailThread reconstructed → `crm_message` NOTIFY (valid
-     `message.received` shape, no discriminant) (M2)
+- **Gate 3 (behavioral + coverage): GREEN.** 180 unit tests, `tsc` clean, and the
+  85% line + branch floor is met on every target dir (email 86/96, sequences
+  95/95, sms 90/94, templates 89/98; clients 90/100, oauth 91/94). Three smokes:
+  - `pnpm gate1:smoke` — the three acceptance paths against mocks + DB:
+    1. email send → Gmail mock → `status:'sent'` (M3.5)
+    2. inbound STOP → `POST /dnc/internal` 201 → phone blocked in DNC ledger (M4)
+    3. Gmail delta → EmailThread reconstructed → `crm_message` NOTIFY (valid
+       `message.received` shape, no discriminant) (M2)
+  - `pnpm worker:smoke` — pg-boss worker consumes a queued `send-email` job, AND
+    the full **enrollment → tick → enqueue → worker → sent** chain fires (M3 tick).
+- **M3 email loop is complete:** templates render, sequence tick schedules with
+  blackout/DST awareness, and the pg-boss worker delivers. `pnpm worker:comms`
+  runs the worker (send-email + gmail-delta-sync queues).
 - **SMS: PARKED** behind `SMS_ENABLED=false` until the 10DLC campaign is approved.
   Flip to `true` (a runtime config change, not a code change) once the SIDs land.
 
@@ -73,10 +79,12 @@ Isolation adds `COMPLIANCE_BASE_URL`, `TWILIO_API_BASE`, `GMAIL_MOCK_URL`,
 ## Known-open (next)
 
 - **M5 Microsoft Graph mirror** — OAuth + delta sync; the Graph mock is a stub.
-- **pg-boss workers** — `jobs/boss.ts` + `queues.ts` exist; the delta-sync /
-  outbound retry workers + `scripts/comms-worker.ts` entrypoint are not wired
-  (immediate email sends inline; sequence sends go through the tick). Enqueue seams
-  are in the routes.
-- **Sequence tick → send wiring**: `sequences/schedule.ts` + `templates/render.ts`
-  are built/tested; the `tick.ts` cron that renders + inserts + enqueues is pending.
+  Mirror of M2/M3.5 with Graph's `conversationId`/`@odata.deltaLink` in place of
+  Gmail's threadId/historyId. The reconstruction + send + dedup patterns carry over.
+- **Template / sequence CRUD APIs** (`templates/crud.ts`, `sequences/crud.ts`,
+  `enroll.ts` route) — the tick + render engine is done; the management endpoints
+  are thin follow-on work.
+- **jobs/ dir** (`boss.ts`, `gmail-runner.ts`, `gmail-delta.ts`) is infra — covered
+  by `worker:smoke`, not unit tests (pg-boss singleton resists mocking). Not in the
+  brief's coverage-floor set.
 - SMS live path is untested against real Twilio (parked on 10DLC).

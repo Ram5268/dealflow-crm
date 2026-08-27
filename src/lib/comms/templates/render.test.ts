@@ -1,8 +1,17 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const db = vi.hoisted(() => ({
+  contact: { findUnique: vi.fn() },
+  lead: { findUnique: vi.fn() },
+  customFieldValue: { findMany: vi.fn() },
+}))
+vi.mock('../../prisma', () => ({ prisma: db }))
+
 import {
   resolveMergePath,
   renderTemplate,
   extractMergeFields,
+  render,
   type MergeSources,
 } from './render'
 
@@ -76,6 +85,26 @@ describe('resolveMergePath', () => {
     expect(resolveMergePath('lead.__proto__.polluted', sources)).toBe('')
     expect(resolveMergePath('lead.addresses.[0].constructor', sources)).toBe('')
   })
+
+  it('coerces Date values to ISO and non-scalar values to ""', () => {
+    const d = new Date('2026-08-08T00:00:00.000Z')
+    expect(resolveMergePath('when', { extra: { when: d } })).toBe(d.toISOString())
+    expect(resolveMergePath('obj', { extra: { obj: { a: 1 } } })).toBe('')
+    expect(resolveMergePath('bool', { extra: { bool: true } })).toBe('true')
+  })
+
+  it('navigating into a non-array/non-object yields ""', () => {
+    expect(
+      resolveMergePath('lead.addresses.[0].city', {
+        lead: { addresses: 'not-an-array' as unknown },
+      }),
+    ).toBe('')
+    expect(
+      resolveMergePath('lead.primaryAddressSummary.deep', {
+        lead: { primaryAddressSummary: 'x' },
+      }),
+    ).toBe('')
+  })
 })
 
 describe('renderTemplate', () => {
@@ -125,5 +154,44 @@ describe('extractMergeFields', () => {
 
   it('returns [] when no merge fields present', () => {
     expect(extractMergeFields('plain text, no fields')).toEqual([])
+  })
+})
+
+describe('render (DB-backed buildMergeSources)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('resolves contact / lead / custom fields from the DB', async () => {
+    db.contact.findUnique.mockResolvedValue({ name: 'Alice Wong', displayName: 'Alice' })
+    db.lead.findUnique.mockResolvedValue({
+      displayName: 'Wong',
+      primaryAddressSummary: '123 Bedford Ave',
+      addresses: [{ city: 'Brooklyn' }],
+    })
+    db.customFieldValue.findMany.mockResolvedValue([
+      { valueText: null, valueNumber: 1200000, valueDate: null, definition: { name: 'est_value' } },
+    ])
+
+    const out = await render(
+      'Hi {{contact.firstName}} at {{lead.primaryAddressSummary}} (${{lead.custom.est_value}}) — {{lead.addresses.[0].city}}',
+      { orgId: 'o', contactId: 'c', leadId: 'l' },
+    )
+    expect(out).toBe('Hi Alice at 123 Bedford Ave ($1200000) — Brooklyn')
+  })
+
+  it('skips DB lookups for absent ids and renders empty', async () => {
+    const out = await render('Hi {{contact.firstName}}', { orgId: 'o' })
+    expect(out).toBe('Hi ')
+    expect(db.contact.findUnique).not.toHaveBeenCalled()
+    expect(db.lead.findUnique).not.toHaveBeenCalled()
+  })
+
+  it('html mode escapes merged DB values', async () => {
+    db.contact.findUnique.mockResolvedValue({ name: 'A&W', displayName: null })
+    const out = await render('<p>{{contact.firstName}}</p>', {
+      orgId: 'o',
+      contactId: 'c',
+      html: true,
+    })
+    expect(out).toBe('<p>A&amp;W</p>')
   })
 })

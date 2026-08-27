@@ -8,6 +8,9 @@ const db = vi.hoisted(() => ({
 }))
 vi.mock('../../prisma', () => ({ prisma: db }))
 
+const gmailOAuth = vi.hoisted(() => ({ refreshAccessToken: vi.fn() }))
+vi.mock('../oauth/gmail', () => gmailOAuth)
+
 import { encryptToken } from '../oauth/crypto'
 import { buildRawMessage, generateMessageId, sendEmailMessage } from './send'
 
@@ -127,5 +130,28 @@ describe('sendEmailMessage', () => {
     db.message.findUnique.mockResolvedValue(emailMsg)
     db.oAuthCredential.findUnique.mockResolvedValue(null)
     await expect(sendEmailMessage('m1', { sender: vi.fn() })).rejects.toThrow(/no active Gmail credential/)
+  })
+
+  it('refreshes an expired access token before sending', async () => {
+    db.message.findUnique.mockResolvedValue(emailMsg)
+    db.oAuthCredential.findUnique.mockResolvedValue({
+      id: 'cred1',
+      emailAddress: 'ryan@e.com',
+      accessTokenEncrypted: encryptToken('AT-old'),
+      refreshTokenEncrypted: encryptToken('RT'),
+      expiresAt: new Date(Date.now() - 1000), // expired
+    })
+    db.oAuthCredential.update.mockResolvedValue({})
+    db.message.update.mockResolvedValue({})
+    gmailOAuth.refreshAccessToken.mockResolvedValue({
+      accessToken: 'AT-new',
+      expiresAt: new Date(Date.now() + 3_600_000),
+    })
+
+    const sender = vi.fn(async (_raw: string) => {})
+    const res = await sendEmailMessage('m1', { sender })
+    expect(gmailOAuth.refreshAccessToken).toHaveBeenCalledWith('RT')
+    expect(db.oAuthCredential.update).toHaveBeenCalled()
+    expect(res.status).toBe('sent')
   })
 })

@@ -30,7 +30,9 @@
     "boot:all": "tsx scripts/boot-all.ts",
     "mocks:start": "tsx scripts/mocks-start.ts",
     "comms:isolated": "tsx scripts/comms-isolated.ts",
-    "gate1:smoke": "tsx scripts/gate1-smoke.ts"
+    "gate1:smoke": "tsx scripts/gate1-smoke.ts",
+    "worker:comms": "tsx scripts/comms-worker.ts",
+    "worker:smoke": "tsx scripts/worker-smoke.ts"
   },
   "keywords": [],
   "author": "",
