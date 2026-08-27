@@ -9,7 +9,7 @@ export const CallCompletedEvent = z.object({
   callId: z.string(),
   disposition: z.enum([
     'answered', 'vm-answer', 'vm-left', 'busy',
-    'blocked', 'error', 'abandoned',
+    'blocked', 'error', 'abandoned', 'no-answer',
   ]),
   duration: z.number().int().nullable(), // seconds
   cost: z.string().nullable(), // decimal-as-string (see note above)

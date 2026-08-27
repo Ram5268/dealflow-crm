@@ -31,7 +31,10 @@ const DEMUX: Record<Channel, DemuxRule[]> = {
     { key: 'call.completed', predicate: (p) => has(p, 'callId') && has(p, 'disposition') },
     {
       key: 'dial-session.pacing-update',
-      predicate: (p) => has(p, 'dialSessionId') && has(p, 'currentLineCount'),
+      // Planner-authorized cross-slice hotfix (2026-08-27, PR #3): S5 amendment
+      // (§13 #6) renamed the payload fields; predicate now routes on the discriminant
+      // per the crm_call channel's type-based dispatch convention.
+      predicate: (p) => p.type === 'dial-session.pacing-update',
     },
   ],
   crm_message: [
