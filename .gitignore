@@ -8,3 +8,10 @@ coverage/
 .DS_Store
 .imports/
 backups/
+
+# iCloud shadow-file guard — repo lives in iCloud Drive, which silently creates
+# "* 2.ts" / "* 2.tsx" duplicate files that fool grep-based audits.
+**/* 2.ts
+**/* 2.tsx
+coverage-comms/
+**/* 2.md

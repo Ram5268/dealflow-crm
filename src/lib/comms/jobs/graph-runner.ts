@@ -1,0 +1,40 @@
+import { prisma } from '../../prisma'
+import {
+  getDecryptedAccessToken,
+  getDecryptedRefreshToken,
+  updateAccessToken,
+} from '../oauth/store'
+import { refreshAccessToken } from '../oauth/graph'
+import { createGraphSyncPorts } from '../email/graph-adapter'
+import { deltaSync, type SyncResult } from '../email/gmail-sync'
+
+/**
+ * Graph mirror of gmail-runner: load a msft-graph credential, refresh the token if
+ * stale, and run a delta sync. Graph's cursor is the `@odata.deltaLink`
+ * (`graphDeltaLink`); an empty cursor triggers the initial full delta.
+ */
+export async function runGraphSyncForCredential(
+  credentialId: string,
+): Promise<SyncResult | { skipped: true }> {
+  const cred = await prisma.oAuthCredential.findUnique({ where: { id: credentialId } })
+  if (!cred || cred.provider !== 'msft-graph' || cred.status !== 'active') {
+    return { skipped: true }
+  }
+
+  let accessToken = getDecryptedAccessToken(cred)
+  const refreshToken = getDecryptedRefreshToken(cred)
+  const expired = !cred.expiresAt || cred.expiresAt.getTime() < Date.now() + 60_000
+  if (refreshToken && expired) {
+    const r = await refreshAccessToken(refreshToken)
+    accessToken = r.accessToken
+    await updateAccessToken(cred.id, r.accessToken, r.expiresAt)
+  }
+
+  const ports = createGraphSyncPorts({
+    orgId: cred.organizationId,
+    credentialId: cred.id,
+    connectedEmail: cred.emailAddress ?? '',
+    accessToken,
+  })
+  return deltaSync(ports, cred.graphDeltaLink ?? '')
+}

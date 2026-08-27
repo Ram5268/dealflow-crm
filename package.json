@@ -27,7 +27,13 @@
     "mock:compliance": "tsx contracts/mocks/compliance/server.ts",
     "mocks:up": "tsx contracts/mocks/index.ts",
     "boot-standalone": "tsx scripts/boot-standalone.ts",
-    "boot:all": "tsx scripts/boot-all.ts"
+    "boot:all": "tsx scripts/boot-all.ts",
+    "mocks:start": "tsx scripts/mocks-start.ts",
+    "comms:isolated": "tsx scripts/comms-isolated.ts",
+    "gate1:smoke": "tsx scripts/gate1-smoke.ts",
+    "worker:comms": "tsx scripts/comms-worker.ts",
+    "worker:smoke": "tsx scripts/worker-smoke.ts",
+    "test:coverage:comms": "vitest run --config vitest.agent-d.config.ts --coverage"
   },
   "keywords": [],
   "author": "",
@@ -46,6 +52,8 @@
     "dotenv": "^17.4.2",
     "libphonenumber-js": "^1.13.11",
     "lru-cache": "^11.5.2",
+    "googleapis": "^176.0.0",
+    "luxon": "^3.7.2",
     "next": "16.2.5",
     "papaparse": "^5.7.0",
     "pg": "^8.23.0",
@@ -62,6 +70,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/luxon": "^3.7.5",
     "@types/node": "^26.4.0",
     "@types/papaparse": "^5.5.2",
     "@types/pg": "^8.23.1",
