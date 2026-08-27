@@ -10,7 +10,9 @@ Agent A — **Core Data slice**: Advanced Filtering DSL + Smart Views + AI Impor
 
 ## §13 amendments in this slice
 
-- None from A. A imports the frozen `contracts/http/reason-codes.ts` verbatim (does not define its own `REASON_CODES`); depends on `timezone_unresolved` being present, which it is.
+- **#14 — `NotifyOverflow` new table** (A-owned). LISTEN/NOTIFY payload-overflow spillover; additive, shipped as a second migration `add_notify_overflow`. PR #1's diff includes two A migrations (`initial` + `add_notify_overflow`), not one.
+- **#15 — `/api/queue` wire rename `primaryPhone` → `primaryPhoneE164`** (A-owned). E.164-normalized string. B consumes `GET /api/queue` at PR #3 — B's queue consumer must read `primaryPhoneE164`.
+- A imports the frozen `contracts/http/reason-codes.ts` verbatim (does not define its own `REASON_CODES`); depends on `timezone_unresolved` being present, which it is. Reason-code drift guard (M2 hardening) shipped in PR #1 — see the dedicated section below. PR #2 remap: `FAIL_CLOSED_REASON → 'compliance_unavailable'`.
 
 ## Cross-slice notes
 

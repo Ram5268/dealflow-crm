@@ -105,11 +105,13 @@ async function waitForSlice(s: Slice, deadline: number): Promise<ProbeResult[]> 
   const secondary = s.probes.filter((p) => !p.gating)
   const gatingResults: ProbeResult[] = []
   for (const p of gating) {
-    let last = { ok: false, status: 'unreachable', detail: '' }
-    while (Date.now() < deadline) {
-      last = await probeOnce(p.url)
-      if (last.ok) break
+    // Probe at least once even if a prior slice's retry loop already consumed the
+    // shared deadline — otherwise a down slice starves every slice after it and
+    // they falsely report "unreachable" (never probed) instead of their true state.
+    let last = await probeOnce(p.url)
+    while (!last.ok && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2000))
+      last = await probeOnce(p.url)
     }
     gatingResults.push({ label: p.label, gating: true, ...last })
   }
