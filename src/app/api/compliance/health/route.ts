@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/compliance/db'
-import { getEnv, isDncVendorConfigured, isLitigatorVendorConfigured } from '@/lib/compliance/env'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { correlationIdFrom } from '@/lib/compliance/correlation'
 import { logWith } from '@/lib/compliance/logger'
 import { holidayTableFreshDays } from '@/lib/compliance/holidays/check'
 import { getCircuitState } from '@/lib/compliance/bulk/circuitBreaker'
+import { getDncVendor } from '@/lib/compliance/dnc/vendors/index'
+import { getLitigatorVendor } from '@/lib/compliance/litigator/vendors/index'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,7 +17,6 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: Request) {
   const correlationId = correlationIdFrom(req)
   const log = logWith(correlationId)
-  const env = getEnv()
 
   let dbLatencyMs: number | null = null
   let freshDays = 999
@@ -40,8 +40,8 @@ export async function GET(req: Request) {
       status: 'ok',
       dbLatencyMs,
       holidayTableFreshDays: freshDays,
-      dncVendorReachable: isDncVendorConfigured(env) ? true : ('not-configured' as const),
-      litigatorVendorReachable: isLitigatorVendorConfigured(env) ? true : ('not-configured' as const),
+      dncVendorReachable: getDncVendor().name === 'noop' ? ('not-configured' as const) : true,
+      litigatorVendorReachable: getLitigatorVendor().name === 'noop' ? ('not-configured' as const) : true,
       circuitState: circuit,
     },
     { headers: { 'x-correlation-id': correlationId } }

@@ -5,6 +5,8 @@ import { stateFromTimezone } from '@/lib/compliance/timezone/stateFromTimezone'
 import { normalizeE164 } from '@/lib/compliance/dnc/internal'
 import type { PolicyGateResult } from '@/lib/compliance/policy/gate'
 import type { HolidayResult } from '@/lib/compliance/holidays/check'
+import type { DncStatus } from '@/lib/compliance/dnc/check'
+import type { LitigatorStatus } from '@/lib/compliance/litigator/check'
 import type { ScrubLogInput } from '@/lib/compliance/scrub/scrubLog'
 import type { ScrubCompletedPayload } from '@/lib/compliance/events/emitScrubCompleted'
 
@@ -56,6 +58,10 @@ export interface CallableNowDeps {
     freshDays?: number
   }) => Promise<HolidayResult>
   holidayFreshDays?: () => Promise<number>
+  // M2 vendor steps — optional. When absent (M1), phones flow straight from
+  // internal-DNC to the calling window (no vendor checks), preserving M1 behavior.
+  checkDnc?: (orgId: string, phones: string[]) => Promise<Map<string, DncStatus>>
+  checkLitigator?: (orgId: string, phones: string[]) => Promise<Map<string, LitigatorStatus>>
   persist: (orgId: string, logs: ScrubLogInput[], event: ScrubCompletedPayload) => Promise<void>
 }
 
@@ -75,6 +81,13 @@ export async function runCallableNow(
   const presentPhones = [...loaded.values()].map((l) => l.phone)
   const internalHits = await deps.internalDncHits(deps.orgId, presentPhones)
   const freshDays = deps.holidayFreshDays ? await deps.holidayFreshDays() : undefined
+
+  // M2: batch DNC + litigator read-through once, over phones that at least have
+  // a timezone (obvious non-starters are skipped; policy-unconfirmed phones
+  // short-circuit before these are consulted in the loop).
+  const tzPhones = [...loaded.values()].filter((l) => l.timezone && l.timezone.trim() !== '').map((l) => l.phone)
+  const dncMap = deps.checkDnc ? await deps.checkDnc(deps.orgId, tzPhones) : undefined
+  const litMap = deps.checkLitigator ? await deps.checkLitigator(deps.orgId, tzPhones) : undefined
 
   const results: CallableNowResult[] = []
   const logs: ScrubLogInput[] = []
@@ -129,6 +142,40 @@ export async function runCallableNow(
     if (internalHits.has(normalizeE164(phone))) {
       results.push({ contactPhoneId: id, phone, callable: false, reasons: ['internal_dnc'] })
       logs.push({ phone, contactPhoneId: id, operation: 'check-internal', result: 'blocked' })
+      continue
+    }
+
+    // (5b) Federal/state DNC (M2 read-through; skipped when checkDnc absent).
+    const dnc = dncMap?.get(phone)
+    if (dnc && dnc.status !== 'clean') {
+      if (dnc.status === 'blocked') {
+        const res: CallableNowResult = { contactPhoneId: id, phone, callable: false, reasons: [dnc.reason] }
+        if (dnc.detail) res.reasonDetails = { [dnc.reason]: dnc.detail }
+        results.push(res)
+        logs.push({
+          phone,
+          contactPhoneId: id,
+          operation: dnc.reason === 'state_dnc' ? 'check-state' : 'check-federal',
+          result: 'blocked',
+          detail: dnc.detail ?? { reason: dnc.reason },
+        })
+      } else {
+        results.push({ contactPhoneId: id, phone, callable: false, reasons: [dnc.reason] })
+        logs.push({ phone, contactPhoneId: id, operation: 'check-federal', result: 'error', detail: { reason: dnc.reason } })
+      }
+      continue
+    }
+
+    // (5c) Litigator (M2; skipped when checkLitigator absent).
+    const lit = litMap?.get(phone)
+    if (lit && lit.status !== 'clean') {
+      if (lit.status === 'blocked') {
+        results.push({ contactPhoneId: id, phone, callable: false, reasons: ['litigator'], reasonDetails: { litigator: lit.detail } })
+        logs.push({ phone, contactPhoneId: id, operation: 'check-litigator', result: 'blocked', detail: lit.detail })
+      } else {
+        results.push({ contactPhoneId: id, phone, callable: false, reasons: [lit.reason] })
+        logs.push({ phone, contactPhoneId: id, operation: 'check-litigator', result: 'error', detail: { reason: lit.reason } })
+      }
       continue
     }
 

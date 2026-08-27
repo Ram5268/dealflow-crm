@@ -2,6 +2,8 @@ import { resolveDb } from '@/lib/compliance/db'
 import { internalDncHits } from '@/lib/compliance/dnc/internal'
 import { isPolicyConfirmed } from '@/lib/compliance/policy/gate'
 import { checkHoliday, holidayTableFreshDays } from '@/lib/compliance/holidays/check'
+import { checkDncBatch } from '@/lib/compliance/dnc/check'
+import { checkLitigatorBatch } from '@/lib/compliance/litigator/check'
 import { writeScrubLogs } from '@/lib/compliance/scrub/scrubLog'
 import { emitScrubCompleted } from '@/lib/compliance/events/emitScrubCompleted'
 import type { CallableNowDeps, LoadedPhone } from '@/lib/compliance/scrub/callableNow'
@@ -68,6 +70,12 @@ export function makeCallableNowDeps(args: {
     holidayFreshDays: () => holidayTableFreshDays(args.orgId, db),
 
     checkHoliday: (a) => checkHoliday(a, { db, freshDays: a.freshDays, useCache: true }),
+
+    // Vendor read-through checks. With no vendor configured, these fail-closed
+    // (noop vendor → vendor_error_not_configured) — a call is never greenlit
+    // without DNC scrubbing.
+    checkDnc: (orgId, phones) => checkDncBatch(orgId, phones, { db, correlationId: args.correlationId }),
+    checkLitigator: (orgId, phones) => checkLitigatorBatch(orgId, phones, { db, correlationId: args.correlationId }),
 
     async persist(orgId, logs, event) {
       // ScrubLog writes + the crm_scrub NOTIFY commit atomically: a rolled-back

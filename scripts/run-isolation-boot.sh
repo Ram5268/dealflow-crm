@@ -38,7 +38,9 @@ pnpm exec prisma generate
 echo "==> 4/6 seed compliance fixtures"
 pnpm exec tsx scripts/seed-compliance-fixtures.ts
 
-echo "==> 5/6 pnpm dev on :3000 (background)"
+echo "==> 5/6 pnpm dev on :3000 (background), mock vendors"
+# Mock DNC + litigator vendors so callable-now resolves without live keys.
+export DNC_VENDOR=mock LITIGATOR_VENDOR=mock
 pnpm dev >/tmp/agent-c-dev.log 2>&1 &
 DEV_PID=$!
 trap 'kill $DEV_PID 2>/dev/null || true' EXIT

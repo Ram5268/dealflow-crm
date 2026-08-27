@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { makeCallableNowDeps } from '@/lib/compliance/scrub/callableNowDeps'
 import { runCallableNow } from '@/lib/compliance/scrub/callableNow'
 import { resetAllCaches } from '@/lib/compliance/caches'
+import { resetEnvCache } from '@/lib/compliance/env'
+import { resetCircuitsForTest } from '@/lib/compliance/bulk/circuitBreaker'
 
 const CID = '11111111-1111-4111-8111-111111111111'
 const now = new Date('2026-01-05T17:00:00Z') // Monday noon EST
@@ -22,7 +24,9 @@ function fakePrisma(rows: any[]) {
     scrubLogged,
     client: {
       contactPhone: { findMany: async () => rows },
-      dncSuppression: { findMany: async () => [] },
+      dncSuppression: { findMany: async () => [], createMany: async () => ({ count: 0 }) },
+      litigatorSuppression: { findMany: async () => [], createMany: async () => ({ count: 0 }) },
+      scrubLog: { findMany: async () => [], createMany: async (a: any) => ({ count: a.data.length }) },
       callingWindowConfig: { findUnique: async () => CONFIRMED },
       // Fresh createdAt (real clock) so holidayTableFreshDays sees a non-stale table.
       holidaySuppressionDate: { findMany: async () => [], findFirst: async () => ({ createdAt: new Date() }) },
@@ -35,7 +39,15 @@ function fakePrisma(rows: any[]) {
   }
 }
 
-beforeEach(() => resetAllCaches())
+beforeEach(() => {
+  resetAllCaches()
+  resetCircuitsForTest()
+  // Mock vendors so the wired DNC/litigator read-through resolves clean (not the
+  // noop fail-closed sentinel) for the end-to-end callable:true case.
+  process.env.DNC_VENDOR = 'mock'
+  process.env.LITIGATOR_VENDOR = 'mock'
+  resetEnvCache()
+})
 
 describe('makeCallableNowDeps', () => {
   it('loadContactPhones maps rows + derives address state per §1a', async () => {

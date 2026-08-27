@@ -6,10 +6,12 @@ contact. **First rule: fail-closed.** Any error, timeout, missing config,
 unconfirmed policy, ambiguous timezone, or unreachable vendor → `callable:false`.
 Never a positive signal from a negative check.
 
-**Milestone 1 (fail-closed core) is complete and shipped here.** Vendor
-integrations (federal/state DNC, litigator, Twilio Lookup) are **Milestone 2**
-and are **BLOCKED** on Ryan selecting vendors (`DNC_VENDOR` / `LITIGATOR_VENDOR`
-unset). See "M2 blocked" below.
+**Milestone 1 (fail-closed core) + Milestone 2 (vendor integrations) are both
+built and tested here.** M2 is wired against the **TCPA Shield** vendor shape
+(DNC + litigator) with a ⚠️ PROVISIONAL wire format — the pipeline + tests run
+against the mock vendor; live keys arrive mid-M2, live smoke deferred. With NO
+vendor configured, callable-now fail-closes (noop → block), which is correct.
+See "M2 vendor status" below.
 
 ## Public surface
 
@@ -121,11 +123,32 @@ but that fallback does NOT reach here — `callable-now` reads `Contact.timezone
 directly and fails-closed on null (`timezone_unresolved`). So a lead can appear
 in `/api/queue` yet be blocked at dial. This is intentional.
 
-## M2 blocked (vendor selection)
+## M2 vendor status (TCPA Shield selected)
 
-`DNC_VENDOR`, `DNC_API_KEY`, `LITIGATOR_VENDOR`, `LITIGATOR_API_KEY` are unset.
-M2 (federal/state DNC read-through + refresh, litigator scrub, Twilio Lookup,
-`scrub` endpoint, bulk-scrub worker, `dnc-refresh` cron) is blocked until Ryan
-picks vendors. The `noop` vendor is a fail-closed sentinel (returns errored batch
-→ `vendor_error_not_configured`), NOT a clean pass. Nightly full re-scrub of 25k
-phones will cost vendor $ — project monthly cost once a vendor is chosen.
+`DNC_VENDOR=tcpa_shield` + `LITIGATOR_VENDOR=tcpa_shield` (one API/auth/bill).
+Set `DNC_API_KEY` / `LITIGATOR_API_KEY` (+ optional `TCPA_SHIELD_BASE_URL`) in
+Doppler/`.env` to go live. `MOBILE_LINE_VENDOR=twilio_lookup` reuses Agent B's
+`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` (advisory-only).
+
+- **PROVISIONAL wire shape.** `dnc/vendors/tcpaShield.ts` +
+  `litigator/vendors/tcpaShield.ts` request/response fields and the endpoint
+  paths are placeholders — confirm against TCPA Shield's real API docs at live
+  wiring. Until confirmed, every non-2xx → fail-closed (see
+  `tcpaShield.status-codes.ts`). Do NOT add a "404 = clean" mapping without
+  vendor sign-off.
+- **Fail-closed when unset.** The `noop` vendor throws
+  `vendor_error_not_configured` (not a clean pass), so callable-now blocks every
+  call until a vendor is keyed. The isolation boot uses `DNC_VENDOR=mock`.
+- **Read-through caches.** DNC 24h (DncSuppression + recent-clean ScrubLog),
+  litigator 30-day. Nightly `dnc-refresh` re-scrubs all phones; the bulk worker
+  (`compliance:bulk-scrub` pg-boss job) scrubs a 25k import batch resumably via
+  `BulkScrubCheckpoint`. Nightly re-scrub of 25k costs vendor $ — project monthly
+  cost once pricing is known.
+- **Mobile-line advisory-only.** A Twilio Lookup error never flips callable.
+
+## Test / gate commands
+
+```bash
+pnpm exec vitest run                                  # all 219 tests
+pnpm exec vitest run --config vitest.agent-c.config.ts --coverage   # + 95% floor
+```
