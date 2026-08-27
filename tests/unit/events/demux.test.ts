@@ -18,7 +18,7 @@ describe('matchShape', () => {
   it('crm_call: connected vs completed vs pacing by shape', () => {
     expect(matchShape('crm_call', { callId: 'c1', connectedAt: 'x', type: 'call.connected' })).toBe('call.connected')
     expect(matchShape('crm_call', { callId: 'c1', disposition: 'answered', type: 'call.completed' })).toBe('call.completed')
-    expect(matchShape('crm_call', { dialSessionId: 'd1', currentLineCount: 3 })).toBe('dial-session.pacing-update')
+    expect(matchShape('crm_call', { type: 'dial-session.pacing-update', sessionId: 'd1', lineCount: 3, rollingAbandonment: 0.02, band: '1_5_to_2_0', reason: 'test-band-transition', correlationId: 'corr-1' })).toBe('dial-session.pacing-update')
   })
   it('crm_message / crm_scrub', () => {
     expect(matchShape('crm_message', { messageId: 'm1', channel: 'email' })).toBe('message.received')
@@ -40,7 +40,7 @@ describe('dispatch', () => {
 
   it('pacing-update routes to its no-op handler (no crash)', async () => {
     const { handlers, calls } = fakeHandlers()
-    const r = await dispatch('crm_call', { dialSessionId: 'd1', currentLineCount: 2 }, handlers)
+    const r = await dispatch('crm_call', { type: 'dial-session.pacing-update', sessionId: 'd1', lineCount: 2, rollingAbandonment: 0.02, band: '1_5_to_2_0', reason: 'test-band-transition', correlationId: 'corr-2' }, handlers)
     expect(r).toBe('handled')
     expect(calls).toEqual(['dial-session.pacing-update'])
   })

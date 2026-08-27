@@ -65,7 +65,7 @@ describe('accepts-events — schema-valid payloads route correctly', () => {
 describe('accepts-events — pacing-update no-crash + no-write', () => {
   it('routes to the no-op handler, never crashes', async () => {
     const p = PacingUpdateEvent.parse({
-      type: 'dial-session.pacing-update', dialSessionId: 'd1', currentLineCount: 3, abandonment30d: 0.02, correlationId: CID,
+      type: 'dial-session.pacing-update', sessionId: 'd1', lineCount: 3, rollingAbandonment: 0.02, band: '1_5_to_2_0', reason: 'test-band-transition', correlationId: CID,
     })
     const { handlers, calls } = fakeHandlers()
     expect(await dispatch('crm_call', p, handlers)).toBe('handled')

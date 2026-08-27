@@ -30,6 +30,15 @@ All four blessed as additive by Ryan; tracked in `docs/schema-drift-pending.md`:
 
 `Call.emittedAt` was already in the frozen schema — moot, no migration.
 
+## Cross-slice hotfixes (planner-authorized)
+
+Per planner ruling 2026-08-27 (§13 amendment #6 / S5 propagation gap):
+
+- `src/lib/core-data/events/demux.ts` — predicate updated to route on `type === 'dial-session.pacing-update'` discriminant. Original predicate keyed on the old field names (`dialSessionId`, `currentLineCount`) which the S5 amendment renamed to `sessionId`, `lineCount`. Silent-drop failure mode without this fix.
+- `tests/unit/events/demux.test.ts:21,43` + `contracts/tests/accepts-events.spec.ts:67` — sample payload fixtures updated to S5 shape.
+
+Scope: 1 predicate line + 3 test fixtures. No production behavior change beyond correct routing of the new event shape.
+
 ## Cross-slice notes
 
 - **Tolerant-consumer stance on REASON_CODES**: B imports the frozen `contracts/http/reason-codes.ts` as source of truth and Sentry-warns on any value outside it — still fail-closed. C's PR #2 re-adds `compliance_unavailable` + the granular 19-code enum; B converges automatically with no code change.
@@ -39,11 +48,11 @@ All four blessed as additive by Ryan; tracked in `docs/schema-drift-pending.md`:
 
 ## Test coverage
 
-171 tests (unit + contract + integration + property). Race-resolver atomicity proven at N=50 concurrent transactions against real Railway Postgres (barrier holds all txns open simultaneously for genuine advisory-lock contention). Coverage floors machine-enforced via `vitest.config.ts` thresholds (`pnpm test:coverage`, exit 0). `tsc --noEmit` clean, no iCloud ` 2.ts` duplicates, no `.env` committed.
+171 telephony/contract tests (unit + contract + integration + property). Race-resolver atomicity proven at N=50 concurrent transactions against real Railway Postgres (barrier holds all txns open simultaneously for genuine advisory-lock contention). Coverage floors machine-enforced via `vitest.config.ts` thresholds (`pnpm test:coverage`, exit 0). **Post-rebase full merged suite: 524/524 green** across A + C + B. `tsc --noEmit` clean, no iCloud ` 2.ts` duplicates, no `.env` committed.
 
 ## Notes for the merge
 
-- **Two workarounds retire at this rebase** once S1/S2 migrations land: the explicit `source:"dealflow-crm"`-on-insert (S2) and the SELECT-then-INSERT leg guard becomes constraint-backed (S1).
+- **S2 retires a workaround**: the explicit `source:"dealflow-crm"`-on-insert in `placeCall` is dropped now that the schema default carries it. **S1** adds DB-level protection so a re-delivered Twilio webhook can't double-insert a leg (the leg `create` was previously unguarded at the DB level).
 - Confirm the queue consumer reads **`primaryPhoneE164`** (A's §13 #15 rename), not `primaryPhone`.
 - Confirm `COMPLIANCE_BASE_URL` env name (not `COMPLIANCE_SERVICE_BASE_URL`).
 - **Deferred device smoke (owed by Ryan, env drop-in, no code change):** Twilio test SID/token + verified caller ID → `worktrees/agent-b/.env`; `cloudflared` tunnel URL → `TWILIO_VOICE_WEBHOOK_BASE`. Runbook: `docs/smoke-tests/telephony.md`. Predictive (multi-line) sessions stay REFUSED with `loser_twiml_unapproved` until `LOSER_TWIML_APPROVED=true` (FCC abandoned-call belt+suspenders).
