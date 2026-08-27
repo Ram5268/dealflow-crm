@@ -25,7 +25,8 @@
     "perf": "tsx scripts/perf-25k.ts",
     "bootstrap:db": "tsx scripts/bootstrap-databases.ts",
     "mock:compliance": "tsx contracts/mocks/compliance/server.ts",
-    "boot-standalone": "tsx scripts/boot-standalone.ts"
+    "boot-standalone": "tsx scripts/boot-standalone.ts",
+    "boot:all": "tsx scripts/boot-all.ts"
   },
   "keywords": [],
   "author": "",
