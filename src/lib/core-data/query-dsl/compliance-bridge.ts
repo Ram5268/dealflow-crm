@@ -10,7 +10,7 @@ import { captureException, captureWarning } from '@/lib/shared/sentry'
 // PR#2 REMAP TARGET: 'compliance_unavailable' (service-level fail-closed) once C
 // re-adds it. Do not map to any `vendor_error_*` variant — A never learns which
 // vendor failed when C itself is unreachable/omitting.
-export const FAIL_CLOSED_REASON: ReasonCode = 'vendor_error'
+export const FAIL_CLOSED_REASON: ReasonCode = 'compliance_unavailable'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compliance bridge — the ONLY path from A into Agent C's callable-now service.

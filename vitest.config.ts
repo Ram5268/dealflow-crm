@@ -6,6 +6,7 @@ export default defineConfig({
     include: [
       'contracts/tests/**/*.spec.ts',
       'src/**/*.test.ts',
+      'src/**/*.spec.ts',
       'tests/**/*.test.ts',
     ],
     environment: 'node',
@@ -80,6 +81,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // fileURLToPath decodes %20 etc.; new URL().pathname would leave the
+      // iCloud path's spaces percent-encoded and break module resolution.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },

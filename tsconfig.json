@@ -42,6 +42,7 @@
     "node_modules",
     "worktrees",
     "dist",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "vitest.agent-c.config.ts"
   ]
 }
