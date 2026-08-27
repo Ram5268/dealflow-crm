@@ -100,12 +100,14 @@ describe('event contracts parse a valid payload', () => {
 })
 
 describe('reason codes', () => {
-  it('exposes the frozen compliance vocabulary (Brief C §7A, 19 granular codes)', () => {
+  it('exposes the frozen compliance vocabulary (Brief C §7A: 19 granular + 1 service-level)', () => {
     expect(REASON_CODES).toContain('internal_dnc')
     expect(REASON_CODES).toContain('holiday_table_stale')
     expect(REASON_CODES).toContain('phone_missing')
     expect(REASON_CODES).toContain('vendor_error_dnc')
     expect(REASON_CODES).toContain('circuit_open_dnc')
-    expect(REASON_CODES.length).toBe(19)
+    // 20th code — A-emitted service-level fail-closed (planner §12, 2026-08-27).
+    expect(REASON_CODES).toContain('compliance_unavailable')
+    expect(REASON_CODES.length).toBe(20)
   })
 })

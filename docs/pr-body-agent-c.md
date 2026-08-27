@@ -37,9 +37,11 @@ Never a positive signal from a negative check.
   - `GET  /api/cron/dnc-refresh` — bearer `CRON_SECRET`, 503 when no vendor
   - `GET  /api/cron/holiday-refresh` — bearer `CRON_SECRET`
   - (Consumed by B via `COMPLIANCE_BASE_URL`; B must treat a 5xx as `callable:false`.)
-- **Owns**: `contracts/http/reason-codes.ts` — the **granular §7A 19-code
-  `REASON_CODES`** list (ratified 2026-08-27). Single source of truth; A imports
-  it verbatim, B imports + tolerates unknowns.
+- **Owns**: `contracts/http/reason-codes.ts` — the **§7A `REASON_CODES`** list:
+  19 granular compliance codes (ratified 2026-08-27) **+ `compliance_unavailable`**
+  (20th, planner §12; A-emitted service-level fail-closed, C never emits it).
+  Single source of truth; A imports it verbatim (re-export in
+  `src/lib/shared/reason-codes.ts`), B imports + tolerates unknowns.
 
 ## §13 amendments in this slice
 
@@ -51,12 +53,13 @@ Never a positive signal from a negative check.
   readers, no prod data.
 - **`ScrubLog.operation` vocabulary** — extended with `check-holiday`,
   `check-mobile-line`. Additive (String column; vocabulary only).
-- **`REASON_CODES` 12 → 19 (granular §7A)** — expansion + `window_stale` →
-  `holiday_table_stale` rename + `vendor_error` split into
+- **`REASON_CODES` 12 → 20 (granular §7A + service-level)** — expansion +
+  `window_stale` → `holiday_table_stale` rename + `vendor_error` split into
   `vendor_error_dnc|_litigator|_mobile_line|_not_configured` + added
-  `timezone_invalid`, `circuit_open_dnc|_litigator`, `phone_missing`. Breaking
-  **only** for a `window_stale` consumer — there are none (A verbatim-imports; B
-  tolerant).
+  `timezone_invalid`, `circuit_open_dnc|_litigator`, `phone_missing` (= 19), **+
+  `compliance_unavailable`** re-added at this rebase (planner §12) as the 20th,
+  service-level code. Breaking **only** for a `window_stale` consumer — there are
+  none (A verbatim-imports; B tolerant).
 - **`dnc/internal` response** — added `added:boolean` (Agent D SMS-STOP telemetry).
 - **Contract locks (C-exposed, §12 #6/#7/#9)**: callable-now 100-batch cap → 413;
   per-result both `contactPhoneId` + `phone`; `scrub.completed` discriminant-free.
@@ -86,6 +89,40 @@ policy/scrub/dnc-internal/dnc-check/litigator-check/circuitBreaker/checkpoint
 100% (2 genuinely-unreachable defensive guards `v8 ignore`d with rationale).
 Automated gates need NO live DB (decision logic tested with injected fakes);
 Gate 1 live-boot is Doppler-optional (`bash scripts/run-isolation-boot.sh`).
+
+## PR #2 rebase integration (cross-file edits beyond the slice)
+
+Rebased onto merged `main` (A @ `49c6d08`). Everything touched outside
+`src/lib/compliance/**` + `contracts/**`, for the spot-check:
+
+- **`compliance-bridge.ts:13` (A's file)** — flipped A's typed tripwire
+  `FAIL_CLOSED_REASON` from `'vendor_error'` → `'compliance_unavailable'` (planner
+  §12). A's comment block (lines 5–12) left intact — it documents this exact flip.
+  A's `compliance-bridge.test.ts` asserts *membership* not equality, so it stays
+  green. **`tsc --noEmit` is clean** — the tripwire would have failed the build
+  had I missed this.
+- **`tsconfig.json` (A's file)** — added `vitest.agent-c.config.ts` to `exclude`,
+  mirroring A's existing `vitest.config.ts` exclusion. My config `import`s the
+  base, so tsc followed the import into A's `minWorkers` (a vitest config option
+  that doesn't satisfy strict tsc — which is *why* A excludes vitest configs).
+  Runtime-only file (esbuild-loaded by vitest); not a type-checked source.
+- **`package.json` / `pnpm-lock.yaml`** — union merge of both slices' deps (A's
+  `dotenv`/`libphonenumber-js`/`papaparse`/`pg` + C's `date-holidays`/`lru-cache`);
+  lockfile regenerated, `--frozen-lockfile` passes.
+- **`vitest.config.ts`** — union of both `include` globs (kept A's
+  `tests/**/*.test.ts` + C's `src/**/*.spec.ts`); kept my `fileURLToPath` alias fix.
+- **Vendor-factory specs (test-only)** — made the `undefined→noop` assertion
+  hermetic + added an `afterAll` in `callableNowDeps.spec.ts` to restore
+  `DNC/LITIGATOR_VENDOR`. A's shared-process runner (`isolate:false`) exposed
+  cross-file `process.env` leakage my old per-file isolation hid. **Zero
+  production-code change.**
+
+**Known local red (environmental, not this slice):** A's
+`tests/integration-local/{events,search-and-emit}.test.ts` fail locally with
+`table public.NotifyOverflow does not exist` — A's table, not migrated into the
+local dev DB. Verified unrelated to these changes (they touch none of A's
+event/emit/search path); pass in CI against a migrated DB. Did **not**
+`migrate deploy` the shared DB (coordinates with D's baseline).
 
 ## Notes for the merge
 

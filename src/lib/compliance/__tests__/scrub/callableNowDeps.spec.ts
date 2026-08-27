@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { makeCallableNowDeps } from '@/lib/compliance/scrub/callableNowDeps'
 import { runCallableNow } from '@/lib/compliance/scrub/callableNow'
 import { resetAllCaches } from '@/lib/compliance/caches'
@@ -39,6 +39,11 @@ function fakePrisma(rows: any[]) {
   }
 }
 
+// Capture pre-test env so this file's vendor mutations can't leak into other
+// spec files under the shared-process runner (isolate:false / single fork).
+const ORIG_DNC_VENDOR = process.env.DNC_VENDOR
+const ORIG_LITIGATOR_VENDOR = process.env.LITIGATOR_VENDOR
+
 beforeEach(() => {
   resetAllCaches()
   resetCircuitsForTest()
@@ -46,6 +51,15 @@ beforeEach(() => {
   // noop fail-closed sentinel) for the end-to-end callable:true case.
   process.env.DNC_VENDOR = 'mock'
   process.env.LITIGATOR_VENDOR = 'mock'
+  resetEnvCache()
+})
+
+afterAll(() => {
+  // Restore (or clear) so a later spec's getEnv() default doesn't resolve 'mock'.
+  if (ORIG_DNC_VENDOR === undefined) delete process.env.DNC_VENDOR
+  else process.env.DNC_VENDOR = ORIG_DNC_VENDOR
+  if (ORIG_LITIGATOR_VENDOR === undefined) delete process.env.LITIGATOR_VENDOR
+  else process.env.LITIGATOR_VENDOR = ORIG_LITIGATOR_VENDOR
   resetEnvCache()
 })
 

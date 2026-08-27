@@ -1,9 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { getLitigatorVendor } from '@/lib/compliance/litigator/vendors/index'
 import { makeMockLitigatorVendor } from '@/lib/compliance/litigator/vendors/mock'
 import { noopLitigatorVendor } from '@/lib/compliance/litigator/vendors/noop'
 import { makeTcpaShieldLitigatorVendor, parseTcpaShieldLitigator } from '@/lib/compliance/litigator/vendors/tcpaShield'
 import { VendorError } from '@/lib/compliance/errors'
+import { resetEnvCache } from '@/lib/compliance/env'
+
+// The undefined→noop case tests the "no vendor configured" fallback, which reads
+// the env default. Under the shared-process runner (isolate:false) a sibling spec
+// may have set LITIGATOR_VENDOR; clear it so this assertion is deterministic.
+beforeEach(() => {
+  delete process.env.LITIGATOR_VENDOR
+  resetEnvCache()
+})
 
 const fakeRes = (status: number, body: unknown) =>
   ({ ok: status >= 200 && status < 300, status, json: async () => body }) as unknown as Response

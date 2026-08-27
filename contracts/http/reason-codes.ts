@@ -13,6 +13,13 @@ import { z } from 'zod'
 // audit trail must distinguish a vendor timeout from an open circuit-breaker
 // from a config gap. Adding/removing a code is a §12 contract change — STOP and
 // route through the planner.
+//
+// `compliance_unavailable` (20th code, added at PR #2 rebase per planner §12,
+// 2026-08-27) is the ONE service-level code. Agent A emits it from
+// compliance-bridge.ts when Agent C is entirely unreachable / omits a phone from
+// the response — no per-vendor verdict exists to name. Agent C NEVER emits it:
+// C's own failures are always attributable to a specific vendor / circuit /
+// config gap. Do NOT collapse it into any `vendor_error_*` variant.
 export const REASON_CODES = [
   'internal_dnc',
   'federal_dnc',
@@ -33,6 +40,7 @@ export const REASON_CODES = [
   'circuit_open_dnc',
   'circuit_open_litigator',
   'phone_missing', // for phone-less contacts (see §11)
+  'compliance_unavailable', // A-EMITTED ONLY: C unreachable / omitted a phone (planner §12); C never emits this
 ] as const
 
 export type ReasonCode = (typeof REASON_CODES)[number]
