@@ -19,6 +19,12 @@ application-level workaround active until the planner responds.
 | S3 | **`Call.status`: `'cancel'` vs Twilio `'canceled'`.** | **BLESSED — no schema change** | It's a mapping decision, not a value change. Keep `statusMap.ts`. |
 | S4 | **`call.completed.disposition` add `no-answer`.** | **BLESSED — DONE** | Added `no-answer` to `contracts/events/call.completed.ts` enum; `toEventDisposition` now maps Twilio `no-answer → no-answer` (was `error`). `failed/cancel/timeout → error`. |
 
+## Filed at Milestone 4 — BLESSED
+
+| # | Request | Status | Action |
+|---|---------|--------|--------|
+| S5 | **`dial-session.pacing-update` wire shape.** Frozen contract had `{ type, dialSessionId, currentLineCount, abandonment30d, correlationId }`; needed `band` + `reason` for Ops observability. | **BLESSED — DONE (2026-08-27)** | Amended `contracts/events/dial-session.pacing-update.ts` to `{ type, callId?, sessionId, lineCount, rollingAbandonment, band('below_1_5'\|'1_5_to_2_0'\|'2_0_to_2_5'\|'2_5_to_2_8'\|'above_2_8'), reason, correlationId }`. Kept `type` for crm_call discriminant consistency; field names match the M1a control-law variables. No shipped consumer depends on the old shape (Ops dashboard not built; A ignores unknown types). Emitter + M6 test updated. |
+
 ## Pre-resolved in the frozen schema (no request needed)
 
 - **`Call.emittedAt DateTime?`** — already present in `prisma/schema.prisma`.

@@ -60,6 +60,23 @@ export const ABANDONMENT_BANDS = {
 // AMD false-positive rate above which we raise the AMD threshold and shave a line.
 export const AMD_FP_THRESHOLD = 0.015;
 
+/** Band tokens for the dial-session.pacing-update event (planner lock, §13 S5). */
+export type PacingBand =
+  | "below_1_5"
+  | "1_5_to_2_0"
+  | "2_0_to_2_5"
+  | "2_5_to_2_8"
+  | "above_2_8";
+
+/** Map a rolling abandonment fraction to its half-open [low, high) band token. */
+export function abandonmentBand(a: number): PacingBand {
+  if (a >= ABANDONMENT_BANDS.HALT_FLOOR) return "above_2_8";
+  if (a >= ABANDONMENT_BANDS.FORCE_SINGLE_FLOOR) return "2_5_to_2_8";
+  if (a >= ABANDONMENT_BANDS.DECREASE_FLOOR) return "2_0_to_2_5";
+  if (a >= ABANDONMENT_BANDS.HOLD_FLOOR) return "1_5_to_2_0";
+  return "below_1_5";
+}
+
 export function computeNewLineCount(input: PacingInput): PacingDecision {
   const {
     currentLineCount,

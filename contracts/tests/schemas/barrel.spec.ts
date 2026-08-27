@@ -48,11 +48,13 @@ describe('event contracts parse a valid payload', () => {
     expect(
       PacingUpdateEvent.parse({
         type: 'dial-session.pacing-update',
-        dialSessionId: 'dial_1',
-        currentLineCount: 3,
-        abandonment30d: 0.01,
+        sessionId: 'dial_1',
+        lineCount: 3,
+        rollingAbandonment: 0.01,
+        band: 'below_1_5',
+        reason: 'increase',
         correlationId: CID,
-      }).currentLineCount
+      }).lineCount
     ).toBe(3)
   })
 

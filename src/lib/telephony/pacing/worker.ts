@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { computeNewLineCount } from "./computeNewLineCount";
+import { computeNewLineCount, abandonmentBand } from "./computeNewLineCount";
 import {
   recordPacingEvent,
   rollingAbandonment,
@@ -35,6 +35,7 @@ export async function runPacingTick(prisma: PrismaClient): Promise<PacingTickRes
   const amdFpRate = await rollingAmdFpRate(prisma);
   const spendUsd = await monthToDateSpendUsd(prisma);
   const capUsd = parseInt(process.env.TWILIO_MONTHLY_SPEND_CAP_USD ?? "200", 10);
+  const band = abandonmentBand(abandonment);
 
   const sessions = await prisma.dialSession.findMany({ where: { status: "active" } });
 
@@ -56,7 +57,13 @@ export async function runPacingTick(prisma: PrismaClient): Promise<PacingTickRes
       data: { status: "paused", lineCount: 0 },
     });
     for (const s of sessions) {
-      await emitPacingUpdate(prisma, s.id, 0, abandonment);
+      await emitPacingUpdate(prisma, {
+        sessionId: s.id,
+        lineCount: 0,
+        rollingAbandonment: abandonment,
+        band,
+        reason: `halt:${haltReason}`,
+      });
     }
     logger.error({ haltReason, abandonment, spendUsd }, "PACING HALT — circuit breaker tripped");
     return {
@@ -91,9 +98,11 @@ export async function runPacingTick(prisma: PrismaClient): Promise<PacingTickRes
       });
       await emitOnCallChannel(tx, {
         type: "dial-session.pacing-update",
-        dialSessionId: s.id,
-        currentLineCount: decision.newLineCount,
-        abandonment30d: abandonment,
+        sessionId: s.id,
+        lineCount: decision.newLineCount,
+        rollingAbandonment: abandonment,
+        band,
+        reason: decision.action,
         correlationId: randomUUID(),
       });
     });
@@ -104,16 +113,18 @@ export async function runPacingTick(prisma: PrismaClient): Promise<PacingTickRes
 
 async function emitPacingUpdate(
   prisma: PrismaClient,
-  dialSessionId: string,
-  currentLineCount: number,
-  abandonment30d: number,
+  payload: {
+    sessionId: string;
+    lineCount: number;
+    rollingAbandonment: number;
+    band: ReturnType<typeof abandonmentBand>;
+    reason: string;
+  },
 ): Promise<void> {
   await prisma.$transaction((tx) =>
     emitOnCallChannel(tx, {
       type: "dial-session.pacing-update",
-      dialSessionId,
-      currentLineCount,
-      abandonment30d,
+      ...payload,
       correlationId: randomUUID(),
     }),
   );

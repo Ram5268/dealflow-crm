@@ -86,10 +86,12 @@ describe("runPacingTick — band adjustments + emission", () => {
     expect(updated?.lineCount).toBe(2); // 1 → min(1+1, 3)
 
     const evt = await listener.waitFor(
-      (e) => e.type === "dial-session.pacing-update" && e.dialSessionId === s.id,
+      (e) => e.type === "dial-session.pacing-update" && e.sessionId === s.id,
     );
-    expect(evt.currentLineCount).toBe(2);
-    expect(typeof evt.abandonment30d).toBe("number");
+    expect(evt.lineCount).toBe(2);
+    expect(typeof evt.rollingAbandonment).toBe("number");
+    expect(evt.band).toBe("below_1_5");
+    expect(evt.reason).toBe("increase");
     expect(evt).not.toHaveProperty("eventName");
   });
 
