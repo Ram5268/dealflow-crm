@@ -401,7 +401,7 @@ model Call {
   callMethod             String
   disposition            String?
   status                 String    @default("created")
-  source                 String    @default("Close.io")
+  source                 String    @default("dealflow-crm")
   localPhone             String
   remotePhone            String
   duration               Int?
@@ -442,6 +442,9 @@ model CallLeg {
 
   call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
 
+  // S1 (§13): one leg row per (call, provider leg SID). A re-delivered Twilio
+  // webhook can no longer double-insert a leg — the race resolver relies on this.
+  @@unique([callId, providerLegSid])
   @@index([callId])
   @@index([providerLegSid])
 }

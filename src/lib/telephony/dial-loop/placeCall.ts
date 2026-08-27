@@ -78,7 +78,7 @@ export async function placeCall(
           direction: "outbound",
           callMethod: args.callMethod,
           status: "created",
-          source: "dealflow-crm", // override frozen default "Close.io" (§6.1)
+          // source falls to the schema default "dealflow-crm" (§13 S2 migration).
           localPhone: args.callerId,
           remotePhone: args.toPhone,
           providerCallSid: created.sid,
