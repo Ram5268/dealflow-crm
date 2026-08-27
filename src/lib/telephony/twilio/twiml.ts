@@ -26,3 +26,16 @@ export function buildConferenceTwiml(callId: string): string {
     `endConferenceOnExit="false">conf_${callId}</Conference></Dial></Response>`
   );
 }
+
+/**
+ * Operator side: the TwiML the Voice-SDK client's `device.connect()` resolves to
+ * (served by the TwiML App voice URL, Milestone 3). `endConferenceOnExit=true`
+ * so hanging up the operator tears the room down. `conferenceName` is the full
+ * room name (`conf_<callId>`) passed through from `device.connect({ params })`.
+ */
+export function buildOperatorConferenceTwiml(conferenceName: string): string {
+  return (
+    `<Response><Dial><Conference startConferenceOnEnter="true" ` +
+    `endConferenceOnExit="true">${conferenceName}</Conference></Dial></Response>`
+  );
+}

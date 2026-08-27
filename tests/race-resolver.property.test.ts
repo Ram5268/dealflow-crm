@@ -15,6 +15,12 @@ const LOCK_SQL = `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) as w
 const N = 50; // reduced from 100 per Ryan: 50 leaves Railway headroom and the
 // invariant is deterministic at any concurrency ≥ 2.
 
+/** Restore an env var, deleting when the saved value was undefined (never write "undefined"). */
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Advisory-lock atomicity — raw pg Pool, BEGIN/ROLLBACK per attempt.
 // ────────────────────────────────────────────────────────────────────────────
@@ -173,10 +179,26 @@ describe("race-resolver — dropped-loser TwiML (env seam)", () => {
     expect(twiml).toContain("A &amp; B &lt; C &gt; &quot;D&quot;");
   });
 
-  it("defaults to say mode with the placeholder text when env is empty", () => {
-    const twiml = buildLoserTwiml({});
-    expect(twiml).toContain("<Say");
-    expect(twiml).toContain("stepped away");
+  it("defaults to say mode + placeholder text when env vars are unset", () => {
+    // Deterministically clear the seam so the third-operand fallbacks (`?? "say"`,
+    // `?? DEFAULT_LOSER_TEXT`) are exercised regardless of cross-file env state.
+    const saved = {
+      mode: process.env.RACE_LOSER_TWIML_MODE,
+      text: process.env.RACE_LOSER_TWIML_TEXT,
+      mp3: process.env.RACE_LOSER_TWIML_MP3_URL,
+    };
+    delete process.env.RACE_LOSER_TWIML_MODE;
+    delete process.env.RACE_LOSER_TWIML_TEXT;
+    delete process.env.RACE_LOSER_TWIML_MP3_URL;
+    try {
+      const twiml = buildLoserTwiml({});
+      expect(twiml).toContain("<Say");
+      expect(twiml).toContain("stepped away");
+    } finally {
+      restoreEnv("RACE_LOSER_TWIML_MODE", saved.mode);
+      restoreEnv("RACE_LOSER_TWIML_TEXT", saved.text);
+      restoreEnv("RACE_LOSER_TWIML_MP3_URL", saved.mp3);
+    }
   });
 
   describe("process.env seam (Ryan flips without a code change)", () => {
@@ -186,9 +208,10 @@ describe("race-resolver — dropped-loser TwiML (env seam)", () => {
       mp3: process.env.RACE_LOSER_TWIML_MP3_URL,
     };
     afterAll(() => {
-      process.env.RACE_LOSER_TWIML_MODE = saved.mode;
-      process.env.RACE_LOSER_TWIML_TEXT = saved.text;
-      process.env.RACE_LOSER_TWIML_MP3_URL = saved.mp3;
+      // Use delete-on-undefined so we never write the string "undefined".
+      restoreEnv("RACE_LOSER_TWIML_MODE", saved.mode);
+      restoreEnv("RACE_LOSER_TWIML_TEXT", saved.text);
+      restoreEnv("RACE_LOSER_TWIML_MP3_URL", saved.mp3);
     });
 
     it("reads mode + text entirely from process.env", () => {
