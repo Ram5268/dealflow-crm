@@ -63,6 +63,14 @@ A's owned `DealFlowDerivedSignal` shape is unchanged/frozen — this is a read-s
 All slices share ONE remote Railway Postgres. Parallel vitest files → connection pile-up → 30s `pool_timeout` stalls → ~50-minute runs. Use in `vitest.config.ts`:
 `pool: 'forks'`, `isolate: false`, `maxWorkers: 1`, `minWorkers: 1`, `fileParallelism: false`; add `?connection_limit=20&pool_timeout=30` to the DB URL; and do NOT call `prisma.$disconnect()` in integration `afterAll` (the shared singleton persists across files). This took A's suite from 51 min → 145 s.
 
+**4. Git remote is now live.** A created the private GitHub remote `origin` →
+`https://github.com/Ram5268/dealflow-crm.git` and pushed branch `agent-a`. The
+worktree tree shares one git config, so **B/C/D can publish their own work with
+`git push -u origin agent-<letter>` from their worktrees** — no remote setup
+needed. `main` was intentionally NOT pushed; it gets produced by the integration
+merge once all 4 slices are Gate-3 green. (Repo is private; confirm Settings →
+Copilot → "Allow Copilot to use my code" is disabled if you use Copilot.)
+
 **3. Shared-DB collision check (D ↔ A):** verified clean 2026-08-27. `prisma migrate status` on `dealflow_crm` = "up to date"; A's 2 migrations intact; D's additive/nullable `OAuthCredential` `db push` did not alter any A-owned table. `OAuthCredential` + `NotifyOverflow` both present. A does not touch `OAuthCredential`.
 
 ## Integration checklist (from brief §14)
