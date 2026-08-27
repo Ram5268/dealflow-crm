@@ -84,6 +84,21 @@ genuinely lacks a `Message-ID`).
 Isolation adds `COMPLIANCE_BASE_URL`, `TWILIO_API_BASE`, `GMAIL_MOCK_URL`,
 `TWILIO_MOCK_SKIP_SIGNATURE`.
 
+## Integration acceptance steps (owed post-cred)
+
+- **Graph `internetMessageId` dedup — live verification (post-Azure-cred smoke).**
+  Create a Graph draft with a pre-set `internetMessageId`, send it, then verify
+  Graph honored it (the Sent copy's `internetMessageId` equals what we set) so a
+  retry / Sent-folder re-sync produces NO duplicate (the `@unique providerMessageId`
+  short-circuits). **If Graph strips or overrides `internetMessageId` on draft
+  creation**, switch the Graph path to Gmail's fallback pattern: track a
+  client-side id and do a provider-message-id upsert-check (SELECT before insert)
+  in the send tx instead of relying on the header round-trip. `parseGraphMessage`
+  already falls back to the Graph `id` when `internetMessageId` is absent, so the
+  reconstruction side needs no change — only the outbound key strategy.
+- **Gmail/Graph live OAuth round-trip** once creds land — connect a real account,
+  backfill + delta, send + receive.
+
 ## Known-open (next)
 
 - **Live provider verification** — Gmail/Graph run against mocks; when Google Cloud
