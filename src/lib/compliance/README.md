@@ -43,12 +43,28 @@ route through the planner.
 ## Boot in isolation (Gate 1)
 
 ```bash
+# With Doppler:
 pnpm exec doppler run -- bash scripts/run-isolation-boot.sh
+# Without Doppler (reads .env directly — must define DATABASE_URL_MAIN):
+bash scripts/run-isolation-boot.sh
 ```
 Needs `DATABASE_URL_MAIN` (Railway dev DB, or a local docker Postgres:
 `docker compose up -d postgres` then point `DATABASE_URL_MAIN` at it). Runs the
 iCloud sweep, `prisma migrate deploy`, seeds fixtures, boots `pnpm dev`, and
 smokes `callable-now` at a controlled ET instant. M1 boots with NO vendor.
+
+## Gotchas (repo-wide, learned the hard way)
+
+- **vitest `@` alias + iCloud spaces.** The repo lives under a path with spaces
+  (`Antigravity Projects/`). `new URL('./src', import.meta.url).pathname` leaves
+  the spaces percent-encoded (`%20`), which breaks module resolution for every
+  `@/...` import in tests. Fix (in `vitest.config.ts`): resolve the alias with
+  `fileURLToPath(new URL('./src', import.meta.url))`, which decodes it. Agent B
+  hit the same thing — if a new slice's tests fail with "Cannot find package
+  '@/...'", this is why.
+- **iCloud ` 2.ts` duplicates.** iCloud silently clones files as `foo 2.ts`,
+  fooling grep and compiling stale copies. Sweep before every session; the boot
+  script and CI both abort if any exist.
 
 Automated gates (no DB): `pnpm exec vitest run --config vitest.agent-c.config.ts --coverage`.
 

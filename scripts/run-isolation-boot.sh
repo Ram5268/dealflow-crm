@@ -10,6 +10,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Env: prefer Doppler when active, else fall back to a plain .env (Agent A/B
+# parity — run `bash scripts/run-isolation-boot.sh` with no Doppler). The .env
+# must define DATABASE_URL_MAIN (the name schema.prisma's datasource reads).
+if [ -z "${DOPPLER_TOKEN:-}" ] && [ -z "${DOPPLER_PROJECT:-}" ] && [ -f .env ]; then
+  echo "==> Doppler not active; sourcing .env"
+  set -a; . ./.env; set +a
+fi
+if [ -z "${DATABASE_URL_MAIN:-}" ]; then
+  echo "ABORT: DATABASE_URL_MAIN is unset. Add it to .env (or run under Doppler)." >&2
+  exit 1
+fi
+
 echo "==> 1/6 iCloud duplicate sweep"
 DUPES=$(find . -type f \( -name "* 2.ts" -o -name "* 2.tsx" -o -name "* 2.json" \) -not -path "./node_modules/*" -not -path "./.next/*" -print)
 if [ -n "$DUPES" ]; then
