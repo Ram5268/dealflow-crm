@@ -1,0 +1,684 @@
+// dealflow-crm — CONSOLIDATED Prisma schema (all 4 slices).
+// FROZEN. Any change routes through the planner. Never patch locally.
+// Includes cross-critic fixes: OAuthCredential added, Call.emittedAt added,
+// BulkScrubCheckpoint added, Message.providerDeliveryState added, Brief 32
+// property/motivation fields intentionally NOT mirrored (0% populated in real
+// DealFlow data — Zapier off; only add via new-CRM ingest paths).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_MAIN")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tenancy — single seat MVP; multi-seat seams preserved on every table
+// ═══════════════════════════════════════════════════════════════════
+model Organization {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  users            User[]
+  leads            Lead[]
+  contacts         Contact[]
+  dialSessions     DialSession[]
+  scrubLogs        ScrubLog[]
+  messages         Message[]
+  savedViews       SavedView[]
+  oauthCredentials OAuthCredential[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String   @unique
+  displayName    String
+  createdAt      DateTime @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  activities   Activity[]
+  calls        Call[]
+  dialSessions DialSession[]
+
+  @@index([organizationId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent A — Core Data & Smart Views (owns writes)
+// ═══════════════════════════════════════════════════════════════════
+model Lead {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  displayName           String
+  name                  String?
+  description           String?
+  source                String?  // convention: "import:" + importBatchId
+  statusId              String?
+  statusLabel           String?
+  url                   String?
+  addresses             Json     @default("[]")
+  primaryAddressFull    String?
+  primaryAddressSummary String?
+  timezone              String?
+  localtime             String?
+
+  // Ammunition — promoted from CustomFieldValue for hot-path perf
+  priorityScore         Int?
+  topMatchFit           Int?
+  captureStatus         String?
+  matchReason           String?
+  dealflowDeepLink      String?
+
+  // Provenance for DealFlow signal join
+  mojoId                String?  @unique
+  dealflowSignalSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization       @relation(fields: [organizationId], references: [id])
+  contacts      Contact[]
+  opportunities Opportunity[]
+  tasks         Task[]
+  activities    Activity[]
+  customValues  CustomFieldValue[]
+
+  @@index([organizationId])
+  @@index([organizationId, priorityScore(sort: Desc)])
+  @@index([organizationId, statusId])
+  @@index([mojoId])
+}
+
+model Contact {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String
+  displayName    String
+  name           String?
+  title          String?
+  timezone       String?
+  timezoneSource String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id])
+  lead         Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  phones       ContactPhone[]
+  emails       ContactEmail[]
+  urls         ContactUrl[]
+  activities   Activity[]
+
+  @@index([organizationId])
+  @@index([leadId])
+}
+
+model ContactPhone {
+  id                 String    @id @default(cuid())
+  contactId          String
+  phone              String    // E.164
+  phoneFormatted     String?
+  type               String
+  country            String?
+  outboundSmsBlocked Boolean   @default(false)
+  isPrimary          Boolean   @default(false)
+  lineType           String?
+  lineTypeVerifiedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@index([phone])
+  @@unique([contactId, phone])
+}
+
+model ContactEmail {
+  id             String  @id @default(cuid())
+  contactId      String
+  email          String
+  type           String
+  isUnsubscribed Boolean @default(false)
+  isPrimary      Boolean @default(false)
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@unique([contactId, email])
+}
+
+model ContactUrl {
+  id        String @id @default(cuid())
+  contactId String
+  type      String
+  url       String
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+}
+
+model Opportunity {
+  id             String    @id @default(cuid())
+  organizationId String
+  leadId         String
+  contactId      String?
+  pipelineId     String?
+  statusId       String?
+  statusLabel    String?
+  statusType     String
+  confidence     Int       @default(0)
+  value          Int?
+  valuePeriod    String    @default("one_time")
+  valueCurrency  String    @default("USD")
+  note           String?
+  dateWon        DateTime?
+  dateLost       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([leadId])
+}
+
+model Task {
+  id             String    @id @default(cuid())
+  organizationId String
+  leadId         String?
+  contactId      String?
+  type           String
+  text           String
+  dueDate        DateTime?
+  isDateless     Boolean   @default(false)
+  isComplete     Boolean   @default(false)
+  completedAt    DateTime?
+  assignedToId   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([assignedToId, isComplete, dueDate])
+}
+
+model Activity {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String?
+  contactId      String?
+  userId         String?
+  type           String
+  activityAt     DateTime
+  dateCreated    DateTime @default(now())
+  callId         String?
+  messageId      String?
+  taskId         String?
+  bodyText       String?
+  bodyHtml       String?
+
+  lead    Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, activityAt(sort: Desc)])
+  @@index([leadId, activityAt(sort: Desc)])
+  @@index([contactId, activityAt(sort: Desc)])
+}
+
+model CustomFieldDefinition {
+  id                    String   @id @default(dbgenerated("'cf_' || substr(md5(random()::text), 1, 24)"))
+  organizationId        String
+  objectType            String
+  name                  String
+  description           String?
+  type                  String
+  choices               String[] @default([])
+  acceptsMultipleValues Boolean  @default(false)
+  displayOrder          Int
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  values CustomFieldValue[]
+
+  @@index([organizationId, objectType, displayOrder])
+  @@unique([organizationId, objectType, name])
+}
+
+model CustomFieldValue {
+  id             String    @id @default(cuid())
+  organizationId String
+  definitionId   String
+  objectType     String
+  objectId       String
+  valueText      String?
+  valueNumber    Float?
+  valueDate      DateTime?
+  valueJson      Json?
+
+  definition CustomFieldDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  lead       Lead?                 @relation(fields: [objectId], references: [id], onDelete: Cascade, map: "cfv_lead_fk")
+
+  @@index([organizationId, objectType, objectId])
+  @@index([definitionId])
+  @@unique([definitionId, objectId])
+}
+
+model SavedView {
+  id             String   @id @default(dbgenerated("'save_' || substr(md5(random()::text), 1, 24)"))
+  organizationId String
+  userId         String?
+  name           String
+  description    String?
+  type           String
+  sQuery         Json
+  selectedFields Json     @default("[]")
+  sort           Json     @default("[]")
+  resultsLimit   Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, type])
+}
+
+model CustomActivityType {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  namePlural     String
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, name])
+}
+
+model Attachment {
+  id             String   @id @default(cuid())
+  organizationId String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  storageKey     String
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+model ImportBatch {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  sourceLabel    String
+  filename       String
+  storageKey     String
+  status         String    @default("pending")
+  mappingJson    Json?
+  totalRows      Int       @default(0)
+  importedRows   Int       @default(0)
+  duplicateRows  Int       @default(0)
+  skippedRows    Int       @default(0)
+  errorRows      Int       @default(0)
+  errorLog       Json      @default("[]")
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  @@index([organizationId, createdAt(sort: Desc)])
+}
+
+model DealFlowDerivedSignal {
+  id                     String   @id @default(cuid())
+  organizationId         String
+  mojoId                 String   @unique
+  queueRank              Int?
+  priorityScore          Int?
+  queueReason            String?
+  primaryMatchId         String?
+  primaryMatchFit        Int?
+  primaryCaptureStatus   String?
+  primaryMatchConfidence String?
+  syncedAt               DateTime @default(now())
+  dealflowRawJson        Json
+
+  @@index([organizationId, priorityScore(sort: Desc)])
+  @@index([syncedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent B — Telephony (owns writes)
+// ═══════════════════════════════════════════════════════════════════
+model DialSession {
+  id             String    @id @default(dbgenerated("'dial_' || substr(md5(random()::text), 1, 24)"))
+  organizationId String
+  userId         String
+  sourceType     String
+  sourceValue    String
+  method         String
+  lineCount      Int       @default(1)
+  maxLineCount   Int       @default(3)
+  status         String    @default("active")
+  callerId       String
+  ringTimeoutSec Int       @default(19)
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  calls        Call[]
+
+  @@index([organizationId, startedAt(sort: Desc)])
+}
+
+model Call {
+  id                     String    @id @default(dbgenerated("'call_' || substr(md5(random()::text), 1, 24)"))
+  organizationId         String
+  userId                 String?
+  leadId                 String?
+  contactId              String?
+  dialSessionId          String?
+  direction              String
+  callMethod             String
+  disposition            String?
+  status                 String    @default("created")
+  source                 String    @default("Close.io")
+  localPhone             String
+  remotePhone            String
+  duration               Int?
+  cost                   Decimal?  @db.Decimal(10, 4)
+  providerCallSid        String    @unique
+  providerStatusCallback String?
+  recordingUrl           String?
+  recordingDurationSec   Int?
+  voicemailUrl           String?
+  voicemailDurationSec   Int?
+  outcomeId              String?
+  noteHtml               String?
+  activityAt             DateTime  @default(now())
+  dateCreated            DateTime  @default(now())
+  emittedAt              DateTime?
+
+  dialSession DialSession? @relation(fields: [dialSessionId], references: [id], onDelete: SetNull)
+  user        User?        @relation(fields: [userId], references: [id])
+  legs        CallLeg[]
+
+  @@index([organizationId, activityAt(sort: Desc)])
+  @@index([dialSessionId])
+  @@index([providerCallSid])
+}
+
+model CallLeg {
+  id                  String    @id @default(cuid())
+  callId              String
+  contactPhoneId      String
+  providerLegSid      String
+  startedAt           DateTime  @default(now())
+  connectedAt         DateTime?
+  endedAt             DateTime?
+  amdResult           String?
+  amdConfidence       Float?
+  disposition         String?
+  droppedLoserMessage Boolean   @default(false)
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@index([providerLegSid])
+}
+
+model PacingMetric {
+  id                String   @id @default(cuid())
+  organizationId    String
+  dialSessionId     String?
+  minuteBucket      DateTime
+  dialsInitiated    Int      @default(0)
+  humansReached     Int      @default(0)
+  amdMachineHang    Int      @default(0)
+  abandonedCalls    Int      @default(0)
+  amdFalsePositive  Int      @default(0)
+  currentLineCount  Int?
+
+  @@index([organizationId, minuteBucket(sort: Desc)])
+  @@index([dialSessionId, minuteBucket(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent C — Compliance (owns writes)
+// ═══════════════════════════════════════════════════════════════════
+model DncSuppression {
+  id             String   @id @default(cuid())
+  organizationId String
+  phone          String
+  source         String
+  addedAt        DateTime @default(now())
+  addedBy        String?
+  reason         String?
+
+  @@unique([organizationId, phone, source])
+  @@index([organizationId, phone])
+}
+
+model LitigatorSuppression {
+  id             String   @id @default(cuid())
+  organizationId String
+  phone          String
+  vendor         String
+  vendorMatchId  String?
+  addedAt        DateTime @default(now())
+
+  @@unique([organizationId, phone, vendor])
+  @@index([organizationId, phone])
+}
+
+model MobileLineCache {
+  id             String   @id @default(cuid())
+  organizationId String
+  phone          String
+  lineType       String
+  carrier        String?
+  checkedAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@unique([organizationId, phone])
+  @@index([expiresAt])
+}
+
+model CallingWindowConfig {
+  id                String    @id @default(cuid())
+  organizationId    String
+  timezone          String
+  earliestHour      Int       @default(9)
+  latestHour        Int       @default(20)
+  allowedDaysOfWeek Int[]     @default([1, 2, 3, 4, 5])
+  policyConfirmedBy String?
+  policyConfirmedAt DateTime?
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([organizationId, timezone])
+}
+
+model HolidaySuppressionDate {
+  id             String   @id @default(cuid())
+  organizationId String
+  date           DateTime @db.Date
+  scope          String
+  name           String
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, date, scope])
+  @@index([organizationId, date])
+}
+
+model ScrubLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  phone          String
+  contactPhoneId String?
+  operation      String
+  result         String
+  detail         Json?
+  checkedAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, checkedAt(sort: Desc)])
+  @@index([phone])
+}
+
+model BulkScrubCheckpoint {
+  id             String   @id @default(cuid())
+  organizationId String
+  importBatchId  String?
+  lastProcessedPhone String?
+  processedCount Int      @default(0)
+  totalCount     Int      @default(0)
+  status         String   @default("running")
+  startedAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, importBatchId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent D — Communications (owns writes)
+// ═══════════════════════════════════════════════════════════════════
+model OAuthCredential {
+  id                     String   @id @default(cuid())
+  organizationId         String
+  userId                 String?
+  provider               String   // gmail | msft-graph
+  accessTokenEncrypted   String
+  refreshTokenEncrypted  String?
+  scope                  String?
+  expiresAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
+}
+
+model Message {
+  id                    String    @id @default(cuid())
+  organizationId        String
+  leadId                String?
+  contactId             String?
+  userId                String?
+  channel               String
+  direction             String
+  status                String
+  providerDeliveryState String?
+  threadId              String?
+  fromAddress           String
+  toAddresses           String[]  @default([])
+  ccAddresses           String[]  @default([])
+  bccAddresses          String[]  @default([])
+  subject               String?
+  bodyText              String?
+  bodyHtml              String?
+  smsRemotePhone        String?
+  smsLocalPhone         String?
+  templateId            String?
+  sequenceId            String?
+  sequenceEnrollmentId  String?
+  providerMessageId     String?   @unique
+  cost                  Decimal?  @db.Decimal(10, 4)
+  errorMessage          String?
+  dateScheduled         DateTime?
+  dateSent              DateTime?
+  activityAt            DateTime  @default(now())
+  dateCreated           DateTime  @default(now())
+
+  // PREFLIGHT DEVIATION (flag for planner): back-relation added to satisfy
+  // Organization.messages opposite-field requirement. Mirrors the pattern used
+  // by every other org-owned model. Strictly additive; no column change.
+  organization          Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, activityAt(sort: Desc)])
+  @@index([threadId])
+  @@index([providerMessageId])
+}
+
+model EmailThread {
+  id               String   @id @default(cuid())
+  organizationId   String
+  leadId           String?
+  contactId        String?
+  subject          String
+  participants     String[] @default([])
+  messageCount     Int      @default(0)
+  firstMessageAt   DateTime
+  lastMessageAt    DateTime
+  providerThreadId String?  @unique
+  createdAt        DateTime @default(now())
+
+  @@index([organizationId, lastMessageAt(sort: Desc)])
+}
+
+model MessageTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  channel        String
+  subject        String?
+  bodyText       String
+  bodyHtml       String?
+  mergeFields    String[] @default([])
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, channel])
+}
+
+model Sequence {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  channel        String
+  blackoutDates  String[] @default([])
+  createdAt      DateTime @default(now())
+
+  steps       SequenceStep[]
+  enrollments SequenceEnrollment[]
+
+  @@index([organizationId])
+}
+
+model SequenceStep {
+  id         String   @id @default(cuid())
+  sequenceId String
+  ordinal    Int
+  delayHours Int
+  channel    String
+  templateId String
+  createdAt  DateTime @default(now())
+
+  sequence Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@index([sequenceId, ordinal])
+}
+
+model SequenceEnrollment {
+  id             String    @id @default(cuid())
+  organizationId String
+  sequenceId     String
+  contactId      String
+  status         String    @default("active")
+  currentStepId  String?
+  enrolledAt     DateTime  @default(now())
+  finishedAt     DateTime?
+
+  sequence Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([contactId, status])
+}

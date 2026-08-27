@@ -1,0 +1,78 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Queue — Smart-View Call Queue",
+    "version": "0.1.0",
+    "description": "Resolve a saved view into an ordered, compliance-filtered call queue. Owned by Agent A."
+  },
+  "paths": {
+    "/api/queue": {
+      "get": {
+        "operationId": "getQueue",
+        "summary": "Get the ordered call queue for a saved view",
+        "parameters": [
+          {
+            "name": "viewId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered queue with exclusion counts",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/QueueResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "QueueResponse": {
+        "type": "object",
+        "required": ["view", "leads", "generatedAt"],
+        "properties": {
+          "view": {
+            "type": "object",
+            "required": ["id", "name"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" }
+            }
+          },
+          "leads": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/QueueLead" }
+          },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "stale": { "type": "boolean" },
+          "staleReason": { "type": "string" },
+          "excludedNoPhone": { "type": "integer" },
+          "excludedCompliance": { "type": "integer" }
+        }
+      },
+      "QueueLead": {
+        "type": "object",
+        "required": ["leadId", "contactId", "primaryPhoneE164"],
+        "additionalProperties": true,
+        "properties": {
+          "leadId": { "type": "string" },
+          "contactId": { "type": "string" },
+          "primaryPhoneE164": { "type": "string" },
+          "ammunition": { "type": "object", "additionalProperties": true }
+        }
+      }
+    }
+  }
+}

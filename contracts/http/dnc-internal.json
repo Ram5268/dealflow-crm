@@ -1,0 +1,60 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Compliance — Internal DNC Add",
+    "version": "0.1.0",
+    "description": "Add a phone to the org's internal Do-Not-Call suppression list. Owned by Agent C."
+  },
+  "paths": {
+    "/api/compliance/dnc/internal": {
+      "post": {
+        "operationId": "complianceAddInternalDnc",
+        "summary": "Add a phone to the internal DNC list",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DncInternalRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Phone recorded (or already present) on the internal DNC list",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DncInternalResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DncInternalRequest": {
+        "type": "object",
+        "required": ["phone", "reason"],
+        "properties": {
+          "phone": { "type": "string", "description": "E.164 phone number" },
+          "reason": { "type": "string" }
+        }
+      },
+      "DncInternalResponse": {
+        "type": "object",
+        "required": ["id", "phone", "source", "addedAt", "added"],
+        "properties": {
+          "id": { "type": "string" },
+          "phone": { "type": "string" },
+          "source": { "type": "string", "const": "internal" },
+          "addedAt": { "type": "string", "format": "date-time" },
+          "added": {
+            "type": "boolean",
+            "description": "false when the phone was already suppressed (idempotent)."
+          }
+        }
+      }
+    }
+  }
+}

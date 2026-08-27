@@ -1,0 +1,87 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Compliance — Callable Now",
+    "version": "0.1.0",
+    "description": "Batch check whether contact phones are callable at an instant. Owned by Agent C."
+  },
+  "paths": {
+    "/api/compliance/callable-now": {
+      "post": {
+        "operationId": "complianceCallableNow",
+        "summary": "Resolve callable status for up to 100 contact phones",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CallableNowRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-phone callable results",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CallableNowResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ReasonCode": {
+        "type": "string",
+        "enum": [
+          "internal_dnc", "federal_dnc", "state_dnc", "litigator",
+          "outside_calling_window_hour", "outside_calling_window_day",
+          "holiday_federal", "holiday_state", "policy_unconfirmed",
+          "timezone_unresolved", "vendor_error", "window_stale"
+        ]
+      },
+      "CallableNowRequest": {
+        "type": "object",
+        "required": ["contactPhoneIds"],
+        "properties": {
+          "contactPhoneIds": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 100
+          },
+          "atInstant": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO-8601 instant to evaluate against; defaults to now."
+          }
+        }
+      },
+      "CallableNowResponse": {
+        "type": "object",
+        "required": ["results"],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CallableNowResult" }
+          }
+        }
+      },
+      "CallableNowResult": {
+        "type": "object",
+        "required": ["contactPhoneId", "phone", "callable", "reasons"],
+        "properties": {
+          "contactPhoneId": { "type": "string" },
+          "phone": { "type": "string" },
+          "callable": { "type": "boolean" },
+          "reasons": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ReasonCode" }
+          },
+          "reasonDetails": { "type": "object", "additionalProperties": true }
+        }
+      }
+    }
+  }
+}
