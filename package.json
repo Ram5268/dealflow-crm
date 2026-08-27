@@ -46,6 +46,7 @@
     "dotenv": "^17.4.2",
     "libphonenumber-js": "^1.13.11",
     "lru-cache": "^11.5.2",
+    "googleapis": "^176.0.0",
     "luxon": "^3.7.2",
     "next": "16.2.5",
     "papaparse": "^5.7.0",

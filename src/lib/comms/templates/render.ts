@@ -167,7 +167,7 @@ export async function render(
 }
 
 async function buildMergeSources(ctx: RenderContext): Promise<MergeSources> {
-  const { prisma } = await import('@/lib/prisma')
+  const { prisma } = await import('../../prisma')
 
   const [contact, lead] = await Promise.all([
     ctx.contactId
