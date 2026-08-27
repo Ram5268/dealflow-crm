@@ -13,3 +13,5 @@ backups/
 # "* 2.ts" / "* 2.tsx" duplicate files that fool grep-based audits.
 **/* 2.ts
 **/* 2.tsx
+coverage-comms/
+**/* 2.md

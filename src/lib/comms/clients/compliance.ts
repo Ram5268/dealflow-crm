@@ -3,8 +3,10 @@
  * write in the whole system goes through here (`/dnc/internal`).
  *
  * - `scrub` is FAIL-CLOSED: any timeout/error/non-2xx → every phone treated as
- *   NOT callable with `vendor_error` (the frozen REASON_CODES value; the brief's
- *   assumed `compliance_unavailable` isn't in Agent C's published enum).
+ *   NOT callable with `compliance_unavailable` — the one service-level REASON_CODE
+ *   (Agent C's PR#2 enum). Like Agent A's compliance-bridge, D cannot attribute the
+ *   failure to a specific vendor when Agent C itself is unreachable, so it emits the
+ *   service-level code rather than any `vendor_error_*` variant.
  * - `addInternalDnc` tolerates C's response shape: maps `dncId → id`, defaults
  *   `added=true` when absent, so a subset response never breaks the STOP flow.
  *
@@ -12,7 +14,7 @@
  * real service in prod via a relative/absolute URL).
  */
 
-const FAIL_CLOSED_REASON = 'vendor_error'
+const FAIL_CLOSED_REASON = 'compliance_unavailable'
 
 function baseUrl(): string {
   return process.env.COMPLIANCE_BASE_URL ?? 'http://localhost:4001'

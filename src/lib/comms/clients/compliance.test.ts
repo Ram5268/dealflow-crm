@@ -20,16 +20,16 @@ describe('scrub', () => {
     expect(r).toEqual([{ phone: '+15551234567', callable: true, reasons: [] }])
   })
 
-  it('fails closed on non-2xx (vendor_error, not callable)', async () => {
+  it('fails closed on non-2xx (compliance_unavailable, not callable)', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
     const r = await scrub(['+15551234567'])
-    expect(r).toEqual([{ phone: '+15551234567', callable: false, reasons: ['vendor_error'] }])
+    expect(r).toEqual([{ phone: '+15551234567', callable: false, reasons: ['compliance_unavailable'] }])
   })
 
   it('fails closed on network throw', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
     const r = await scrub(['+1a', '+1b'])
-    expect(r.every((x) => x.callable === false && x.reasons.includes('vendor_error'))).toBe(true)
+    expect(r.every((x) => x.callable === false && x.reasons.includes('compliance_unavailable'))).toBe(true)
   })
 
   it('short-circuits empty input (no fetch)', async () => {
@@ -90,6 +90,6 @@ describe('scrub — malformed body', () => {
     fetchMock.mockResolvedValue(ok({ results: 'nope' }))
     const r = await scrub(['+15551112222'])
     expect(r[0].callable).toBe(false)
-    expect(r[0].reasons).toEqual(['vendor_error'])
+    expect(r[0].reasons).toEqual(['compliance_unavailable'])
   })
 })

@@ -23,16 +23,18 @@ differ. Milestones:
 - **CRUD APIs**: templates, sequences (+ steps), enrollments (enroll / pause /
   resume / cancel), Zod-validated.
 
-Gate 1 (isolation boot: app + 4 mocks, all `/health` 200) · Gate 3 (behavioral
-smokes + coverage floors, **both providers**). 234 tests, `tsc --noEmit` clean, no
-iCloud ` 2.ts` duplicates, no `.env` committed.
+Rebased on merged `main` (`88e992d`, post A + C + B). Gate 1 (isolation boot: app +
+4 mocks) · Gate 3 (behavioral smokes + coverage floors, **both providers**). 226
+comms unit tests green, `tsc --noEmit` clean, no iCloud ` 2.ts` duplicates, no `.env`
+committed.
 
 ## Contract exposures (this slice)
 
 - **Emits** (channel `crm_message`): `message.received`. **No `eventName`/`type`
   discriminant** on the wire — routing is `(channel, payload-shape)`, matching the
   fleet convention. Every NOTIFY is validated against the frozen `message.received`
-  Zod schema before `pg_notify` (`events.ts`).
+  Zod schema before `pg_notify` (`events.ts`). (Grep-verified: zero
+  `type: 'message.received'` in `src/`.)
 - **Consumes**: none via event. Two runtime cross-slice touches, both narrow:
   - **The ONE cross-slice write** — SMS STOP → `POST /api/compliance/dnc/internal`
     (C) `{ phoneE164, reason:'sms_stop_received', addedBy:'sms-inbound-handler' }`.
@@ -54,104 +56,95 @@ iCloud ` 2.ts` duplicates, no `.env` committed.
   `gmailWatchExpiresAt`, `status @default("active")`. Only D reads/writes
   `OAuthCredential`, so zero cross-agent blast radius. GCM ciphertext is packed
   (`iv.tag.ct`) into the existing token columns → **no per-field IV/tag columns**.
-  This is D's **entire** schema delta vs A's frozen baseline (see below).
-- **`Message.providerDeliveryState`** — **already present in A's `initial`
-  migration** (`20260827045415_initial`, line 486). No D migration needed; flagged
-  here for the merge spot-check.
-- **Organization back-relations** on `Message` / `EmailThread` / `MessageTemplate` /
-  `Sequence` — additive opposite-field relations, already baked into A's `initial`.
-  No delta.
+  This is D's **entire** schema delta vs A's frozen baseline.
+- **`Message.providerDeliveryState`** — **already in A's `initial`** migration
+  (`20260827045415_initial`). No D migration needed; flagged for the spot-check.
+- Every D-owned table (`Message`, `EmailThread`, `MessageTemplate`, `Sequence`,
+  `SequenceStep`, `SequenceEnrollment`) is also already created by A's `initial`.
 
-> **Verified against `origin/agent-a`:** A's `initial` creates every D-owned table
-> (`Message`, `EmailThread`, `MessageTemplate`, `Sequence`, `SequenceStep`,
-> `SequenceEnrollment`) and `Message.providerDeliveryState`. A's `OAuthCredential`
-> has the **base** columns only. So D's post-rebase migration is exactly a
-> **5-column `ALTER TABLE "OAuthCredential" ADD COLUMN …`** — nothing else. See
-> "Notes for the merge."
+> **Baseline migration (done in this PR):** `git diff origin/main -- prisma/schema.prisma`
+> is *exactly* the 5 `OAuthCredential` columns. So the post-rebase migration
+> `20260827130000_oauth_credential_add_sync_state` is a single
+> `ALTER TABLE "OAuthCredential" ADD COLUMN …` (verified), timestamped after all four
+> upstream migrations (A `initial`+`add_notify_overflow`, B `call_add_composite_unique`+
+> `call_source_default_flip`). Generated offline via `migrate diff`; recorded on the
+> shared DB via `migrate resolve --applied` (columns already exist from the earlier
+> `db push`, so the ALTER is not re-run). `migrate status` → up to date, no drift.
 
 ## Cross-slice notes
 
 - **Both providers, one path.** `gmail-sync.ts` is provider-agnostic orchestration
-  over `SyncPorts`; Gmail and Graph share the reconstruction, dedup, and persist
-  ports. Only the client + cursor differ (Gmail threadId/historyId, Graph
+  over `SyncPorts`; Gmail and Graph share reconstruction, dedup, and persist ports.
+  Only the client + cursor differ (Gmail threadId/historyId, Graph
   conversationId/deltaLink). **Graph is REST/`fetch`, not the SDK** — same
   configurable-base-URL mockability as Twilio.
 - **`internetMessageId` dedup — one live check owed.** Sent-mail dedup keys
   `providerMessageId` on a pre-set client-side id (Gmail: RFC5322 `Message-ID`;
   Graph: `internetMessageId` on the draft) so the Sent-folder re-sync short-circuits
   on the `@unique`. Graph honoring `internetMessageId`-on-draft is **assumed**;
-  post-Azure-cred acceptance step + fallback (client-side id + provider-message-id
-  upsert-check before send) documented in `docs/agent-d-handoff.md`.
-- **SMS parked.** `SMS_ENABLED=false` until the 10DLC campaign clears; the flip is a
-  runtime config change, not a code change. Gated three ways: `SMS_ENABLED` →
+  post-Azure-cred acceptance step + fallback documented in `docs/agent-d-handoff.md`.
+- **REASON_CODES converged (done in this PR).** C's PR #2 dropped the coarse
+  `vendor_error` and added the granular 19 + service-level `compliance_unavailable`.
+  D's SMS-path compliance scrub now fail-closes with **`compliance_unavailable`** —
+  the service-level code (same choice as A's compliance-bridge): when C itself is
+  unreachable there is no per-vendor verdict to name. `src/lib/comms` is grep-clean
+  of the dropped `vendor_error` value.
+- **Compliance mock split at rebase.** A/C's canonical contract mock
+  (`contracts/mocks/compliance/server.ts`, `createServer`/`computeResults`) is kept
+  byte-identical; D's behavioral mock (the `/scrub` + `/dnc/internal` DNC-ledger the
+  `gate1:smoke` needs, which the contract mock doesn't model) moved to
+  `contracts/mocks/compliance/comms-mock.ts`. D's three scripts repoint there; the
+  boot scripts stay on canonical.
+- **SMS parked.** `SMS_ENABLED=false` until 10DLC clears; the flip is a runtime
+  config change, not a code change. Gated three ways: `SMS_ENABLED` →
   `requireTwilioConfig` (fail-fast on missing 10DLC SIDs) → compliance scrub
   (fail-closed).
-- **REASON_CODES convergence at rebase.** D's SMS-path compliance scrub currently
-  fail-closes with `vendor_error` (the frozen value at build time). C's PR #2 splits
-  `vendor_error` into the granular 19-code enum
-  (`vendor_error_dnc|_litigator|_mobile_line|_not_configured`, + `compliance_unavailable`).
-  At the rebase, converge D's fail-closed reason to C's granular code — tolerant, and
-  never a positive signal from a failure.
 - **`jobs/` dir is coverage-exempt.** `boss.ts`, `gmail-runner.ts`, `graph-runner.ts`,
   `*-delta.ts` are pg-boss infra (the singleton resists mocking) — covered by
-  `worker:smoke`, intentionally **outside** the brief's coverage-floor set
-  (`email/sequences/sms/templates`), not an oversight.
-- **Test-infra posture** (adopt A's shared-Railway-DB stance for DB-backed smokes):
-  `isolate:false`, `maxWorkers:1`, `pool:'forks'`, `fileParallelism:false`,
-  `?connection_limit=20&pool_timeout=30`. vitest `@` alias needs `fileURLToPath`
-  (iCloud path has spaces → `%20` breaks `new URL().pathname`); fixed centrally on
-  main, and D's tested files use relative imports as belt-and-suspenders.
+  `worker:smoke`, intentionally outside the comms coverage-floor set.
+- **Test-infra posture inherited from main** (A/B's shared-Railway-DB stance):
+  `globalSetup` pushes to `DATABASE_URL_PERF` with a URL guard; `pool:'forks'`,
+  `isolate:false`, `fileParallelism:false`, `maxWorkers:1`; `@` alias via
+  `fileURLToPath` (iCloud path spaces). D's comms unit suite is fully mocked (no live
+  DB), so `vitest.agent-d.config.ts` runs it standalone (no globalSetup).
 
 ## Test coverage
 
-234 tests (unit + contract + behavioral smokes) across 28 files. `tsc --noEmit`
-clean. Per-dir **≥85% line + branch** floor met on every target dir across **both**
-providers at the last full `vitest run --coverage` (Gate 3): email ~96.5 / ~85.8,
-oauth ~95.7 / ~85.6, sequences ~96.1 / ~89.6, sms ~92.2 / ~90.3, templates
-~96.0 / ~89.5, clients ~96.2 / ~89.7 (line / branch). `jobs/` excluded (infra,
-`worker:smoke`-covered). Two behavioral smokes:
+226 comms unit tests across 28 files, all green; `tsc --noEmit` clean. Coverage
+floors are CI-enforceable via **`vitest.agent-d.config.ts`** (`pnpm test:coverage:comms`,
+mirrors `vitest.agent-c.config.ts`) — **≥85% lines + branches on every comms
+product-surface dir**, `jobs/**` excluded:
 
-- `pnpm gate1:smoke` — four acceptance paths against mocks + DB: (1) email send →
-  provider mock → `status:'sent'`; (2) inbound STOP → `POST /dnc/internal` 201 →
-  phone blocked; (3) Gmail delta → thread reconstructed → `crm_message` NOTIFY;
-  (4) Graph delta → thread reconstructed → `crm_message` NOTIFY.
-- `pnpm worker:smoke` — pg-boss worker consumes a queued `send-email`, AND the
-  enrollment → tick → enqueue → worker → sent chain fires.
+| dir | lines | branches |
+|---|---|---|
+| clients | 100 | 89.7 |
+| email | 98.0 | 85.8 |
+| oauth | 95.3 | 85.6 |
+| sequences | 96.7 | 89.6 |
+| sms | 93.9 | 90.3 |
+| templates | 98.8 | 89.5 |
 
-All re-verified at the rebase (runbook step 3).
+Two behavioral smokes (`pnpm gate1:smoke`, `pnpm worker:smoke`) exercise: email
+send → provider mock → `status:'sent'`; inbound STOP → `/dnc/internal` 201 → blocked;
+Gmail + Graph delta → thread reconstructed → `crm_message` NOTIFY; and the
+enrollment → tick → enqueue → worker → sent chain.
 
 ## Notes for the merge
 
-- **Migration baseline is owed AT the rebase, not before it.** D's only schema delta
-  vs A's frozen `initial` is the 5 additive `OAuthCredential` columns; A's `initial`
-  already creates every D-owned table + `Message.providerDeliveryState`. So, as the
-  **first** step of the PR #4 rebase (after A + C + B are on main and their
-  migrations are recorded on the shared DB):
-  1. `prisma migrate dev --create-only --name oauth_credential_add_sync_state`
-     → generates a single `ALTER TABLE "OAuthCredential" ADD COLUMN emailAddress …,
-     gmailHistoryId …, graphDeltaLink …, gmailWatchExpiresAt …, status …`,
-     timestamped **after** A's migrations (same play as C's `BulkScrubCheckpoint`
-     reshape and B's S1/S2).
-  2. `prisma migrate resolve --applied <ts>_oauth_credential_add_sync_state` — the
-     shared dev DB already has these columns from the earlier `db push`, so **resolve
-     marks the migration applied without re-running the ALTER** (which would fail:
-     columns exist). On a fresh PROD DB, `migrate deploy` runs the ALTER normally.
-  3. `prisma migrate status` → up to date, no drift.
-  - **Why not during standby:** with no migrations dir in the worktree until the
-    rebase, `migrate dev` now would diff the full schema against an empty history →
-    a whole-fleet init migration owned by D + drift detection against the shared
-    Railway DB (reset risk). Deferring keeps it a clean 5-column delta on A's baseline.
-- `SMS_ENABLED=false` in the prod `.env`; flip only after 10DLC clearance.
+- **Migration baseline is in this PR and already recorded on the shared DB.**
+  `20260827130000_oauth_credential_add_sync_state` (5-column additive ALTER) was
+  `migrate resolve --applied` against the shared dev DB (columns pre-exist from
+  `db push`), so a post-merge `migrate deploy` is a no-op there and runs the ALTER
+  normally on a fresh PROD DB. Sorts after all four upstream migrations.
+- `SMS_ENABLED=false` in prod `.env`; flip only after 10DLC clearance.
 - **Graph `internetMessageId` live-acceptance** owed post-Azure-cred (handoff §
-  "Integration acceptance steps") — create a draft with a pre-set
-  `internetMessageId`, send, verify Graph honored it (no dedup collision on retry).
-- Converge the SMS-path compliance fail-closed reason to C's granular `REASON_CODES`.
+  "Integration acceptance steps").
 - **Deferred live verification (owed by Ryan, env drop-in, no code change):** Google
-  Cloud (`GOOGLE_CLIENT_ID/SECRET`) + Azure (`MSFT_GRAPH_CLIENT_ID/SECRET`) creds →
-  `.env` for a real Gmail/Graph OAuth round-trip; Twilio 10DLC SIDs to un-park SMS.
+  Cloud + Azure creds → `.env` for a real Gmail/Graph OAuth round-trip; Twilio 10DLC
+  SIDs to un-park SMS.
 
 ## Ready to merge
 
-Rebased on merged `main` (post A + C + B). **Fourth + last in dependency order
-(A → C → B → D).** Composed boot available via `pnpm run boot:all` (health matrix
-across all four slices).
+Rebased on merged `main` (`88e992d`, post A + C + B). **Fourth + last in dependency
+order (A → C → B → D)** — this is the final slice; on merge the whole CRM is on main.
+Composed boot available via `pnpm run boot:all` (health matrix across all four slices).
