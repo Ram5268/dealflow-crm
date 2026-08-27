@@ -1,5 +1,16 @@
-import { areReasonsKnown, unknownReasons } from '@/lib/shared/reason-codes'
+import { areReasonsKnown, isReasonCode, unknownReasons } from '@/lib/shared/reason-codes'
+import type { ReasonCode } from '@/lib/shared/reason-codes'
 import { captureException, captureWarning } from '@/lib/shared/sentry'
+
+// A's single fail-closed reason code. Typed as ReasonCode on purpose: when the
+// shared enum changes (e.g. Agent C's PR#2 rewrite drops the coarse `vendor_error`
+// in favour of vendor-specific variants + the service-level `compliance_unavailable`),
+// this line breaks the BUILD loudly instead of silently shipping a stale code on
+// the compliance-outage path — the exact silent-failure shape the audit caught.
+// PR#2 REMAP TARGET: 'compliance_unavailable' (service-level fail-closed) once C
+// re-adds it. Do not map to any `vendor_error_*` variant — A never learns which
+// vendor failed when C itself is unreachable/omitting.
+export const FAIL_CLOSED_REASON: ReasonCode = 'vendor_error'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compliance bridge — the ONLY path from A into Agent C's callable-now service.
@@ -24,7 +35,11 @@ export interface CallableEntry {
 
 export interface PhoneVerdict {
   callable: boolean
-  reasons: string[]
+  // ReasonCode[], not string[]: every reason A emits is compile-time checked
+  // against the shared enum, so the central vocabulary is a real drift tripwire
+  // rather than a comment. C's raw wire reasons stay `string[]` (RawResult) and
+  // are vetted/narrowed before they reach a verdict.
+  reasons: ReasonCode[]
 }
 
 export interface ComplianceOutcome {
@@ -126,7 +141,7 @@ export async function checkCallable(
       captureException(err, { dependency: 'compliance.callable-now', event: 'batch-failure' })
       connectivityFailure = true
       for (const e of batch) {
-        byPhoneId.set(e.contactPhoneId, { callable: false, reasons: ['vendor_error'] })
+        byPhoneId.set(e.contactPhoneId, { callable: false, reasons: [FAIL_CLOSED_REASON] })
       }
       continue
     }
@@ -140,7 +155,7 @@ export async function checkCallable(
           dependency: 'compliance.callable-now',
           contactPhoneId: e.contactPhoneId,
         })
-        byPhoneId.set(e.contactPhoneId, { callable: false, reasons: ['vendor_error'] })
+        byPhoneId.set(e.contactPhoneId, { callable: false, reasons: [FAIL_CLOSED_REASON] })
         continue
       }
       if (!areReasonsKnown(r.reasons)) {
@@ -149,9 +164,17 @@ export async function checkCallable(
           contactPhoneId: e.contactPhoneId,
           unknown: unknownReasons(r.reasons),
         })
-        byPhoneId.set(e.contactPhoneId, { callable: false, reasons: r.reasons })
+        // Fail-closed. Forward only the KNOWN subset of C's reasons (type-safe);
+        // the raw unknown codes are preserved in the Sentry warning above. Never
+        // emit an empty reasons array on a callable:false verdict.
+        const known = r.reasons.filter(isReasonCode)
+        byPhoneId.set(e.contactPhoneId, {
+          callable: false,
+          reasons: known.length ? known : [FAIL_CLOSED_REASON],
+        })
         continue
       }
+      // r.reasons narrowed to ReasonCode[] by the areReasonsKnown type guard.
       byPhoneId.set(e.contactPhoneId, { callable: r.callable, reasons: r.reasons })
     }
   }

@@ -8,7 +8,7 @@ export {
   type ReasonCode,
 } from '../../../contracts/http/reason-codes'
 
-import { REASON_CODES } from '../../../contracts/http/reason-codes'
+import { REASON_CODES, type ReasonCode } from '../../../contracts/http/reason-codes'
 
 // A depends on `timezone_unresolved` as its fail-closed fallback for the split
 // timezone-semantics rule (brief §7). Assert its presence at module load so a
@@ -22,10 +22,17 @@ if (!(REASON_CODES as readonly string[]).includes('timezone_unresolved')) {
 
 const REASON_CODE_SET = new Set<string>(REASON_CODES)
 
-// True if every reason string is a member of the frozen enum. A phone whose
-// reasons contain any unknown code is treated as a contract violation.
-export function areReasonsKnown(reasons: readonly string[]): boolean {
+// Type guard: true iff every reason string is a member of the frozen enum. A
+// phone whose reasons contain any unknown code is treated as a contract
+// violation. Narrows to ReasonCode[] so callers can forward the vetted array
+// into ReasonCode-typed fields without a cast.
+export function areReasonsKnown(reasons: readonly string[]): reasons is ReasonCode[] {
   return reasons.every((r) => REASON_CODE_SET.has(r))
+}
+
+// Element-level type guard, for `.filter(isReasonCode)` narrowing.
+export function isReasonCode(reason: string): reason is ReasonCode {
+  return REASON_CODE_SET.has(reason)
 }
 
 export function unknownReasons(reasons: readonly string[]): string[] {

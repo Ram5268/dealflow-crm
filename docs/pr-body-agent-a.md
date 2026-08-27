@@ -21,7 +21,14 @@ See `docs/agent-a-handoff.md` — includes:
 
 ## Test coverage
 
-146 tests (unit + contract + integration + perf). Per-file floors 85% stmts / 85% lines / 80% branches on 9 critical-path files. Gate 1 / 2 / 3 all green. `next build` clean, `tsc --noEmit` clean.
+150 tests (unit + contract + integration + perf), incl. 4 reason-code drift-guard tests (below). Per-file floors 85% stmts / 85% lines / 80% branches on 9 critical-path files. Gate 1 / 2 / 3 all green. `next build` clean, `tsc --noEmit` clean.
+
+## Reason-code drift guard (runbook M2 hardening, shipped in PR #1)
+
+Per the integration runbook v1.2, A ships two guards so C's PR #2 enum rewrite (drop coarse `vendor_error` → re-add service-level `compliance_unavailable`) can never silently ship a stale code on the compliance-outage path:
+- `PhoneVerdict.reasons` is now `ReasonCode[]` (was `string[]`); `areReasonsKnown` is a type guard; A's single fail-closed literal is the typed `FAIL_CLOSED_REASON: ReasonCode`. When the enum drops `vendor_error`, the build breaks at that line.
+- Unit tests assert every reason A emits on a fail-closed path ∈ `REASON_CODES`. Verified both axes fire under a simulated C-enum swap (tsc `TS2322` + 3 red tests), then reverted.
+- **PR #2 remap:** change `FAIL_CLOSED_REASON` to `'compliance_unavailable'` once C re-adds it. Do NOT map to any `vendor_error_*` variant — A never learns which vendor failed when C itself is unreachable.
 
 ## Notes for the merge
 

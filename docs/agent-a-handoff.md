@@ -36,6 +36,7 @@ curl localhost:3000/api/core-data/health   # → { status: "ok", ... }
 - **Compliance batch cap 100**, enforced by `resolveBatchSize()` (throws above 100) + the mock's 413.
 - **Timezone split semantics:** display fallback `America/New_York`; compliance request omits tz when unknown → C fail-closes with `timezone_unresolved` → counted in `excludedCompliance`, `stale` stays false.
 - **`REASON_CODES` sourced from `contracts/http/reason-codes.ts`**, re-exported via `src/lib/shared/reason-codes.ts` (asserts `timezone_unresolved` present at load).
+- **Reason-code drift guard (runbook M2).** `PhoneVerdict.reasons: ReasonCode[]` (not `string[]`); `areReasonsKnown` is a type guard; A's fail-closed literal is the typed `FAIL_CLOSED_REASON: ReasonCode = 'vendor_error'`. C's PR #2 rewrite (drops `vendor_error`, adds `compliance_unavailable`) will break the build here + redden `tests/unit/compliance-bridge.test.ts` — **PR #2 remap `FAIL_CLOSED_REASON → 'compliance_unavailable'`** (never a `vendor_error_*` variant; A can't know which vendor failed when C is unreachable). Verified both axes fire under a simulated swap.
 
 ## Known deviations / open planner items
 
