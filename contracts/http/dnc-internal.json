@@ -35,10 +35,11 @@
     "schemas": {
       "DncInternalRequest": {
         "type": "object",
-        "required": ["phone", "reason"],
+        "required": ["phone"],
         "properties": {
           "phone": { "type": "string", "description": "E.164 phone number" },
-          "reason": { "type": "string" }
+          "reason": { "type": "string", "description": "Optional (Brief C §7.4)" },
+          "addedBy": { "type": "string", "description": "Optional; User.id | \"user-request\"" }
         }
       },
       "DncInternalResponse": {

@@ -100,9 +100,12 @@ describe('event contracts parse a valid payload', () => {
 })
 
 describe('reason codes', () => {
-  it('exposes the frozen compliance vocabulary', () => {
+  it('exposes the frozen compliance vocabulary (Brief C §7A, 19 granular codes)', () => {
     expect(REASON_CODES).toContain('internal_dnc')
-    expect(REASON_CODES).toContain('window_stale')
-    expect(REASON_CODES.length).toBe(12)
+    expect(REASON_CODES).toContain('holiday_table_stale')
+    expect(REASON_CODES).toContain('phone_missing')
+    expect(REASON_CODES).toContain('vendor_error_dnc')
+    expect(REASON_CODES).toContain('circuit_open_dnc')
+    expect(REASON_CODES.length).toBe(19)
   })
 })

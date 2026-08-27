@@ -1,0 +1,37 @@
+{
+  "_note": "Mirror of scripts/seed-compliance-fixtures.ts. Shapes conform to SHARED_CONTEXT Contact/ContactPhone/Lead so Agent A's real writes are drop-in at integration. Lead.source uses the planner-locked 'import:' + importBatchId convention.",
+  "organization": { "id": "org_test", "slug": "dealflow-ryan", "name": "DealFlow Ryan (test)" },
+  "leads": [
+    { "id": "lead_nyc_01", "organizationId": "org_test", "displayName": "contact_nyc_01", "timezone": "America/New_York", "primaryAddressFull": "123 Test St", "addresses": [{ "state": "NY", "line1": "123 Test St" }] },
+    { "id": "lead_chi_01", "organizationId": "org_test", "displayName": "contact_chi_01", "timezone": "America/Chicago", "primaryAddressFull": "123 Test St", "addresses": [{ "state": "IL", "line1": "123 Test St" }] },
+    { "id": "lead_phx_01", "organizationId": "org_test", "displayName": "contact_phx_01", "timezone": "America/Phoenix", "primaryAddressFull": "123 Test St", "addresses": [{ "state": "AZ", "line1": "123 Test St" }] },
+    { "id": "lead_la_01", "organizationId": "org_test", "displayName": "contact_la_01", "timezone": "America/Los_Angeles", "primaryAddressFull": "123 Test St", "addresses": [{ "state": "CA", "line1": "123 Test St" }] },
+    { "id": "lead_notz_01", "organizationId": "org_test", "displayName": "contact_notz_01", "timezone": null, "primaryAddressFull": null, "addresses": [] },
+    { "id": "lead_idnc_01", "organizationId": "org_test", "displayName": "contact_internal_dnc_01", "timezone": "America/New_York", "primaryAddressFull": "123 Test St", "addresses": [{ "state": "NY", "line1": "123 Test St" }] },
+    { "id": "lead_import_01", "organizationId": "org_test", "displayName": "import fixture", "source": "import:ib_test_01", "timezone": "America/New_York" }
+  ],
+  "contacts": [
+    { "id": "contact_nyc_01", "organizationId": "org_test", "leadId": "lead_nyc_01", "timezone": "America/New_York" },
+    { "id": "contact_nyc_02", "organizationId": "org_test", "leadId": "lead_nyc_02", "timezone": "America/New_York" },
+    { "id": "contact_chi_01", "organizationId": "org_test", "leadId": "lead_chi_01", "timezone": "America/Chicago" },
+    { "id": "contact_phx_01", "organizationId": "org_test", "leadId": "lead_phx_01", "timezone": "America/Phoenix" },
+    { "id": "contact_la_01", "organizationId": "org_test", "leadId": "lead_la_01", "timezone": "America/Los_Angeles" },
+    { "id": "contact_notz_01", "organizationId": "org_test", "leadId": "lead_notz_01", "timezone": null },
+    { "id": "contact_internal_dnc_01", "organizationId": "org_test", "leadId": "lead_idnc_01", "timezone": "America/New_York" }
+  ],
+  "contactPhones": [
+    { "id": "cp_nyc_confirmed_01", "contactId": "contact_nyc_01", "phone": "+12125550001", "type": "mobile", "expect": "callable:true" },
+    { "id": "cp_nyc_unconfirmed_02", "contactId": "contact_nyc_02", "phone": "+12125550002", "type": "mobile", "expect": "callable:true (NY confirmed)" },
+    { "id": "cp_chi_01", "contactId": "contact_chi_01", "phone": "+13125550001", "type": "mobile", "expect": "policy_unconfirmed (Chicago present+unconfirmed)" },
+    { "id": "cp_phx_01", "contactId": "contact_phx_01", "phone": "+16025550001", "type": "mobile", "expect": "policy_unconfirmed (no config)" },
+    { "id": "cp_la_01", "contactId": "contact_la_01", "phone": "+13105550001", "type": "mobile", "expect": "policy_unconfirmed (no config)" },
+    { "id": "cp_notz_01", "contactId": "contact_notz_01", "phone": "+15555550999", "type": "mobile", "expect": "timezone_unresolved" },
+    { "id": "cp_internal_dnc_01", "contactId": "contact_internal_dnc_01", "phone": "+15555550101", "type": "mobile", "expect": "internal_dnc" }
+  ],
+  "callingWindowConfigs": [
+    { "timezone": "America/New_York", "earliestHour": 9, "latestHour": 20, "allowedDaysOfWeek": [1, 2, 3, 4, 5], "policyConfirmedBy": "user:ryan@dealflow|counsel:seed|date:2026-09-01" },
+    { "timezone": "America/Chicago", "earliestHour": 9, "latestHour": 20, "allowedDaysOfWeek": [1, 2, 3, 4, 5], "policyConfirmedBy": null }
+  ],
+  "internalDnc": [{ "phone": "+15555550101", "source": "internal" }],
+  "importBatches": [{ "id": "ib_test_01", "organizationId": "org_test", "status": "committed", "sourceLabel": "seed import" }]
+}

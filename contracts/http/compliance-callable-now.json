@@ -38,8 +38,11 @@
         "enum": [
           "internal_dnc", "federal_dnc", "state_dnc", "litigator",
           "outside_calling_window_hour", "outside_calling_window_day",
-          "holiday_federal", "holiday_state", "policy_unconfirmed",
-          "timezone_unresolved", "vendor_error", "window_stale"
+          "holiday_federal", "holiday_state", "holiday_table_stale",
+          "policy_unconfirmed", "timezone_unresolved", "timezone_invalid",
+          "vendor_error_dnc", "vendor_error_litigator", "vendor_error_mobile_line",
+          "vendor_error_not_configured", "circuit_open_dnc", "circuit_open_litigator",
+          "phone_missing"
         ]
       },
       "CallableNowRequest": {
