@@ -352,6 +352,19 @@ model DealFlowDerivedSignal {
   @@index([syncedAt])
 }
 
+// Overflow spill for NOTIFY payloads exceeding Postgres's 8kb cap (brief §5).
+// A-owned. Emitters serialize the full payload here, then NOTIFY a small
+// { overflow, overflowId } pointer; consumers re-fetch by overflowId.
+model NotifyOverflow {
+  id         String    @id @default(cuid())
+  channel    String
+  payload    Json
+  createdAt  DateTime  @default(now())
+  consumedAt DateTime?
+
+  @@index([channel, createdAt])
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Agent B — Telephony (owns writes)
 // ═══════════════════════════════════════════════════════════════════
