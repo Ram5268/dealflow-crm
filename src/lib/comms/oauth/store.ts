@@ -12,7 +12,7 @@ import { encryptToken, decryptToken } from './crypto'
  * live in the planner-approved additive columns.
  */
 
-export type OAuthProvider = 'gmail' | 'msft'
+export type OAuthProvider = 'gmail' | 'msft-graph'
 
 export interface UpsertCredentialInput {
   orgId: string

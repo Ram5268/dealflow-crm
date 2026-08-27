@@ -1,24 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../../prisma'
 import {
-  getCredential,
   getDecryptedAccessToken,
   getDecryptedRefreshToken,
   updateAccessToken,
+  type OAuthProvider,
 } from '../oauth/store'
-import { refreshAccessToken } from '../oauth/gmail'
+import { refreshAccessToken as gmailRefresh } from '../oauth/gmail'
+import { refreshAccessToken as graphRefresh } from '../oauth/graph'
 import { GmailClient } from './gmail-client'
+import { GraphClient, type GraphSendMessage } from './graph-client'
 
 /**
- * Outbound email send (brief §3.5 + sent-mail dedup).
+ * Outbound email send (brief §3.5 + §M5 provider routing).
  *
- * The dedup trick: before calling Gmail, we mint a client-side RFC5322 Message-ID
- * and store `Message.providerMessageId = "gmail:<that-id>"`. Gmail preserves the
- * header, so when the Sent-folder copy later syncs back, `parse.ts` derives the
- * SAME providerMessageId from the Message-ID header and the @unique constraint
- * short-circuits the insert — no duplicate, no delete-and-swap, no race window
- * (the id is set before the send, not read back from the response). See
- * docs/agent-d-handoff.md.
+ * Dedup lynchpin: before sending we mint a client-side id and store it as
+ * `providerMessageId`. For Gmail it's the RFC5322 Message-ID header
+ * (`gmail:<crm-…>`); for Graph it's the `internetMessageId` on the draft
+ * (`msft:<crm-…>`). Either way, when the Sent copy syncs back, the parser derives
+ * the SAME providerMessageId and the @unique constraint short-circuits the insert
+ * — id set before send, no race window. See docs/agent-d-handoff.md.
  */
 
 export function generateMessageId(uuid: string = randomUUID()): string {
@@ -36,12 +37,9 @@ export interface RawMessageInput {
   messageId: string
 }
 
-/** Build an RFC5322 message (base64url) carrying the client-side Message-ID. */
+/** Build an RFC5322 message (base64url) carrying the client-side Message-ID (Gmail). */
 export function buildRawMessage(input: RawMessageInput): string {
-  const lines: string[] = [
-    `From: ${input.from}`,
-    `To: ${input.to.join(', ')}`,
-  ]
+  const lines: string[] = [`From: ${input.from}`, `To: ${input.to.join(', ')}`]
   if (input.cc?.length) lines.push(`Cc: ${input.cc.join(', ')}`)
   if (input.bcc?.length) lines.push(`Bcc: ${input.bcc.join(', ')}`)
   if (input.subject) lines.push(`Subject: ${input.subject}`)
@@ -60,24 +58,100 @@ export function buildRawMessage(input: RawMessageInput): string {
   } else {
     lines.push('Content-Type: text/plain; charset="UTF-8"', '', text ?? '')
   }
-
   return Buffer.from(lines.join('\r\n')).toString('base64url')
 }
 
-export type RawSender = (rawBase64url: string) => Promise<void>
+interface ResolvedCredential {
+  provider: OAuthProvider
+  credId: string
+  emailAddress: string
+  accessToken: string
+}
+
+/**
+ * Pick the credential to send from: prefer one whose emailAddress matches the
+ * message's fromAddress, else Gmail, else the first active. Refreshes a stale
+ * access token via the provider-appropriate refresh.
+ */
+export async function resolveSendCredential(
+  orgId: string,
+  fromAddress?: string,
+): Promise<ResolvedCredential> {
+  const creds = await prisma.oAuthCredential.findMany({
+    where: { organizationId: orgId, status: 'active' },
+  })
+  if (creds.length === 0) {
+    throw new Error('sendEmailMessage: no active email credential for org')
+  }
+  const cred =
+    (fromAddress && creds.find((c) => c.emailAddress === fromAddress)) ||
+    creds.find((c) => c.provider === 'gmail') ||
+    creds[0]
+
+  let accessToken = getDecryptedAccessToken(cred)
+  const refreshToken = getDecryptedRefreshToken(cred)
+  const expired = !cred.expiresAt || cred.expiresAt.getTime() < Date.now() + 60_000
+  if (refreshToken && expired) {
+    const r = cred.provider === 'gmail' ? await gmailRefresh(refreshToken) : await graphRefresh(refreshToken)
+    accessToken = r.accessToken
+    await updateAccessToken(cred.id, r.accessToken, r.expiresAt)
+  }
+
+  return {
+    provider: cred.provider as OAuthProvider,
+    credId: cred.id,
+    emailAddress: cred.emailAddress ?? fromAddress ?? '',
+    accessToken,
+  }
+}
+
+export interface SendArgs {
+  provider: OAuthProvider
+  accessToken: string
+  headerId: string
+  from: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  message: any
+}
+export type ProviderSender = (args: SendArgs) => Promise<void>
+
+async function defaultSend(args: SendArgs): Promise<void> {
+  const { provider, accessToken, headerId, from, message } = args
+  if (provider === 'gmail') {
+    const raw = buildRawMessage({
+      from,
+      to: message.toAddresses,
+      cc: message.ccAddresses,
+      bcc: message.bccAddresses,
+      subject: message.subject ?? undefined,
+      bodyHtml: message.bodyHtml ?? undefined,
+      bodyText: message.bodyText ?? undefined,
+      messageId: headerId,
+    })
+    await GmailClient.forAccessToken(accessToken, process.env.GMAIL_MOCK_URL).sendRaw(raw)
+    return
+  }
+  const graphMessage: GraphSendMessage = {
+    internetMessageId: headerId,
+    subject: message.subject ?? undefined,
+    body: message.bodyHtml
+      ? { contentType: 'HTML', content: message.bodyHtml }
+      : { contentType: 'Text', content: message.bodyText ?? '' },
+    toRecipients: (message.toAddresses ?? []).map((a: string) => ({ emailAddress: { address: a } })),
+    ccRecipients: (message.ccAddresses ?? []).map((a: string) => ({ emailAddress: { address: a } })),
+    bccRecipients: (message.bccAddresses ?? []).map((a: string) => ({ emailAddress: { address: a } })),
+  }
+  await new GraphClient(accessToken).createAndSend(graphMessage)
+}
 
 export interface SendEmailResult {
   status: 'sent'
   providerMessageId: string
 }
 
-/**
- * Send the given outbox email Message. Injectable `sender` + `now` for tests; in
- * prod it sends via a GmailClient (honoring GMAIL_MOCK_URL in isolation).
- */
 export async function sendEmailMessage(
   messageId: string,
-  injected: { sender?: RawSender; now?: Date } = {},
+  injected: { send?: ProviderSender; now?: Date } = {},
 ): Promise<SendEmailResult> {
   const msg = await prisma.message.findUnique({ where: { id: messageId } })
   if (!msg) throw new Error(`sendEmailMessage: message ${messageId} not found`)
@@ -85,47 +159,23 @@ export async function sendEmailMessage(
     throw new Error(`sendEmailMessage: message ${messageId} is not an email`)
   }
 
-  const cred = await getCredential(msg.organizationId, 'gmail')
-  if (!cred) throw new Error('sendEmailMessage: no active Gmail credential for org')
+  const resolved = await resolveSendCredential(msg.organizationId, msg.fromAddress || undefined)
 
-  let accessToken = getDecryptedAccessToken(cred)
-  const refreshToken = getDecryptedRefreshToken(cred)
-  const expired = !cred.expiresAt || cred.expiresAt.getTime() < Date.now() + 60_000
-  if (refreshToken && expired) {
-    const refreshed = await refreshAccessToken(refreshToken)
-    accessToken = refreshed.accessToken
-    await updateAccessToken(cred.id, refreshed.accessToken, refreshed.expiresAt)
-  }
-
-  // Pre-set the dedup key inside a transaction, BEFORE sending.
   const headerId = generateMessageId()
-  const providerMessageId = `gmail:${headerId}`
+  const prefix = resolved.provider === 'gmail' ? 'gmail' : 'msft'
+  const providerMessageId = `${prefix}:${headerId}`
   await prisma.$transaction(async (tx) => {
-    await tx.message.update({
-      where: { id: messageId },
-      data: { providerMessageId },
-    })
+    await tx.message.update({ where: { id: messageId }, data: { providerMessageId } })
   })
 
-  const raw = buildRawMessage({
-    from: cred.emailAddress ?? msg.fromAddress,
-    to: msg.toAddresses,
-    cc: msg.ccAddresses,
-    bcc: msg.bccAddresses,
-    subject: msg.subject ?? undefined,
-    bodyHtml: msg.bodyHtml ?? undefined,
-    bodyText: msg.bodyText ?? undefined,
-    messageId: headerId,
+  const send = injected.send ?? defaultSend
+  await send({
+    provider: resolved.provider,
+    accessToken: resolved.accessToken,
+    headerId,
+    from: resolved.emailAddress || msg.fromAddress,
+    message: msg,
   })
-
-  const sender =
-    injected.sender ??
-    (async (r: string) => {
-      const client = GmailClient.forAccessToken(accessToken, process.env.GMAIL_MOCK_URL)
-      await client.sendRaw(r)
-    })
-
-  await sender(raw)
 
   await prisma.message.update({
     where: { id: messageId },

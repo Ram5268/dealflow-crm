@@ -11,6 +11,7 @@ import { sendEmailMessage } from '../src/lib/comms/email/send'
 import { handleInboundSms } from '../src/lib/comms/sms/inbound'
 import { scrub } from '../src/lib/comms/clients/compliance'
 import { createGmailSyncPorts } from '../src/lib/comms/email/gmail-adapter'
+import { createGraphSyncPorts } from '../src/lib/comms/email/graph-adapter'
 import { deltaSync } from '../src/lib/comms/email/gmail-sync'
 import { MessageReceivedEvent } from '../contracts/events/message.received'
 
@@ -22,11 +23,14 @@ async function cleanupSmokeRows() {
       OR: [
         { providerMessageId: { startsWith: 'gmail:<crm-' } },
         { providerMessageId: 'gmail:<buyer-1@mail.example.com>' },
+        { providerMessageId: 'msft:<outlook-buyer-1@mail.example.com>' },
         { providerMessageId: { startsWith: 'twilio:SMsmoke' } },
       ],
     },
   })
-  await prisma.emailThread.deleteMany({ where: { providerThreadId: 'gmail:t1' } })
+  await prisma.emailThread.deleteMany({
+    where: { providerThreadId: { in: ['gmail:t1', 'msft:conv1'] } },
+  })
 }
 
 /**
@@ -140,6 +144,38 @@ async function main() {
   assert.equal(evt.channel, 'email')
   assert(!('eventName' in evt) && !('type' in evt), 'no discriminant leaked')
   console.log('✓ Gmail delta → thread reconstructed → crm_message NOTIFY (valid shape, M2)')
+
+  // ── Smoke D: Graph delta → thread reconstructed → crm_message NOTIFY (M5) ──
+  await upsertCredential({
+    orgId,
+    provider: 'msft-graph',
+    emailAddress: 'ryan@outlook.com',
+    accessToken: 'mock-access',
+    refreshToken: 'mock-refresh',
+    expiresAt: new Date(Date.now() + 3_600_000),
+  })
+  const gcred = await getCredential(orgId, 'msft-graph')
+  assert(gcred, 'graph credential seeded')
+  const gports = createGraphSyncPorts({
+    orgId,
+    credentialId: gcred.id,
+    connectedEmail: 'ryan@outlook.com',
+    accessToken: 'mock-access',
+  })
+  const gres = await deltaSync(gports, '')
+  assert(gres.historyId, 'graph deltaLink cursor advanced')
+  await sleep(600)
+
+  const gthread = await prisma.emailThread.findUnique({ where: { providerThreadId: 'msft:conv1' } })
+  assert(gthread && gthread.messageCount >= 1, 'Graph EmailThread reconstructed')
+  const gmsg = await prisma.message.findUnique({
+    where: { providerMessageId: 'msft:<outlook-buyer-1@mail.example.com>' },
+  })
+  assert(gmsg && gmsg.direction === 'incoming', 'Graph inbound Message row')
+  const gevt = notifications.find((n) => n.messageId === gmsg.id)
+  assert(gevt, 'Graph crm_message NOTIFY captured')
+  MessageReceivedEvent.parse(gevt)
+  console.log('✓ Graph delta → thread reconstructed → crm_message NOTIFY (M5)')
 
   await pg.query('UNLISTEN crm_message')
   await pg.end()

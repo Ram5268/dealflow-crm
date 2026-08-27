@@ -96,4 +96,37 @@ describe('parseGmailMessage', () => {
     expect(p.references).toEqual([])
     expect(p.bodyText).toBeUndefined()
   })
+
+  it('collects bodies from nested multipart parts, ignores non-text parts', () => {
+    const p = parseGmailMessage({
+      id: 'x',
+      threadId: 't',
+      payload: {
+        mimeType: 'multipart/mixed',
+        parts: [
+          {
+            mimeType: 'multipart/alternative',
+            parts: [
+              { mimeType: 'text/plain', body: { data: b64url('nested plain') } },
+              { mimeType: 'text/html', body: { data: b64url('<p>nested</p>') } },
+            ],
+          },
+          { mimeType: 'application/pdf', filename: 'a.pdf', body: {} },
+        ],
+      },
+    })
+    expect(p.bodyText).toBe('nested plain')
+    expect(p.bodyHtml).toBe('<p>nested</p>')
+  })
+
+  it('handles a text part with no body data', () => {
+    const p = parseGmailMessage({ id: 'x', threadId: 't', payload: { mimeType: 'text/plain', body: {} } })
+    expect(p.bodyText).toBeUndefined()
+  })
+
+  it('has no id → empty providerMessageId suffix (defensive)', () => {
+    const p = parseGmailMessage({ threadId: 't', payload: {} })
+    expect(p.providerMessageId).toBe('gmail:')
+    expect(p.date.getTime()).toBe(0)
+  })
 })

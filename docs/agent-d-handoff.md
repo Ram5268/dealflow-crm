@@ -10,16 +10,24 @@ flag), reusable templates, and a blackout-aware sequence engine.
 - **Gate 3 (behavioral + coverage): GREEN.** 180 unit tests, `tsc` clean, and the
   85% line + branch floor is met on every target dir (email 86/96, sequences
   95/95, sms 90/94, templates 89/98; clients 90/100, oauth 91/94). Three smokes:
-  - `pnpm gate1:smoke` — the three acceptance paths against mocks + DB:
+  - `pnpm gate1:smoke` — the four acceptance paths against mocks + DB:
     1. email send → Gmail mock → `status:'sent'` (M3.5)
     2. inbound STOP → `POST /dnc/internal` 201 → phone blocked in DNC ledger (M4)
     3. Gmail delta → EmailThread reconstructed → `crm_message` NOTIFY (valid
        `message.received` shape, no discriminant) (M2)
+    4. Graph delta → EmailThread reconstructed → `crm_message` NOTIFY (M5)
   - `pnpm worker:smoke` — pg-boss worker consumes a queued `send-email` job, AND
     the full **enrollment → tick → enqueue → worker → sent** chain fires (M3 tick).
-- **M3 email loop is complete:** templates render, sequence tick schedules with
-  blackout/DST awareness, and the pg-boss worker delivers. `pnpm worker:comms`
-  runs the worker (send-email + gmail-delta-sync queues).
+- **Both providers live (Gmail M2/M3.5 + Graph M5).** Graph uses the MSFT identity
+  + Graph REST endpoints via fetch (same mockable pattern as Twilio; no SDK dep).
+  Both share ONE reconstruction/dedup/persist path: `gmail-sync.ts` orchestration +
+  the provider-agnostic persist ports; only the client + cursor differ (Gmail
+  threadId/historyId, Graph conversationId/deltaLink). Send routes by provider —
+  Gmail Message-ID header, Graph `internetMessageId` — same pre-set-before-send
+  dedup. `pnpm worker:comms` runs send-email + gmail/graph-delta-sync queues.
+- **Templates + sequences fully usable:** render + blackout/DST tick + pg-boss
+  delivery, plus CRUD APIs (templates, sequences+steps, enroll, enrollment
+  pause/resume/cancel) with Zod validation.
 - **SMS: PARKED** behind `SMS_ENABLED=false` until the 10DLC campaign is approved.
   Flip to `true` (a runtime config change, not a code change) once the SIDs land.
 
@@ -78,13 +86,15 @@ Isolation adds `COMPLIANCE_BASE_URL`, `TWILIO_API_BASE`, `GMAIL_MOCK_URL`,
 
 ## Known-open (next)
 
-- **M5 Microsoft Graph mirror** — OAuth + delta sync; the Graph mock is a stub.
-  Mirror of M2/M3.5 with Graph's `conversationId`/`@odata.deltaLink` in place of
-  Gmail's threadId/historyId. The reconstruction + send + dedup patterns carry over.
-- **Template / sequence CRUD APIs** (`templates/crud.ts`, `sequences/crud.ts`,
-  `enroll.ts` route) — the tick + render engine is done; the management endpoints
-  are thin follow-on work.
-- **jobs/ dir** (`boss.ts`, `gmail-runner.ts`, `gmail-delta.ts`) is infra — covered
-  by `worker:smoke`, not unit tests (pg-boss singleton resists mocking). Not in the
-  brief's coverage-floor set.
+- **Live provider verification** — Gmail/Graph run against mocks; when Google Cloud
+  (`GOOGLE_CLIENT_ID/SECRET`) and Azure (`MSFT_GRAPH_CLIENT_ID/SECRET`) creds land in
+  `.env`, the same code hits real Google/MSFT with zero rework. Graph
+  `internetMessageId`-on-draft dedup assumes Graph honors it on draft creation —
+  verify against a live Outlook account.
+- **jobs/ dir** (`boss.ts`, `gmail-runner.ts`, `graph-runner.ts`, `*-delta.ts`) is
+  infra — covered by `worker:smoke`, not unit tests (pg-boss singleton resists
+  mocking). NOT in the brief's coverage-floor set (`email/sequences/sms/dedup/
+  templates`), so its coverage is intentionally excluded — don't be alarmed by it.
+- **UI pages** (`inbox`, `sequences`, `templates`, `settings/comms`) — API surface
+  is complete; the React pages are the remaining front-end work.
 - SMS live path is untested against real Twilio (parked on 10DLC).

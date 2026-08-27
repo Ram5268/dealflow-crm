@@ -14,7 +14,7 @@ const CLOCK_SKEW_MS = 60 * 1000
 
 export interface StatePayload {
   orgId: string
-  provider: 'gmail' | 'msft'
+  provider: 'gmail' | 'msft-graph'
 }
 
 interface StateBody extends StatePayload {
@@ -76,7 +76,7 @@ export function verifyState(
   if (body.ts > now + CLOCK_SKEW_MS) {
     throw new Error('state timestamp is in the future')
   }
-  if (!body.orgId || (body.provider !== 'gmail' && body.provider !== 'msft')) {
+  if (!body.orgId || (body.provider !== 'gmail' && body.provider !== 'msft-graph')) {
     throw new Error('state payload invalid')
   }
   return { orgId: body.orgId, provider: body.provider }

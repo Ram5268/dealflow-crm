@@ -38,6 +38,12 @@ describe('GmailClient.listThreadIds', () => {
     g.users.threads.list.mockResolvedValue({ data: {} })
     expect(await client(g).listThreadIds('q')).toEqual([])
   })
+
+  it('skips threads missing an id', async () => {
+    const g = fakeGmail()
+    g.users.threads.list.mockResolvedValue({ data: { threads: [{ id: 't1' }, {}, { id: 't2' }] } })
+    expect(await client(g).listThreadIds('q')).toEqual(['t1', 't2'])
+  })
 })
 
 describe('GmailClient.getThreadMessages', () => {
