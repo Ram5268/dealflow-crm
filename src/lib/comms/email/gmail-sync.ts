@@ -1,9 +1,10 @@
 import type { ParsedEmail } from './parse'
 import {
   aggregateThread,
+  candidateEmails,
   directionFor,
-  type ContactResolver,
   type ThreadAggregate,
+  type ThreadContactMatch,
 } from './thread-reconstruct'
 
 /**
@@ -50,7 +51,8 @@ export interface SyncPorts {
     threadIds: string[]
     latestHistoryId?: string
   }>
-  resolveContact: ContactResolver
+  /** Resolve the owning contact/lead from ordered participant emails (DB lookup). */
+  resolveContact(orderedEmails: string[]): Promise<ThreadContactMatch | null>
   /** Upsert an EmailThread by providerThreadId (adapter MERGES on conflict). */
   upsertThread(agg: ThreadAggregate): Promise<{ id: string }>
   /** createMany({ skipDuplicates }); returns providerMessageIds actually inserted. */
@@ -95,7 +97,10 @@ async function syncThread(
   const parsed = await ports.getThreadMessages(threadId)
   if (parsed.length === 0) return { inserted: 0, emitted: 0 }
 
-  const agg = aggregateThread(parsed, ports.resolveContact)
+  // Resolve the owning contact once (async DB lookup) then feed it into the pure
+  // aggregate as a trivial sync resolver.
+  const match = await ports.resolveContact(candidateEmails(parsed))
+  const agg = aggregateThread(parsed, () => match)
   const { id: threadDbId } = await ports.upsertThread(agg)
   const rows = parsed.map((p) => toPersistable(p, agg, threadDbId, ports.connectedEmail))
 

@@ -45,7 +45,7 @@ function makeFakePorts() {
     listThreadIds: async () => ['A', 'B'],
     getThreadMessages: async (threadId) => THREADS[threadId] ?? [],
     listChangedThreadIds: async () => ({ threadIds: ['B'], latestHistoryId: '999' }),
-    resolveContact: (emails) =>
+    resolveContact: async (emails) =>
       emails.includes('alice@example.com')
         ? { contactId: 'cA', leadId: 'lA' }
         : emails.includes('bob@example.com')

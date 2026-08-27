@@ -53,9 +53,24 @@ function dedupePreserveOrder(values: string[]): string[] {
 }
 
 /**
+ * The thread's participant emails in chronological appearance order: the union
+ * of from + to + cc across all messages (BCC excluded), deduped. This is BOTH
+ * the EmailThread.participants list AND the ordered candidate list for contact
+ * resolution (earliest-appearing match wins).
+ */
+export function candidateEmails(messages: ParsedEmail[]): string[] {
+  const chrono = [...messages].sort((a, b) => a.date.getTime() - b.date.getTime())
+  return dedupePreserveOrder(
+    chrono.flatMap((m) => [m.fromAddress, ...m.toAddresses, ...m.ccAddresses]),
+  ).filter(Boolean)
+}
+
+/**
  * Aggregate one thread's messages into an EmailThread shape. `messages` must all
  * share a `providerThreadId` (Gmail's threadId); throws otherwise, since mixing
- * threads would corrupt the aggregate.
+ * threads would corrupt the aggregate. `resolveContact` is sync here — the DB
+ * lookup happens upstream (see gmail-sync `syncThread`), which passes a resolver
+ * that just returns the already-resolved match.
  */
 export function aggregateThread(
   messages: ParsedEmail[],
@@ -70,24 +85,13 @@ export function aggregateThread(
   }
 
   const chrono = [...messages].sort((a, b) => a.date.getTime() - b.date.getTime())
-
-  // participants = union of from + to + cc across the thread (BCC excluded — a
-  // BCC recipient only becomes a participant once they reply and appear in From).
-  const participants = dedupePreserveOrder(
-    chrono.flatMap((m) => [m.fromAddress, ...m.toAddresses, ...m.ccAddresses]),
-  ).filter(Boolean)
-
-  // Contact-resolution candidates in chronological appearance order so the
-  // earliest-matching message wins.
-  const candidateEmails = dedupePreserveOrder(
-    chrono.flatMap((m) => [m.fromAddress, ...m.toAddresses, ...m.ccAddresses]),
-  ).filter(Boolean)
-  const match = resolveContact(candidateEmails)
+  const emails = candidateEmails(messages)
+  const match = resolveContact(emails)
 
   return {
     providerThreadId,
     subject: chrono[0].subject ?? '',
-    participants,
+    participants: emails,
     firstMessageAt: chrono[0].date,
     lastMessageAt: chrono[chrono.length - 1].date,
     messageCount: chrono.length,
