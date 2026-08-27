@@ -15,7 +15,13 @@ const LOCK_SQL = `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) as w
 const N = 50; // reduced from 100 per Ryan: 50 leaves Railway headroom and the
 // invariant is deterministic at any concurrency ≥ 2.
 
-/** Restore an env var, deleting when the saved value was undefined (never write "undefined"). */
+/**
+ * Restore an env var. DO NOT replace this with `process.env[key] = value`:
+ * assigning `undefined` to a process.env property coerces it to the STRING
+ * "undefined" rather than deleting the key. That silently poisoned a coverage
+ * branch (the `?? "say"` / `?? DEFAULT` fallbacks never fired because the env
+ * var looked "set"). Always delete-on-undefined.
+ */
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
