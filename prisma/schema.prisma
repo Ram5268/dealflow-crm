@@ -576,6 +576,14 @@ model OAuthCredential {
   refreshTokenEncrypted  String?
   scope                  String?
   expiresAt              DateTime?
+  // Agent-D sync-state columns — planner-approved additive (Ryan, 2026-08-27).
+  // Zero blast radius: only Agent D reads/writes OAuthCredential. GCM ciphertext
+  // is packed (iv.tag.ct) into refreshTokenEncrypted, so no per-field IV/tag cols.
+  emailAddress           String?   // account the token is for (Gmail push routes by email)
+  gmailHistoryId         String?   // Gmail delta-sync cursor (M2.2)
+  graphDeltaLink         String?   // Graph @odata.deltaLink cursor (M5)
+  gmailWatchExpiresAt    DateTime? // Gmail push watch expiry — renew weekly (M2.4)
+  status                 String   @default("active") // active|reauth_required|error
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
