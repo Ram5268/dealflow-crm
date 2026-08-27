@@ -10,6 +10,10 @@ export default defineConfig({
       'tests/**/*.test.ts',
     ],
     environment: 'node',
+    // Materialize the merged Prisma schema into the perf DB ONCE before any
+    // worker (avoids the concurrent `db push` collision when parallel files
+    // each push). Additive `db push` — non-destructive to A/C test state.
+    globalSetup: ['tests/setup/globalSetup.ts'],
     // Every DB-backed suite hits ONE remote Railway DB with a small connection
     // cap. Per-file isolation would open a fresh Prisma pool per file and leak
     // connections until Railway's limit is hit (30s pool_timeout stalls). So run
@@ -30,7 +34,7 @@ export default defineConfig({
       exclude: ['src/app/**', 'src/**/*.test.ts', 'src/types/**'],
       thresholds: {
         lines: 70,
-        // Per-file 85% floor on critical paths (brief §10 Gate 3).
+        // Per-file 85% floor on core-data critical paths (brief §10 Gate 3).
         'src/lib/core-data/query-dsl/compiler.ts': {
           lines: 85,
           functions: 85,
@@ -75,6 +79,17 @@ export default defineConfig({
           lines: 85,
           functions: 85,
           branches: 80,
+        },
+        // Telephony Gate 3 floors (brief §11): 90% branch on pacing +
+        // race-resolver (critical paths), 80% elsewhere in the slice.
+        'src/lib/telephony/pacing/**': {
+          branches: 90, functions: 90, lines: 90, statements: 90,
+        },
+        'src/lib/telephony/race-resolver/**': {
+          branches: 90, functions: 90, lines: 90, statements: 90,
+        },
+        'src/lib/telephony/**': {
+          branches: 80, functions: 80, lines: 80, statements: 80,
         },
       },
     },
