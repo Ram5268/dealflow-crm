@@ -6,3 +6,5 @@ worktrees/
 dist/
 coverage/
 .DS_Store
+.imports/
+backups/

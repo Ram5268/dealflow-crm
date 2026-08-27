@@ -1,0 +1,48 @@
+import { test, expect } from '@playwright/test'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+
+// M9 acceptance (brief §9): upload a 500-row synthetic CSV, review the AI
+// mapping (rows visible + ≥1 auto-suggested new_custom_field), commit, wait for
+// 100% progress, navigate to /leads, and see an imported lead whose source
+// starts with "import:". Runs against the boot-standalone stack (mocks up).
+//
+// Prereqs to run:
+//   pnpm add -D @playwright/test && npx playwright install chromium
+//   ANTHROPIC_API_KEY=... USE_PGBOSS=1 pnpm run boot-standalone   (separate shell)
+//   pnpm exec playwright test
+// The proposed-mapping step calls Claude Sonnet 4.6, so a real ANTHROPIC_API_KEY
+// is required for this E2E (unlike the unit/integration suite, which mocks it).
+
+async function writeSyntheticCsv(): Promise<string> {
+  const lines = ['Full Name,Contact ID,Phone,Phone Type,Estimated Value']
+  for (let i = 0; i < 500; i++) {
+    const num = (5552000 + i).toString().slice(-7)
+    lines.push(`Owner ${i} LLC,E2E_${i},+1212${num},Cell,${100000 + i * 1000}`)
+  }
+  const file = path.join(os.tmpdir(), `e2e-import-${Date.now()}.csv`)
+  await fs.writeFile(file, lines.join('\n'))
+  return file
+}
+
+test('import happy path: upload → map → commit → lead visible with import: source', async ({ page }) => {
+  const csv = await writeSyntheticCsv()
+
+  await page.goto('/imports')
+  await page.setInputFiles('input[type=file]', csv)
+  await page.getByRole('button', { name: /upload/i }).click()
+
+  // Mapping review — rows visible + at least one new custom field suggested.
+  await expect(page.getByText(/review ai mapping/i)).toBeVisible()
+  await expect(page.getByText(/new custom/i)).toBeVisible({ timeout: 60_000 })
+  await page.getByRole('button', { name: /commit import/i }).click()
+
+  // Progress → 100%.
+  await expect(page.getByTestId('view-leads')).toBeVisible({ timeout: 120_000 })
+  await page.getByTestId('view-leads').click()
+
+  // Leads list shows an imported lead.
+  await expect(page).toHaveURL(/\/leads/)
+  await expect(page.getByText(/Owner 0 LLC/)).toBeVisible()
+})

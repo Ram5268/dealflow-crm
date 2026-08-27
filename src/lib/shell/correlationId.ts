@@ -24,9 +24,14 @@ export function getCorrelationId(): string | undefined {
   return storage.getStore()
 }
 
+let fallbackCounter = 0
+
 function fallbackId(): string {
-  // Deterministic-shape fallback for runtimes without crypto.randomUUID.
-  return 'cid-' + Math.abs(hash(String(process.hrtime.bigint()))).toString(36)
+  // Fallback for runtimes without crypto.randomUUID. Edge-safe: no process.*
+  // (middleware runs on the Edge Runtime). Node 22 and Edge both have
+  // crypto.randomUUID, so this branch is effectively unreachable in practice.
+  fallbackCounter += 1
+  return 'cid-' + Math.abs(hash(`${Date.now()}-${fallbackCounter}`)).toString(36)
 }
 
 function hash(s: string): number {

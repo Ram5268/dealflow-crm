@@ -1,0 +1,14 @@
+import { defineConfig, devices } from '@playwright/test'
+
+// Dev-only E2E config (M9 acceptance). Runs against the boot-standalone stack.
+// Prereq: `npx playwright install chromium` + `pnpm run boot-standalone` in a
+// separate shell (with a real ANTHROPIC_API_KEY for the proposed-mapping step).
+export default defineConfig({
+  testDir: './tests/e2e',
+  timeout: 180_000,
+  use: {
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
+    trace: 'on-first-retry',
+  },
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+})
