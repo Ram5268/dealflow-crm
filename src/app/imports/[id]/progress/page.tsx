@@ -2,7 +2,6 @@
 
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Nav } from '@/components/Nav'
 
 interface Batch {
   status: string
@@ -36,7 +35,6 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
 
   return (
     <main>
-      <Nav />
       <div className="mx-auto max-w-lg px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Import progress</h1>
         {!batch && <p className="text-sm text-neutral-500">Loading…</p>}

@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Nav } from '@/components/Nav'
 
 // Upload a Mojo CSV/XLSX. On success routes to the AI mapping-review screen.
 export default function ImportsPage() {
@@ -34,7 +33,6 @@ export default function ImportsPage() {
 
   return (
     <main>
-      <Nav />
       <div className="mx-auto max-w-lg px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Import contacts</h1>
         <form onSubmit={upload} className="space-y-4">
