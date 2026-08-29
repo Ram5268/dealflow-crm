@@ -11,6 +11,7 @@ import {
   IconButton,
 } from '@/components/ui'
 import { ALL_DESTINATIONS, isActivePath } from '@/lib/ui/nav'
+import { SearchLauncher } from './SearchLauncher'
 
 /** Longest matching destination label; falls back to a humanised first segment. */
 function titleFor(pathname: string): string {
@@ -22,7 +23,7 @@ function titleFor(pathname: string): string {
   return seg ? seg[0].toUpperCase() + seg.slice(1) : 'DealFlow'
 }
 
-export function TopBar() {
+export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
 
@@ -31,7 +32,9 @@ export function TopBar() {
       style={{ height: 'var(--topbar-h)' }}
       className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-bg px-4"
     >
-      <h1 className="min-w-0 truncate text-sm font-semibold text-fg">{titleFor(pathname)}</h1>
+      <h1 className="shrink-0 truncate text-sm font-semibold text-fg">{titleFor(pathname)}</h1>
+
+      <SearchLauncher onOpenPalette={onOpenPalette} />
 
       <div className="flex shrink-0 items-center gap-1">
         {/* Notifications land in M3; the control is present but inert so the

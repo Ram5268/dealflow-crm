@@ -23,37 +23,37 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
   }
 
   return (
-    <main>
+    <div>
       <div className="mx-auto max-w-4xl px-4 py-6">
-        <h1 className="mb-4 text-lg font-semibold">Call Queue (preview)</h1>
+        <h1 className="mb-4 text-lg font-semibold text-fg">Call Queue (preview)</h1>
         <div className="mb-4 flex flex-wrap gap-2">
           {views.map((v) => (
             <Link
               key={v.id}
               href={`/queue?viewId=${v.id}`}
-              className={`rounded border px-3 py-1 text-sm ${v.id === viewId ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-neutral-300 text-neutral-600'}`}
+              className={`rounded border px-3 py-1 text-sm ${v.id === viewId ? 'border-accent bg-accent-subtle text-accent' : 'border-line text-muted'}`}
             >
               {v.name}
             </Link>
           ))}
-          {views.length === 0 && <span className="text-sm text-neutral-400">No saved views yet.</span>}
+          {views.length === 0 && <span className="text-sm text-subtle">No saved views yet.</span>}
         </div>
 
-        {error && <div className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        {error && <div className="rounded bg-danger-subtle p-3 text-sm text-danger">{error}</div>}
 
         {queue && (
           <>
             {queue.stale && (
-              <div className="mb-3 rounded bg-amber-50 p-3 text-sm text-amber-800">
+              <div className="mb-3 rounded bg-warning-subtle p-3 text-sm text-warning">
                 Stale: {queue.staleReason}
               </div>
             )}
-            <p className="mb-3 text-sm text-neutral-500">
+            <p className="mb-3 text-sm text-muted">
               {queue.leads.length} callable · {queue.excludedNoPhone} no-phone · {queue.excludedCompliance} compliance-excluded
             </p>
-            <div className="overflow-hidden rounded-lg border border-neutral-200">
+            <div className="overflow-hidden rounded-lg border border-line">
               <table className="w-full text-sm">
-                <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
+                <thead className="bg-hover text-left text-xs uppercase text-muted">
                   <tr>
                     <th className="px-4 py-2">Lead</th>
                     <th className="px-4 py-2">Phone (E.164)</th>
@@ -63,9 +63,9 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
                 </thead>
                 <tbody>
                   {queue.leads.map((l) => (
-                    <tr key={l.leadId} className="border-t border-neutral-100">
+                    <tr key={l.leadId} className="border-t border-line">
                       <td className="px-4 py-2">
-                        <Link href={`/leads/${l.leadId}`} className="text-blue-700 hover:underline">{l.displayName}</Link>
+                        <Link href={`/leads/${l.leadId}`} className="text-accent hover:underline">{l.displayName}</Link>
                       </td>
                       <td className="px-4 py-2 font-mono">{l.primaryPhoneE164}</td>
                       <td className="px-4 py-2">{l.ammunition.priorityScore ?? '—'}</td>
@@ -78,6 +78,6 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
           </>
         )}
       </div>
-    </main>
+    </div>
   )
 }

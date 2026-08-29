@@ -534,3 +534,114 @@ Moving the whole repo out of iCloud is the long-term fix (post-M6, Ryan's call).
 
 **Diagnostic:** a process at ~0% CPU in state `S` while `fileproviderd` is hot is
 iCloud, not the tool. `ps -o pid,etime,%cpu,state -p <pid>`.
+
+---
+
+## §10 · M2 DEVIATIONS AND FINDINGS (2026-08-29)
+
+Planner rule in force: *"reality wins, note the deviation in your PR description."*
+Each item below is either a deliberate departure from the literal instruction or
+something found while building that the planner should know about.
+
+### 10.1 — Top-bar search is a BUTTON, not an `<input>` · deviation
+
+The parity call said "Input primitive that opens ⌘K on focus." An `<input>`
+cannot do that without looping: Radix restores focus to the previously focused
+element when the dialog closes, so focus lands back on the input, the `focus`
+handler fires again, and the palette reopens forever.
+
+`SearchLauncher` is therefore a `<button>` styled with the same `controlBase` /
+`controlBorder` classes as `Input`, so it is pixel-wise an input. Keyboard users
+get correct Enter/Space semantics and a real accessible name. An e2e case
+asserts the palette stays closed 300ms after Esc, which is the regression this
+would produce.
+
+### 10.2 — There are now TWO "Search ⌘K" controls · **planner decision wanted**
+
+M1 already shipped a `Search ⌘K` row at the bottom of the sidebar nav
+(`Sidebar.tsx`), because search is an action rather than a destination. The M2
+top-bar launcher is a second control that opens the same palette, and both are
+visible at once (see `reference/dealflow/focus-home.png`).
+
+Not removed, because deleting working M1 chrome is rework under §9. Close's own
+IA puts search in the top bar only. **Ask:** keep both, or drop the sidebar row?
+One-line change either way.
+
+### 10.3 — Focus reads through Prisma in RSC · no new API routes
+
+§13 forbids new API routes. `src/lib/focus/summary.ts` is a server-only module
+imported by Server Components, mirroring the boundary convention
+`src/lib/leads/list.ts` established in M1. Zero routes added in M2.
+
+### 10.4 — Dial-queue count reuses `getQueue` at /queue's own limit
+
+The panel calls `getQueue(view, org, { limit: 50 })` — the identical call
+`/queue` already makes — so the two surfaces can never disagree. That runs an
+unconditional compliance scrub over a candidate pool 5x the limit, which is why
+each panel sits behind its own `<Suspense>` boundary instead of blocking the
+page on the slowest read.
+
+When compliance cannot answer, the panel says *"Could not verify who is callable
+right now"* rather than rendering `0`. A bare zero reads as "nobody to call",
+which is a different and dangerous claim. Compliance is fail-closed upstream and
+the UI now matches that posture.
+
+### 10.5 — Softphone "Hang up" replaced with "Open dialer"
+
+M1's bar carried an inert `Hang up` button. Wiring it for real means dial
+control, which §13 forbids. A visible control that does nothing is worse than no
+control, so the bar is now status-only and links to `/dialer`, where Agent B's
+real controls live. The bar renders `role="status" aria-live="polite"`.
+
+### 10.6 — FOUND, NOT FIXED: `DialerShell` never clears its active call
+
+`src/app/dialer/components/DialerShell.tsx` subscribes with `useEffect(…, [])`
+but compares `evt.callId === activeCallId` inside the handler. That closure
+captured `activeCallId` at mount, so it is `null` forever and the
+`call.completed` branch can never match. The ammunition panel therefore keeps
+showing a finished call until something else re-renders.
+
+**Not fixed** — dialer logic is out of scope (§13). Flagging for the planner to
+schedule. `useSoftphoneSession` deliberately avoids the same bug by using a
+functional `setSession` updater, with a comment naming the trap.
+
+### 10.7 — Nested `<main>` landmarks fixed on /dialer and /queue
+
+`AppShell` already renders the `<main>` landmark, so both pages were emitting a
+second one inside it — invalid HTML and a duplicated landmark for screen
+readers. Both now render a plain container. `/dialer` also dropped its `<h1>`,
+which duplicated the title `TopBar` already shows.
+
+`/imports/*` has the same nested-`<main>` bug in three files. Left alone: it is
+explicitly M6 scope.
+
+### 10.8 — Hardcoded palette migrated to tokens on /dialer and /queue
+
+Both surfaces used literal `bg-gray-*` / `text-neutral-*` / `bg-blue-50` classes
+and were unreadable in dark mode. Pure class substitution onto the M1 tokens —
+no structural or logic change. Verified zero remaining hardcoded palette classes
+under `src/app/dialer` and `src/app/queue`.
+
+### 10.9 — `gate.sh` uses `rsync --delete`, so mirror-only files evaporate
+
+Anything written directly into `~/dev/agent-e-gates` is destroyed by the next
+gate run. That is a feature — scratch scripts cannot leak into a commit — but it
+means an acceptance-seed script has to be rewritten each time it is needed.
+Write scratch tooling to the mirror on purpose, never to the worktree.
+
+### 10.10 — iCloud duplicated a `.sh`, which the ignore list did not cover
+
+`scripts/gate 2.sh` appeared as untracked and was ready to stage. The §9.6
+patterns only covered `.ts/.tsx/.md` and images. `.gitignore` now also ignores
+`* 2.sh`, `* 2.json`, `* 2.css`, `* 2.sql`, `* 2.mjs`. The two image dupes found
+in the same sweep were byte-identical to their originals — no PII regression —
+but **verify sizes before deleting**, never assume.
+
+### 10.11 — Acceptance evidence used a seeded-then-deleted dataset
+
+The main DB is empty (0 leads / calls / messages / tasks), so panels would have
+rendered as all-zero. Following the M1 precedent, a small `[M2_SMOKE]` dataset
+was created, captured, and deleted. Post-cleanup verification returned
+`RESIDUE {leads:0,contacts:0,tasks:0,messages:0,calls:0,views:0}` and
+`DB_TOTALS` back to all-zero — byte-identical to the pre-seed state. The seed
+script lived only in the gate mirror and was never committed (see §10.9).

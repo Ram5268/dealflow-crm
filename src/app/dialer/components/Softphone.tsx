@@ -52,23 +52,23 @@ export function Softphone({ activeCallId }: { activeCallId: string | null }) {
   }
 
   return (
-    <div className="rounded-lg border p-4">
-      <div className="mb-2 text-sm text-gray-500">
+    <div className="rounded-lg border border-line bg-elevated p-4">
+      <div className="mb-2 text-sm text-muted">
         Softphone {ready ? "· ready" : "· connecting…"}
-        <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-amber-800">read-only email</span>
+        <span className="ml-2 rounded bg-warning-subtle px-2 py-0.5 text-warning">read-only email</span>
       </div>
       <div className="flex gap-2">
         <button
           onClick={toggleMute}
           disabled={!onCall}
-          className="rounded bg-gray-200 px-3 py-2 disabled:opacity-50"
+          className="rounded bg-hover px-3 py-2 disabled:opacity-50"
         >
           {muted ? "Unmute" : "Mute"}
         </button>
         <button
           onClick={hangup}
           disabled={!onCall}
-          className="rounded bg-red-600 px-3 py-2 text-white disabled:opacity-50"
+          className="rounded bg-danger px-3 py-2 text-danger-fg disabled:opacity-50"
         >
           Hang up
         </button>
@@ -78,7 +78,7 @@ export function Softphone({ activeCallId }: { activeCallId: string | null }) {
               key={d}
               onClick={() => controllerRef.current?.sendDigit(d)}
               disabled={!onCall}
-              className="h-8 w-8 rounded bg-gray-100 disabled:opacity-50"
+              className="h-8 w-8 rounded bg-hover disabled:opacity-50"
             >
               {d}
             </button>

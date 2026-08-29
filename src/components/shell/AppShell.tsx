@@ -28,7 +28,7 @@ function ShellChrome({
     <div className="flex h-dvh overflow-hidden">
       <Sidebar displayName={displayName} onOpenPalette={openPalette} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
+        <TopBar onOpenPalette={openPalette} />
         {/* Full-bleed: pages own their own padding (brief §7). */}
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
         <SoftphoneBar />
