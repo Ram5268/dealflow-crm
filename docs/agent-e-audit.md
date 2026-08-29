@@ -412,3 +412,83 @@ hand-written to contain **only** the two `Message` columns for exactly this reas
 **Recommendation:** planner should schedule a dedicated drift-reconciliation PR (likely
 recovering C's local commits). Agent E has not touched it — it is destructive, it is C's,
 and it is outside this brief.
+
+---
+
+## §9 · REPO GOTCHAS FOR THE NEXT EXECUTOR
+
+Hard-won during M0/M0.5. Read before touching migrations or the test suite.
+
+### 1. `DATABASE_URL_PERF` is NOT a safe `--shadow-database-url`
+
+Prisma **drops and recreates** the shadow database to replay migration history
+into it. Pointing `--shadow-database-url` at the perf DB destroys the 25k perf
+seed and turns `tests/perf/25k.test.ts` red (`found 0 leads in org_perf`).
+
+```bash
+# ✗ DESTROYS the perf seed
+npx prisma migrate diff --from-migrations prisma/migrations \
+  --to-schema-datamodel prisma/schema.prisma \
+  --shadow-database-url "$DATABASE_URL_PERF"
+
+# ✓ Read-only: introspects the LIVE db, no shadow database at all.
+#   Use this to answer "does the DB match schema.prisma?"
+npx prisma migrate diff --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma --script
+
+# ✓ If you genuinely need --from-migrations (replaying history requires a
+#   shadow), point it at a THROWAWAY database, never a seeded one.
+#   e.g. postgresql://.../temp_shadow_$(date +%s)
+```
+
+Recovery if you do wipe it: `pnpm seed:perf` (~33s; 25k leads, 25k contacts,
+33k phones, 50k custom values). Perf data is disposable by design — but a red
+perf test will block your PR gate until you re-seed.
+
+### 2. Never run `prisma migrate dev` in this repo
+
+`schema.prisma` carries drift that no migration has applied — Agent C's
+**destructive** `BulkScrubCheckpoint` reshape plus four unapplied `id` defaults
+(see §8). `migrate dev` silently folds all of it into whatever migration you are
+creating. `migrate status` will NOT warn you: it only compares applied migrations
+against the migrations folder, never schema-to-DB.
+
+**Instead:** hand-write `prisma/migrations/<timestamp>_<name>/migration.sql`
+containing only your own delta, then `npx prisma migrate deploy` and
+`npx prisma generate`. This is how `20260829140409_message_read_archive_state`
+was produced.
+
+C's drift is queued for Ryan's post-M6 cleanup PR. **Do not touch it.**
+
+### 3. `pnpm test` runs two configs and fails fast
+
+`"test": "vitest run && vitest run --config vitest.agent-d.config.ts"`. The `&&`
+short-circuits, so a failure in the first (A/B/C) config means Agent D's suite
+never runs and you see nothing about it. That is intended — fail-fast beats
+scrolling. To see D's results while A/B/C are red, run it directly:
+
+```bash
+pnpm vitest run --config vitest.agent-d.config.ts
+```
+
+Do **not** move D's tests back into `vitest.config.ts`; its `isolate: false`
+(the shared-Railway-pool defense) breaks D's `vi.mock`-based files. See §0.
+
+### 4. `next-env.d.ts` churns between `next dev` and `next build`
+
+It rewrites itself between `./.next/dev/types/routes.d.ts` and
+`./.next/types/routes.d.ts` depending on which ran last. It is machine-generated
+("should not be edited") — leave it at whatever `HEAD` has and keep it out of
+your commits (`git restore next-env.d.ts`).
+
+### 5. `gh` CLI is not installed on this machine
+
+The `~/.config/gh/hosts.yml` exists but holds no token and the binary is absent.
+Open PRs against the GitHub API using the token from the git credential helper:
+
+```bash
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill \
+  | sed -n 's/^password=//p')
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/Ram5268/dealflow-crm/pulls -d @pr.json
+```
