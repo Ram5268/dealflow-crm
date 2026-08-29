@@ -2,7 +2,6 @@ import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { getQueue } from '@/lib/core-data/smart-view/queue-service'
-import { Nav } from '@/components/Nav'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,7 +24,6 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
 
   return (
     <main>
-      <Nav />
       <div className="mx-auto max-w-4xl px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Call Queue (preview)</h1>
         <div className="mb-4 flex flex-wrap gap-2">

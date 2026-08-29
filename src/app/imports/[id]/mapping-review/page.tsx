@@ -2,7 +2,6 @@
 
 import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Nav } from '@/components/Nav'
 
 interface ColumnMapping {
   column: string
@@ -64,7 +63,6 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
 
   return (
     <main>
-      <Nav />
       <div className="mx-auto max-w-3xl px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Review AI mapping</h1>
         {error && <div className="mb-3 rounded bg-red-50 p-3 text-sm text-red-700">{error}</div>}
