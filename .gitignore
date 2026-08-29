@@ -15,3 +15,10 @@ backups/
 **/* 2.tsx
 coverage-comms/
 **/* 2.md
+# Agent E: reference/ commits PNGs, and iCloud duplicated an image whose copy
+# still held the UNREDACTED Close capture (real client PII). Ignore image dupes
+# so a resurrected copy can never be staged.
+**/* 2.png
+**/* 2.jpg
+**/* 2.jpeg
+**/* 2.webp

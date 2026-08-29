@@ -492,3 +492,45 @@ TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill \
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   https://api.github.com/repos/Ram5268/dealflow-crm/pulls -d @pr.json
 ```
+
+### 9.6 — iCloud duplicates images too, and a dupe can hold pre-redaction content
+
+`.gitignore` guarded `* 2.ts/tsx/md` but not images. After overwriting a Close
+capture with a redacted version, iCloud resurrected the ORIGINAL as
+`reference/close/leads 2.png` — still holding live client emails and phone
+numbers, staged for commit. Deleted, and `**/* 2.{png,jpg,jpeg,webp}` added to
+`.gitignore`.
+
+**Rule:** after replacing any committed binary in this repo, run
+`find . -name "* 2.*" -not -path "./node_modules/*"` before staging.
+
+### 9.7 — `xattr` fileprovider ignore does NOT solve iCloud node_modules stalls
+
+**Symptom:** `tsc --noEmit` hangs — 8m17s wall for 6.88s of CPU (1%), while
+`fileproviderd` sits at 98%. `next build` hangs past 10 minutes on the
+"Running TypeScript" phase. Began right after installing 51 packages.
+
+**Attempted fix that did NOT work:**
+`xattr -w 'com.apple.fileprovider.ignore#P' 1 node_modules .next`. The attribute
+applied and read back as `1`, and the stall continued unchanged. (The planner's
+note cites `com.apple.fileprovider.exclude`; the attribute actually used here was
+`com.apple.fileprovider.ignore#P` — neither helped.) The macOS file provider
+still materializes on read.
+
+**Working fix — mirror the worktree outside iCloud and run every gate there:**
+
+```bash
+rsync -a --delete --exclude node_modules --exclude .next --exclude .git \
+  --exclude 'coverage*' --exclude 'reference/dealflow' \
+  "worktrees/agent-e/" ~/dev/agent-e-gates/
+cd ~/dev/agent-e-gates && pnpm install --prefer-offline && npx prisma generate
+```
+
+Measured: typecheck **8m17s → 7s**, build **>10min → 19s**. ~67x.
+`scripts/gate.sh` wraps the rsync + gate invocation.
+
+Commit and push from the iCloud worktree as normal — git itself is fast enough.
+Moving the whole repo out of iCloud is the long-term fix (post-M6, Ryan's call).
+
+**Diagnostic:** a process at ~0% CPU in state `S` while `fileproviderd` is hot is
+iCloud, not the tool. `ps -o pid,etime,%cpu,state -p <pid>`.
