@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'vitest'
-import { getAuthUrl, GMAIL_SCOPES } from './gmail'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
+import { getAuthUrl, GMAIL_SCOPES, revokeToken } from './gmail'
 import { verifyState } from './state'
 
 beforeAll(() => {
@@ -27,5 +27,34 @@ describe('getAuthUrl', () => {
       orgId: 'org_42',
       provider: 'gmail',
     })
+  })
+})
+
+describe('revokeToken', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  function stubFetch(status: number, body = '') {
+    const fetchMock = vi.fn(async () => new Response(body, { status }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('POSTs the token as form-encoded to the Google revoke endpoint', async () => {
+    const fetchMock = stubFetch(200)
+    await revokeToken('refresh-abc')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://oauth2.googleapis.com/revoke')
+    expect(init.method).toBe('POST')
+    expect(String(init.body)).toBe('token=refresh-abc')
+  })
+
+  it('treats an already-dead token as success (idempotent disconnect)', async () => {
+    stubFetch(400, '{"error":"invalid_token"}')
+    await expect(revokeToken('dead')).resolves.toBeUndefined()
+  })
+
+  it('throws on any other provider failure so the route can 502', async () => {
+    stubFetch(500, 'upstream boom')
+    await expect(revokeToken('t')).rejects.toThrow(/revocation failed \(500\)/)
   })
 })

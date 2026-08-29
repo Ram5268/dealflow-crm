@@ -2,7 +2,7 @@
 
 **Branch:** `agent-e` (worktree `worktrees/agent-e`, forked from `origin/main` @ `659501e`)
 **Date:** 2026-08-29
-**Status:** M0 complete. **M1 BLOCKED** — see §0.
+**Status:** M0 complete. M0.5 shipped — see §8 for what changed. M1 unblocked.
 
 ---
 
@@ -343,3 +343,72 @@ deprecation.
 
 **Agent E has written no application code and made no dependency, schema, or config
 changes.** The worktree contains this document only.
+
+---
+
+## §8 · M0.5 RESOLUTION LOG (planner-approved, 2026-08-29)
+
+Planner reviewed this audit and approved a single pre-M1 PR. What changed:
+
+| Item | Resolution |
+|---|---|
+| **Blocker 1** (red baseline) | `vitest.config.ts` now excludes `src/lib/comms/**`; `package.json` `test` chains `vitest run && vitest run --config vitest.agent-d.config.ts`. `isolate` NOT flipped. |
+| **GAP 1** (sequence steps) | `updateSequence()` now persists `steps`. Implemented as an **ordinal reconcile**, not delete-and-recreate — see the deviation note below. `PATCH /api/comms/sequences/[id]` returns **409 `sequence_step_in_use`** when a removal would strand an active enrollment. |
+| **GAP 2** (snippets) | **CUT.** Removed from §1 mission item 7 and M4 acceptance. Templates cover the use case; Ryan does not use snippets in Close. No model, no routes, no UI. Fast-follow if missed post-M6. |
+| **GAP 3** (message state) | `Message.readAt` + `Message.archivedAt` (`TIMESTAMPTZ(6)`, nullable). Migration `20260829140409_message_read_archive_state`, additive, applied to Railway. New `PATCH /api/comms/messages/[id]` and `GET /api/comms/messages/unread-count`. |
+| **GAP 4** (OAuth disconnect) | New `POST /api/oauth/[provider]/revoke` (`gmail` \| `outlook`) + `markRevoked()` in D's store + RFC 7009 `revokeToken()` in `oauth/gmail.ts`. |
+
+### Deviations from the planner's literal instruction (all deliberate)
+
+1. **GAP 1 is a reconcile, not a replace-all.** `SequenceEnrollment.currentStepId` is a
+   plain `String` with **no FK**, and `tick.ts:59` **throws**
+   (`current step <id> not found in sequence <id>`) when it cannot resolve that id.
+   Delete-and-recreate mints new step ids and would break every active enrollment on the
+   next tick. Instead: existing steps (ordinal-sorted) are matched positionally to the
+   incoming list — overlap is `UPDATE`d **in place** (ids preserved), the tail is deleted,
+   extras are created. Dropping a step an active enrollment sits on throws
+   `SequenceStepInUseError` → 409, mirroring the existing `TemplateInUseError` → 409 idiom
+   in `templates/crud.ts`.
+2. **`unread-count` also filters `direction: 'incoming'`.** The planner's sketch was
+   `{ readAt: null, archivedAt: null }`. Without the direction filter every message Ryan
+   *sends* counts as unread and the badge is useless within a day of dialing.
+3. **Outlook revocation is local-only.** AAD v2 exposes no RFC 7009 endpoint; Graph's
+   `POST /me/revokeSignInSessions` needs a scope this app does not hold (D requests
+   `offline_access, Mail.Read, Mail.Send, User.Read`). Gmail gets a real remote revoke;
+   Outlook drops tokens locally and the response reports `remoteRevocation: false` rather
+   than implying a remote revoke happened.
+4. **`accessTokenEncrypted` is emptied, not nulled.** The column is `NOT NULL` in the
+   frozen schema and the planner did not approve making it nullable. `''` is stored;
+   decrypting it throws, which is correct fail-closed behaviour for a dead credential.
+5. **Revoke route path.** Placed at `/api/oauth/[provider]/revoke` exactly as the planner
+   specified. Note this sits **outside** the `/api/comms/oauth/**` namespace where every
+   other OAuth route lives (`authorize`, `callback`). Flagging the inconsistency; not
+   changing it unilaterally.
+6. **`TIMESTAMPTZ(6)` vs the rest of `Message`.** Every other `DateTime` on `Message` maps
+   to Prisma's default `timestamp(3)` (no time zone). The two new columns are
+   `timestamptz(6)` per explicit instruction. Better type, but the table is now mixed.
+
+### NEW FINDING — pre-existing schema/migration drift (NOT Agent E's, NOT fixed)
+
+`prisma migrate status` reports "up to date", but that only compares *applied* migrations
+against the migrations folder. `prisma migrate diff --from-migrations --to-schema-datamodel`
+reveals `prisma/schema.prisma` has changes that **no migration has ever applied**:
+
+- **`BulkScrubCheckpoint` reshape (Agent C) — DESTRUCTIVE.**
+  `DROP COLUMN "lastProcessedPhone"`, `DROP COLUMN "startedAt"`,
+  `ADD COLUMN "chunkIndex" | "haltReason" | "lastProcessedContactPhoneId"`,
+  `ALTER COLUMN "importBatchId" SET NOT NULL`, plus two new indexes (one **UNIQUE** on
+  `[organizationId, importBatchId]`, which fails if duplicates exist).
+- **Four unapplied `id` defaults** — `Call`, `CustomFieldDefinition`, `DialSession`,
+  `SavedView` all want `DEFAULT 'prefix_' || substr(md5(random()::text), 1, 24)`.
+
+This matches the known landmine that Agent C left two local-only commits (reshape
+migration + doc) that never reached `main` — only the `schema.prisma` edit did.
+
+**Consequence:** anyone who runs `prisma migrate dev` in this repo will silently fold
+Agent C's destructive reshape into their own migration. Agent E's migration was
+hand-written to contain **only** the two `Message` columns for exactly this reason.
+
+**Recommendation:** planner should schedule a dedicated drift-reconciliation PR (likely
+recovering C's local commits). Agent E has not touched it — it is destructive, it is C's,
+and it is outside this brief.

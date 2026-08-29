@@ -87,6 +87,25 @@ export function markReauthRequired(id: string) {
   })
 }
 
+/**
+ * Local revocation: drop both tokens and flag the credential dead.
+ *
+ * `accessTokenEncrypted` is NOT NULL in the schema, so it is emptied rather than
+ * nulled. Decrypting '' throws, which is the correct fail-closed behaviour for a
+ * credential that no longer grants anything.
+ */
+export function markRevoked(id: string) {
+  return prisma.oAuthCredential.update({
+    where: { id },
+    data: {
+      accessTokenEncrypted: '',
+      refreshTokenEncrypted: null,
+      expiresAt: null,
+      status: 'revoked',
+    },
+  })
+}
+
 export function markError(id: string) {
   return prisma.oAuthCredential.update({ where: { id }, data: { status: 'error' } })
 }

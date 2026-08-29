@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
@@ -9,6 +9,14 @@ export default defineConfig({
       'src/**/*.spec.ts',
       'tests/**/*.test.ts',
     ],
+    // Agent D's comms tests run under `vitest.agent-d.config.ts`, NOT here.
+    // They are fully mocked (`vi.mock` on prisma, fetch stubs) and need vitest's
+    // per-file isolation. This config deliberately sets `isolate: false` to keep
+    // A/B/C's DB-backed suites on ONE Prisma pool (see the note below), which
+    // collapses every file into a single module registry and lets D's per-file
+    // mocks bleed across files. Two configs, one CI run, both green:
+    // `pnpm test` chains them.
+    exclude: [...configDefaults.exclude, 'src/lib/comms/**'],
     environment: 'node',
     // Materialize the merged Prisma schema into the perf DB ONCE before any
     // worker (avoids the concurrent `db push` collision when parallel files

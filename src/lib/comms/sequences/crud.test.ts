@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const db = vi.hoisted(() => ({
-  sequence: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
-  contact: { findFirst: vi.fn() },
-  sequenceEnrollment: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-}))
+const db: any = vi.hoisted(() => {
+  const d: any = {
+    sequence: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    contact: { findFirst: vi.fn() },
+    sequenceEnrollment: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+    sequenceStep: { findMany: vi.fn(), update: vi.fn(), createMany: vi.fn(), deleteMany: vi.fn() },
+  }
+  // updateSequence wraps its writes in a transaction; run the callback against
+  // the same mock so assertions still read off `db.*`.
+  d.$transaction = vi.fn(async (fn: any) => fn(d))
+  return d
+})
 vi.mock('../../prisma', () => ({ prisma: db }))
 
 import {
@@ -17,6 +24,7 @@ import {
   listSteps,
   updateSequence,
   deleteSequence,
+  SequenceStepInUseError,
 } from './crud'
 
 beforeEach(() => vi.clearAllMocks())
@@ -110,6 +118,81 @@ describe('read + update + delete', () => {
     db.sequence.updateMany.mockResolvedValue({ count: 1 })
     await updateSequence('o', 's', { description: null })
     expect((db.sequence.updateMany.mock.calls[0][0] as any).data).toEqual({ description: null })
+  })
+
+  it('updateSequence PERSISTS steps when the payload includes them (GAP 1 regression)', async () => {
+    db.sequence.updateMany.mockResolvedValue({ count: 1 })
+    db.sequenceStep.findMany.mockResolvedValue([])
+    await updateSequence('o', 's', {
+      steps: [
+        { ordinal: 1, delayHours: 0, channel: 'email', templateId: 't1' },
+        { ordinal: 2, delayHours: 48, channel: 'email', templateId: 't2' },
+      ],
+    })
+    const arg = db.sequenceStep.createMany.mock.calls[0][0] as any
+    expect(arg.data).toEqual([
+      { sequenceId: 's', ordinal: 1, delayHours: 0, channel: 'email', templateId: 't1' },
+      { sequenceId: 's', ordinal: 2, delayHours: 48, channel: 'email', templateId: 't2' },
+    ])
+  })
+
+  it('updateSequence UPDATES overlapping steps in place, preserving ids', async () => {
+    // Fresh ids would strand active enrollments — tick.ts throws when it cannot
+    // resolve currentStepId against the step list.
+    db.sequence.updateMany.mockResolvedValue({ count: 1 })
+    db.sequenceStep.findMany.mockResolvedValue([{ id: 'st1' }, { id: 'st2' }])
+    await updateSequence('o', 's', {
+      steps: [
+        { ordinal: 1, delayHours: 6, channel: 'email', templateId: 't1' },
+        { ordinal: 2, delayHours: 12, channel: 'sms', templateId: 't9' },
+      ],
+    })
+    expect(db.sequenceStep.update).toHaveBeenCalledTimes(2)
+    expect(db.sequenceStep.update.mock.calls[0][0].where).toEqual({ id: 'st1' })
+    expect(db.sequenceStep.update.mock.calls[1][0].where).toEqual({ id: 'st2' })
+    expect(db.sequenceStep.update.mock.calls[1][0].data.templateId).toBe('t9')
+    expect(db.sequenceStep.createMany).not.toHaveBeenCalled()
+    expect(db.sequenceStep.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('updateSequence deletes the trailing tail when the list shrinks', async () => {
+    db.sequence.updateMany.mockResolvedValue({ count: 1 })
+    db.sequenceStep.findMany.mockResolvedValue([{ id: 'st1' }, { id: 'st2' }, { id: 'st3' }])
+    db.sequenceEnrollment.findMany.mockResolvedValue([])
+    await updateSequence('o', 's', {
+      steps: [{ ordinal: 1, delayHours: 0, channel: 'email', templateId: 't1' }],
+    })
+    expect(db.sequenceStep.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['st2', 'st3'] } },
+    })
+  })
+
+  it('updateSequence REFUSES to strand an active enrollment sitting on a dropped step', async () => {
+    db.sequence.updateMany.mockResolvedValue({ count: 1 })
+    db.sequenceStep.findMany.mockResolvedValue([{ id: 'st1' }, { id: 'st2' }])
+    db.sequenceEnrollment.findMany.mockResolvedValue([{ currentStepId: 'st2' }])
+    await expect(
+      updateSequence('o', 's', {
+        steps: [{ ordinal: 1, delayHours: 0, channel: 'email', templateId: 't1' }],
+      }),
+    ).rejects.toBeInstanceOf(SequenceStepInUseError)
+    expect(db.sequenceStep.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('updateSequence leaves steps untouched when the payload omits them', async () => {
+    db.sequence.updateMany.mockResolvedValue({ count: 1 })
+    await updateSequence('o', 's', { name: 'renamed' })
+    expect(db.sequenceStep.findMany).not.toHaveBeenCalled()
+    expect(db.sequenceStep.createMany).not.toHaveBeenCalled()
+    expect(db.sequenceStep.deleteMany).not.toHaveBeenCalled()
+  })
+
+  it('updateSequence skips step reconciliation when the org does not own it', async () => {
+    db.sequence.updateMany.mockResolvedValue({ count: 0 })
+    await updateSequence('other-org', 's', {
+      steps: [{ ordinal: 1, delayHours: 0, channel: 'email', templateId: 't1' }],
+    })
+    expect(db.sequenceStep.findMany).not.toHaveBeenCalled()
   })
 
   it('deleteSequence scopes by org', async () => {

@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
 import { ZodError } from 'zod'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
-import { getSequence, updateSequence, deleteSequence } from '@/lib/comms/sequences/crud'
+import {
+  getSequence,
+  updateSequence,
+  deleteSequence,
+  SequenceStepInUseError,
+} from '@/lib/comms/sequences/crud'
 
 export const dynamic = 'force-dynamic'
 type Ctx = { params: Promise<{ id: string }> }
@@ -22,6 +27,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
   } catch (err) {
     if (err instanceof ZodError) {
       return NextResponse.json({ error: 'validation', issues: err.issues }, { status: 400 })
+    }
+    if (err instanceof SequenceStepInUseError) {
+      return NextResponse.json({ error: err.code, stepIds: err.stepIds }, { status: 409 })
     }
     throw err
   }
