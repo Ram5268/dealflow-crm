@@ -17,6 +17,7 @@ import {
   getCredential,
   getDecryptedRefreshToken,
   markReauthRequired,
+  markRevoked,
 } from './store'
 
 beforeAll(() => {
@@ -84,5 +85,29 @@ describe('markReauthRequired', () => {
       where: { id: 'id1' },
       data: { status: 'reauth_required' },
     })
+  })
+})
+
+describe('markRevoked', () => {
+  it('empties both tokens and flags the credential revoked', async () => {
+    db.update.mockResolvedValue({ id: 'x' })
+    await markRevoked('x')
+    expect(db.update).toHaveBeenCalledWith({
+      where: { id: 'x' },
+      data: {
+        accessTokenEncrypted: '',
+        refreshTokenEncrypted: null,
+        expiresAt: null,
+        status: 'revoked',
+      },
+    })
+  })
+
+  it('leaves no decryptable material behind', async () => {
+    db.update.mockResolvedValue({ id: 'x' })
+    await markRevoked('x')
+    const { data } = db.update.mock.calls.at(-1)![0] as any
+    expect(() => decryptToken(data.accessTokenEncrypted)).toThrow()
+    expect(data.refreshTokenEncrypted).toBeNull()
   })
 })

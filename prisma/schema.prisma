@@ -619,6 +619,12 @@ model Message {
   providerMessageId     String?   @unique
   cost                  Decimal?  @db.Decimal(10, 4)
   errorMessage          String?
+  // Agent-E inbox state (planner-approved §13 amendment, 2026-08-29).
+  // NULL = unread / unarchived; non-NULL = the moment the user marked it.
+  // Deliberately NOT folded into `status`, which is Agent D's outbound DELIVERY
+  // state (outbox|scheduled|sent) — overloading it would corrupt the send pipeline.
+  readAt                DateTime? @db.Timestamptz(6)
+  archivedAt            DateTime? @db.Timestamptz(6)
   dateScheduled         DateTime?
   dateSent              DateTime?
   activityAt            DateTime  @default(now())

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma'
 
 /** Sequence + step CRUD and enrollment (brief §3.3). */
@@ -25,6 +26,14 @@ export const enrollInputSchema = z.object({
 export const enrollmentStatusSchema = z.object({
   status: z.enum(['paused', 'active', 'cancelled']),
 })
+
+export class SequenceStepInUseError extends Error {
+  readonly code = 'sequence_step_in_use'
+  constructor(readonly stepIds: string[]) {
+    super('Cannot remove a step that an active enrollment is currently on')
+    this.name = 'SequenceStepInUseError'
+  }
+}
 
 export class DuplicateEnrollmentError extends Error {
   readonly code = 'duplicate_enrollment'
@@ -78,16 +87,92 @@ export async function listSteps(orgId: string, sequenceId: string) {
   return seq?.steps ?? []
 }
 
+/**
+ * Positionally reconcile a sequence's steps against the editor's full ordered
+ * list.
+ *
+ * NOT delete-all-then-recreate: `SequenceEnrollment.currentStepId` is a plain
+ * String with no FK, and `tick.ts` THROWS (`current step <id> not found in
+ * sequence <id>`) when it cannot resolve that id against the step list. Fresh
+ * ids would strand every active enrollment. So surviving positions are UPDATEd
+ * in place, keeping their ids resolvable.
+ *
+ * Existing steps (ordinal-sorted) are matched positionally to the incoming
+ * list: overlap is updated, the tail is deleted, extras are created. Removing a
+ * step that an active enrollment currently sits on is refused
+ * (`SequenceStepInUseError` -> 409) rather than silently stranding it.
+ */
+async function reconcileSteps(
+  tx: Prisma.TransactionClient,
+  sequenceId: string,
+  next: z.infer<typeof stepInputSchema>[],
+) {
+  const existing = await tx.sequenceStep.findMany({
+    where: { sequenceId },
+    orderBy: { ordinal: 'asc' },
+    select: { id: true },
+  })
+
+  const keep = existing.slice(0, next.length)
+  const drop = existing.slice(next.length)
+
+  if (drop.length > 0) {
+    const dropIds = drop.map((s) => s.id)
+    const stranded = await tx.sequenceEnrollment.findMany({
+      where: { sequenceId, status: 'active', currentStepId: { in: dropIds } },
+      select: { currentStepId: true },
+    })
+    if (stranded.length > 0) {
+      throw new SequenceStepInUseError(dropIds)
+    }
+    await tx.sequenceStep.deleteMany({ where: { id: { in: dropIds } } })
+  }
+
+  for (let i = 0; i < keep.length; i++) {
+    const s = next[i]
+    await tx.sequenceStep.update({
+      where: { id: keep[i].id },
+      data: {
+        ordinal: s.ordinal,
+        delayHours: s.delayHours,
+        channel: s.channel,
+        templateId: s.templateId,
+      },
+    })
+  }
+
+  const add = next.slice(keep.length)
+  if (add.length > 0) {
+    await tx.sequenceStep.createMany({
+      data: add.map((s) => ({
+        sequenceId,
+        ordinal: s.ordinal,
+        delayHours: s.delayHours,
+        channel: s.channel,
+        templateId: s.templateId,
+      })),
+    })
+  }
+}
+
 export async function updateSequence(orgId: string, id: string, input: unknown) {
   const data = sequenceInputSchema.partial().parse(input)
-  return prisma.sequence.updateMany({
-    where: { id, organizationId: orgId },
-    data: {
-      ...(data.name !== undefined ? { name: data.name } : {}),
-      ...(data.description !== undefined ? { description: data.description } : {}),
-      ...(data.channel !== undefined ? { channel: data.channel } : {}),
-      ...(data.blackoutDates !== undefined ? { blackoutDates: data.blackoutDates } : {}),
-    },
+  return prisma.$transaction(async (tx) => {
+    const res = await tx.sequence.updateMany({
+      where: { id, organizationId: orgId },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.description !== undefined ? { description: data.description } : {}),
+        ...(data.channel !== undefined ? { channel: data.channel } : {}),
+        ...(data.blackoutDates !== undefined ? { blackoutDates: data.blackoutDates } : {}),
+      },
+    })
+    // `steps: undefined` means "leave steps alone"; `steps: []` clears them.
+    // Only reconcile once the org-scoped update proved the sequence is ours.
+    if (res.count > 0 && data.steps !== undefined) {
+      await reconcileSteps(tx, id, data.steps)
+    }
+    return res
   })
 }
 

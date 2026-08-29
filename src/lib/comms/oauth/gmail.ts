@@ -81,3 +81,24 @@ export async function refreshAccessToken(
   const expiry = client.credentials.expiry_date
   return { accessToken: token, expiresAt: expiry ? new Date(expiry) : undefined }
 }
+
+/**
+ * RFC 7009 token revocation. Revoking a REFRESH token also invalidates every
+ * access token minted from it, so callers should pass the refresh token when
+ * they have one.
+ *
+ * Idempotent: Google answers 400 `invalid_token` for an already-dead token,
+ * which is treated as success so a repeated disconnect does not 502.
+ */
+export async function revokeToken(token: string): Promise<void> {
+  const res = await fetch('https://oauth2.googleapis.com/revoke', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    if (res.status === 400 && detail.includes('invalid_token')) return
+    throw new Error(`Gmail token revocation failed (${res.status}): ${detail}`)
+  }
+}
