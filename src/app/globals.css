@@ -1,12 +1,216 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════════
+   DealFlow CRM — design tokens (brief §6)
+
+   Light is the base; dark overrides ONLY the semantic colors under
+   [data-theme="dark"]. An inline <head> script resolves the stored
+   preference before first paint, so there is no FOUC and CSS never has to
+   read prefers-color-scheme itself.
+
+   Density is deliberate: this is a desk tool a broker sits in for eight
+   hours, not a consumer app. Sidebar rows 32px, list rows 44px, inputs 32px.
+   ═══════════════════════════════════════════════════════════════════════ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces */
+  --bg: #f7f7f8;
+  --bg-elevated: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-hover: #f0f0f2;
+  --bg-active: #e8e8ec;
+
+  /* Lines */
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+
+  /* Text */
+  --text: #18181b;
+  --text-muted: #52525b;
+  --text-subtle: #a1a1aa;
+
+  /* Brand action — warmer than stock #3B82F6 (brief §6) */
+  --accent: #2a6bd8;
+  --accent-hover: #2259b5;
+  --accent-fg: #ffffff;
+  --accent-subtle: #eef3fd;
+
+  /* Status */
+  --danger: #dc2626;
+  --danger-fg: #ffffff;
+  --danger-subtle: #fef2f2;
+  --success: #16a34a;
+  --success-subtle: #f0fdf4;
+  --warning: #d97706;
+  --warning-subtle: #fffbeb;
+
+  /* Focus ring */
+  --ring: #2a6bd8;
+
+  /* Type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* Elevation — Close is FLAT; use sparingly */
+  --shadow-sm: 0 1px 0 0 rgb(0 0 0 / 0.04);
+  --shadow-md: 0 2px 8px -2px rgb(0 0 0 / 0.10), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.24), 0 4px 12px -4px rgb(0 0 0 / 0.10);
+
+  /* Shell metrics */
+  --sidebar-w: 240px;
+  --topbar-h: 48px;
+  --softphone-h: 56px;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0f0f12;
+  --bg-elevated: #17171b;
+  --bg-overlay: #1c1c22;
+  --bg-hover: #1f1f26;
+  --bg-active: #26262e;
+
+  --border: #27272d;
+  --border-strong: #3a3a44;
+
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-subtle: #71717a;
+
+  --accent: #4d8bf0;
+  --accent-hover: #6b9ff3;
+  --accent-fg: #0b0b0d;
+  --accent-subtle: #16233a;
+
+  --danger: #f87171;
+  --danger-fg: #1a0b0b;
+  --danger-subtle: #2a1515;
+  --success: #4ade80;
+  --success-subtle: #12241a;
+  --warning: #fbbf24;
+  --warning-subtle: #2a2010;
+
+  --ring: #4d8bf0;
+
+  --shadow-sm: 0 1px 0 0 rgb(0 0 0 / 0.30);
+  --shadow-md: 0 2px 8px -2px rgb(0 0 0 / 0.50), 0 1px 2px -1px rgb(0 0 0 / 0.40);
+  --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.70), 0 4px 12px -4px rgb(0 0 0 / 0.50);
+
+  color-scheme: dark;
+}
+
+/* Expose tokens as Tailwind utilities. `inline` keeps the var reference live,
+   so utilities follow the theme swap without regenerating CSS. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-overlay: var(--bg-overlay);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+
+  --color-danger: var(--danger);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --text-xs: 11px;
+  --text-xs--line-height: 1.45;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.45;
+  --text-base: 14px;
+  --text-base--line-height: 1.5;
+  --text-lg: 16px;
+  --text-lg--line-height: 1.45;
+  --text-xl: 18px;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 1.3;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+html {
+  background: var(--bg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Prose blocks (email bodies, descriptions) get a taller line-height. */
+.prose-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* One focus treatment everywhere. Keyboard-only — Close is keyboard-first but
+   does not ring on mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+/* Respect reduced-motion for every transition we ship. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thin scrollbars — dense UI, chunky bars eat real estate. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Overlay motion — short and flat; Close does not bounce. */
+@keyframes dfFadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes dfFadeOut { from { opacity: 1 } to { opacity: 0 } }
+@keyframes dfPopIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.98) }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1) }
+}
+@keyframes dfPopOut {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1) }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.98) }
+}
+@keyframes dfSlideInRight { from { transform: translateX(100%) } to { transform: translateX(0) } }
+@keyframes dfSlideOutRight { from { transform: translateX(0) } to { transform: translateX(100%) } }
+@keyframes dfSlideInUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
