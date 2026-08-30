@@ -1,12 +1,24 @@
-import { EmptyState } from '@/components/ui'
+import { Suspense } from 'react'
+import { getCurrentOrgId } from '@/lib/shell/orgContext'
+import { listTemplateRows } from '@/lib/sequences/queries'
+import { TemplatesView } from './TemplatesView'
 
-// Placeholder so the shell navigates everywhere from M1 onward. Real surface
-// ships in M4.
-export default function TemplatesPage() {
+export const dynamic = 'force-dynamic'
+
+export default async function TemplatesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ channel?: string }>
+}) {
+  const organizationId = await getCurrentOrgId()
+  const { channel } = await searchParams
+  const valid = channel === 'email' || channel === 'sms' ? channel : ''
+  const templates = await listTemplateRows(organizationId, valid || undefined)
+
+  // useSearchParams needs a Suspense boundary to stay statically analysable.
   return (
-    <EmptyState
-      title="Templates is coming"
-      description="Reusable email bodies with merge tags."
-    />
+    <Suspense>
+      <TemplatesView templates={templates} channel={valid} />
+    </Suspense>
   )
 }

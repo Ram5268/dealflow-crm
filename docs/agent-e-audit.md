@@ -829,3 +829,104 @@ Worth stating because it looks like a bug at a glance: the sidebar shows **4**
 while the list shows **3** dots. That is correct — four unread messages spread
 across three threads (one thread holds two). Verified against the DB rather than
 assumed.
+
+---
+
+## §12 · M4 DEVIATIONS AND FINDINGS (2026-08-30)
+
+The M4 brief described several fields and routes that do not exist. Reality wins
+throughout; each is listed with what was built instead. No new routes, no
+migrations, no dependencies.
+
+### 12.1 — The enroll route named in the brief does not exist
+
+`POST /api/comms/sequences/[id]/enroll` — not a route. The real one is
+**`POST /api/comms/enrollments`** taking `{ sequenceId, contactId }`.
+
+### 12.2 — Enrollment targets a CONTACT, not a lead
+
+`SequenceEnrollment.contactId`, and D's `enrollContact` looks the contact up
+directly. A lead can own several contacts, so the picker on `/leads/[id]` asks
+which one **only when that is ambiguous** — one contact enrolls silently, several
+prompt, zero explains why it cannot proceed.
+
+### 12.3 — `SequenceStep.templateId` is REQUIRED, so steps cannot hold inline copy
+
+`stepInputSchema.templateId` is `z.string()`, not optional. The brief offered
+"template picker OR subject/body inline"; the second half is impossible. Every
+step points at a saved `MessageTemplate`.
+
+Consequence for the editor: with no templates, the step form is refused outright
+and points at `/templates/new` instead of rendering an unsavable form. Templates
+are a prerequisite for sequences, not a parallel feature.
+
+### 12.4 — There is no "wait" step type
+
+A delay is `delayHours` **on the step it precedes**, not a step of its own. The
+brief's acceptance line "3 steps (email → wait 24h → sms)" is two steps in D's
+model: email at 0h, sms at 24h. The e2e builds three steps with distinct delays
+(0h / 24h / 48h) so it satisfies the count while showing the real semantics.
+
+### 12.5 — `Sequence` has no status column, so active/paused is derived
+
+Nothing can pause a sequence — `status` lives on `SequenceEnrollment`. The list
+shows **Active** (something is enrolled and running) or **Idle**. Deliberately
+not labelled "Paused", which would advertise a control that does not exist.
+Close solves the same problem with Active/Archived **tabs** rather than a per-row
+pill (`reference/close/sequences-list.png`).
+
+### 12.6 — No `updatedAt` on Sequence and no `lastUsed` on MessageTemplate
+
+Both "last activity" columns are derived:
+- sequence → newest `Message.activityAt` carrying that `sequenceId`, else newest
+  enrollment;
+- template → newest `Message.activityAt` citing that `templateId`, else "Never".
+
+### 12.7 — Open and bounce rates are not tracked ANYWHERE
+
+The brief asked for open / reply / bounce rates "per D's tracking". There is no
+tracking: no `openedAt`, `bouncedAt`, `clickedAt` or equivalent in the schema.
+
+Rather than a tab of N/A, the Stats tab shows what IS derivable from
+`Message.status` — Sent / Queued / Failed / Replies — and states plainly that
+opens and bounces are not tracked instead of rendering an invented percentage.
+
+`Replies` carries its own caveat in the UI: it counts incoming messages from
+enrolled contacts, which can include conversations unrelated to the sequence,
+because replies carry no sequence attribution.
+
+### 12.8 — The brief's merge tags would have failed SILENTLY
+
+`{{first_name}}`, `{{last_name}}`, `{{property_address}}` are not real. D's
+renderer resolves an unknown path to `""` — never the literal `{{tag}}` — so an
+editor offering those tags would have produced blank emails with no error
+anywhere.
+
+The real syntax is `{{contact.firstName}}`, `{{contact.displayName}}`,
+`{{lead.displayName}}`, `{{lead.primaryAddressSummary}}`, `{{lead.custom.<name>}}`,
+`{{signature}}`. `tests/unit/merge-tags.test.ts` pins BOTH directions: every tag
+the editor advertises must render non-empty, and the three from the brief must
+render empty — so a future edit cannot quietly reintroduce them.
+
+### 12.9 — Template body is plain text, not rich text
+
+The brief left this to judgement. `MessageTemplate.bodyText` is what every
+consumer actually reads (sequence steps, the inbox composer); `bodyHtml` is
+optional and unused by this build. Rich text would mean a new dependency or a
+hand-rolled contenteditable for a field whose merge tags are typed inline anyway.
+
+### 12.10 — Close keeps Templates under Settings, we keep them in the sidebar
+
+`/settings/templates/email/`, tabbed Email / SMS / Snippets
+(`reference/close/templates-list.png`). Our brief §7 puts Templates in the
+primary nav, which is kept — Ryan builds templates as a first-class task rather
+than as account configuration. The channel tabs ARE adopted, minus Snippets
+(cut). Noted as a deliberate parity divergence per the M3 ruling.
+
+### 12.11 — Bug caught by a test that was itself wrong first
+
+The `insertAtCursor` case for a reversed selection asserted
+`insertAtCursor('abcdef', 'X', 4, 2) === 'abcdX'` — which would have **deleted**
+`ef`, the exact corruption the test existed to prevent. The implementation was
+right: `end` clamps up to `start`, so a backwards selection collapses to a caret
+insert and keeps the tail. The expectation was corrected, not the code.

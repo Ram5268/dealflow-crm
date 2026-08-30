@@ -5,7 +5,9 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { hydrateCustomFields } from '@/lib/core-data/leads/serialize'
 import { Badge, Button, EmptyState, Tooltip } from '@/components/ui'
+import { listSequenceRows } from '@/lib/sequences/queries'
 import { ActivityTimeline } from './ActivityTimeline'
+import { EnrollButton } from './EnrollButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,13 +40,14 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   })
   if (!lead) notFound()
 
-  const [customFields, activities] = await Promise.all([
+  const [customFields, activities, sequences] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
       orderBy: [{ activityAt: 'desc' }],
       take: 50,
     }),
+    listSequenceRows(organizationId),
   ])
 
   return (
@@ -81,14 +84,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               </Button>
             </div>
           </Tooltip>
-          <Tooltip content="Sequences ship in M4">
-            <div>
-              <Button disabled>
-                <Zap size={13} />
-                Add to sequence
-              </Button>
-            </div>
-          </Tooltip>
+          <EnrollButton
+            sequences={sequences.map((s) => ({ id: s.id, name: s.name, stepCount: s.stepCount }))}
+            contacts={lead.contacts.map((c) => ({ id: c.id, displayName: c.displayName }))}
+          />
         </div>
       </header>
 

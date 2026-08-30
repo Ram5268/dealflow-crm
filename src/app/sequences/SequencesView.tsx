@@ -1,0 +1,90 @@
+import Link from 'next/link'
+import { Plus, Zap } from 'lucide-react'
+import { Badge, Button, EmptyState } from '@/components/ui'
+import { shortStamp } from '@/lib/ui/time'
+import type { SequenceRow } from '@/lib/sequences/queries'
+
+/**
+ * Sequence list. Close's equivalent is Workflows (/sequences redirects there):
+ * Name / Call Tasks / Stats / Last activity / Owner, with Active + Archived as
+ * TABS rather than a per-row status pill — see reference/close/sequences-list.png.
+ *
+ * Owner is dropped (single-seat) and "Active/Idle" is derived, because
+ * `Sequence` has no status column: active means something is enrolled and
+ * running right now.
+ */
+export function SequencesView({ sequences }: { sequences: SequenceRow[] }) {
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-4">
+      <div className="mb-3 flex items-center justify-end">
+        <Button asChild variant="primary" size="sm">
+          <Link href="/sequences/new">
+            <Plus size={13} />
+            New sequence
+          </Link>
+        </Button>
+      </div>
+
+      {sequences.length === 0 ? (
+        <EmptyState
+          icon={<Zap />}
+          title="No sequences yet. Create your first."
+          description="A sequence sends a fixed series of email or SMS steps to everyone enrolled."
+          action={
+            <Button asChild variant="primary" size="sm">
+              <Link href="/sequences/new">
+                <Plus size={13} />
+                New sequence
+              </Link>
+            </Button>
+          }
+        />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-line">
+          <table className="w-full text-sm">
+            <thead className="bg-hover text-left text-xs font-medium text-muted">
+              <tr>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Steps</th>
+                <th className="px-3 py-2">Enrolled</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Last activity</th>
+                <th className="px-3 py-2">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sequences.map((s) => (
+                <tr key={s.id} className="border-t border-line hover:bg-hover">
+                  <td className="px-3 py-2">
+                    <Link href={`/sequences/${s.id}`} className="font-medium text-accent hover:underline">
+                      {s.name}
+                    </Link>
+                    {s.description && (
+                      <span className="ml-2 text-xs text-subtle">{s.description}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted">{s.stepCount}</td>
+                  <td className="px-3 py-2 text-muted">
+                    {s.activeEnrollments}
+                    {s.totalEnrollments !== s.activeEnrollments && (
+                      <span className="text-subtle"> / {s.totalEnrollments}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge tone={s.activity === 'active' ? 'success' : 'neutral'}>
+                      {s.activity === 'active' ? 'Active' : 'Idle'}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-2 text-muted">
+                    {s.lastActivityAt ? shortStamp(new Date(s.lastActivityAt)) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-muted">{shortStamp(new Date(s.createdAt))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -1,12 +1,10 @@
-import { EmptyState } from '@/components/ui'
+import { getCurrentOrgId } from '@/lib/shell/orgContext'
+import { listSequenceRows } from '@/lib/sequences/queries'
+import { SequencesView } from './SequencesView'
 
-// Placeholder so the shell navigates everywhere from M1 onward. Real surface
-// ships in M4.
-export default function SequencesPage() {
-  return (
-    <EmptyState
-      title="Sequences is coming"
-      description="Multi-step outreach with delays and enrollment tracking."
-    />
-  )
+export const dynamic = 'force-dynamic'
+
+export default async function SequencesPage() {
+  const organizationId = await getCurrentOrgId()
+  return <SequencesView sequences={await listSequenceRows(organizationId)} />
 }
