@@ -1,12 +1,7 @@
-import { EmptyState } from '@/components/ui'
+import { redirect } from 'next/navigation'
+import { DEFAULT_SETTINGS_SLUG, settingsHref } from '@/lib/settings/nav'
 
-// Placeholder so the shell navigates everywhere from M1 onward. Real surface
-// ships in M5.
-export default function SettingsPage() {
-  return (
-    <EmptyState
-      title="Settings is coming"
-      description="Profile, connected accounts, calling, compliance and usage."
-    />
-  )
+// Bare /settings lands on the first section (M5 §3).
+export default function SettingsIndexPage() {
+  redirect(settingsHref(DEFAULT_SETTINGS_SLUG))
 }
