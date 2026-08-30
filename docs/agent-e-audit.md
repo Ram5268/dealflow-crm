@@ -598,7 +598,7 @@ control, which §13 forbids. A visible control that does nothing is worse than n
 control, so the bar is now status-only and links to `/dialer`, where Agent B's
 real controls live. The bar renders `role="status" aria-live="polite"`.
 
-### 10.6 — FOUND, NOT FIXED: `DialerShell` never clears its active call
+### 10.6 — `DialerShell` never cleared its active call · **FIXED in FOLD 2**
 
 `src/app/dialer/components/DialerShell.tsx` subscribes with `useEffect(…, [])`
 but compares `evt.callId === activeCallId` inside the handler. That closure
@@ -606,9 +606,24 @@ captured `activeCallId` at mount, so it is `null` forever and the
 `call.completed` branch can never match. The ammunition panel therefore keeps
 showing a finished call until something else re-renders.
 
-**Not fixed** — dialer logic is out of scope (§13). Flagging for the planner to
-schedule. `useSoftphoneSession` deliberately avoids the same bug by using a
-functional `setSession` updater, with a comment naming the trap.
+**Planner ruling (M2 review):** fixed under a §13 micro-amendment — "no dialer
+LOGIC" does not cover correctness fixes to subscription bookkeeping.
+
+The transition now lives in `src/lib/telephony/softphone/activeCall.ts` as a pure
+`nextActiveCallId(current, evt)` reducer, applied through a functional
+`setActiveCallId` updater. Extracting it does double duty: a pure reducer is only
+reachable through the functional updater (so the bug cannot reappear by
+accident), and it is testable in the node environment — `DialerShell` itself
+pulls in `@twilio/voice-sdk` and cannot be mounted there.
+
+`tests/softphone.active-call.test.ts` covers the exact failing sequence
+(connect → complete → cleared), plus completion of a call we are not on, a new
+connect superseding a stale one, missing-callId frames, unrelated event types on
+the same channel, and duplicate completions. `activeCallId` is the prop
+`AmmunitionPanel` clears on, so "reducer returns null" *is* "the panel clears".
+
+`useSoftphoneSession` already avoided the same trap with a functional
+`setSession` updater and a comment naming it.
 
 ### 10.7 — Nested `<main>` landmarks fixed on /dialer and /queue
 
@@ -650,3 +665,26 @@ was created, captured, and deleted. Post-cleanup verification returned
 `RESIDUE {leads:0,contacts:0,tasks:0,messages:0,calls:0,views:0}` and
 `DB_TOTALS` back to all-zero — byte-identical to the pre-seed state. The seed
 script lived only in the gate mirror and was never committed (see §10.9).
+
+### 10.12 — FOUND, NOT FIXED: importer e2e fails inside Agent A's AI mapping
+
+`tests/e2e/importer-happy-path.spec.ts` fails at "at least one new custom field
+suggested". The cause is server-side, in Agent A's slice:
+
+```
+ERROR dependency:"anthropic" event:"proposed-mapping"
+ZodError: Invalid discriminator value at mapping[4].target.kind
+  expected 'standard_field' | 'new_custom_field' | 'existing_custom_field' | 'ignore'
+POST /api/imports/<id>/proposed-mapping 503
+```
+
+The model returned a `target.kind` outside the enum, `proposeMapping` throws on
+the Zod parse, and the route 503s with no repair or retry. It is non-deterministic
+by nature (depends on what the model emits) but it is a real gap: one
+out-of-enum token from the LLM breaks the entire import happy path.
+
+**Not Agent E's and not fixed.** M2's diff touches no importer file —
+`git diff --name-only 655ac49 HEAD -- src/app/imports src/app/api/imports src/lib/core-data/importer`
+returns empty. A retry-with-repair or a lenient parse that drops unrecognised
+entries would fix it; flagging for the planner to route to whoever owns the
+importer slice.

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Softphone } from "./Softphone";
 import { AmmunitionPanel } from "./AmmunitionPanel";
 import { SessionControls } from "./SessionControls";
+import { nextActiveCallId, type CallStreamEvent } from "@/lib/telephony/softphone/activeCall";
 
 /**
  * Client shell that coordinates the active call across the softphone and
@@ -17,20 +18,22 @@ export function DialerShell() {
   useEffect(() => {
     const es = new EventSource("/api/telephony/stream");
     es.onmessage = (e) => {
+      let evt: CallStreamEvent;
       try {
-        const evt = JSON.parse(e.data);
-        if (evt.type === "call.connected") setActiveCallId(evt.callId);
-        if (evt.type === "call.completed" && evt.callId === activeCallId) setActiveCallId(null);
+        evt = JSON.parse(e.data);
       } catch {
-        /* ignore non-JSON keepalives */
+        return; // keepalive or non-JSON frame
       }
+      // Functional updater, not a captured value: the stream is opened once
+      // (deps []), so reading `activeCallId` directly here would read the
+      // mount-time null forever and `call.completed` could never clear the
+      // panel. `prev` is always the live value.
+      setActiveCallId((prev) => nextActiveCallId(prev, evt));
     };
     es.onerror = () => {
       /* browser auto-reconnects */
     };
     return () => es.close();
-    // activeCallId intentionally excluded — we only want one long-lived stream.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
