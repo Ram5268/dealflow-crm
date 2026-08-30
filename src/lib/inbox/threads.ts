@@ -282,6 +282,7 @@ async function messageDetail(organizationId: string, id: string): Promise<Thread
     title: titleFor(leadName, lastIncoming?.fromAddress ?? newest.fromAddress),
     subject: rows.find((r) => r.subject)?.subject ?? null,
     items,
+    replyThreadId: id,
     replyToAddress,
     replyToPhone,
   }
@@ -333,6 +334,7 @@ async function voicemailDetail(organizationId: string, callId: string): Promise<
     ],
     // No voicemail-to-voicemail reply: a voicemail is answered by email or SMS,
     // and we only know the phone.
+    replyThreadId: null,
     replyToAddress: null,
     replyToPhone: call.remotePhone,
   }

@@ -746,17 +746,38 @@ API routes, so there is nothing for the client to fetch and the open thread has
 to be a URL parameter. localStorage mirrors the choice so a bare `/inbox` restores
 the last tab.
 
-### 11.4 — FOUND, NOT FIXED: replies do not thread
+### 11.4 — Replies did not thread · **FIXED in M3.1**
 
 `POST /api/comms/messages` neither accepts nor sets `threadId`, so a reply is
 persisted as a brand-new single-message thread instead of joining the one it
 answers. In the inbox this shows up as a second row carrying
 `Re: <same subject>` directly above the original.
 
-**Not fixed** — the brief is explicit that Agent E consumes D's API and does not
-touch its send path. Closing it needs one of: D accepting `threadId` on POST, or D
-deriving it from an `inReplyTo`. Flagged for the planner to route. The M3 e2e
-asserts the behaviour that exists today, with a comment pointing here.
+**Planner ruling (M3 review):** fast-follow M3.1 under a §13 amendment — this
+breaks the primary Inbox interaction, so D's send path may be touched.
+
+`POST /api/comms/messages` now accepts an optional `threadId` and sets it on the
+created Message; omitting it keeps the legacy compose-new behaviour. The composer
+passes `ThreadDetail.replyThreadId`, which is the thread key without its `m:`
+prefix — for a lone message that is the message's own id, which `getThread`
+already resolves through `OR: [{ threadId: id }, { id }]`, so both thread shapes
+work without a special case.
+
+**Deviation from the ruling's wording:** it said to add `threadId` to that route's
+Zod schema. There is no Zod schema — D reads every field straight off the body.
+Introducing one would change how all the other fields are handled, well beyond
+this amendment, so validation is scoped to `threadId` alone.
+
+**Hardening not in the ruling:** `Message.threadId` is a free-form string, not a
+foreign key, so an unvalidated value would let a caller staple a message onto
+another org's thread. The route now 404s unless the org owns a message carrying
+that threadId (or the message whose id names the thread), and 400s on a
+non-string. Both paths are covered by e2e.
+
+The M3 e2e that asserted the old behaviour was inverted: it now opens a thread,
+replies, and asserts the reply lands in **that** thread with no new row in the
+list. Confirmed discriminating by disabling the fix in the gate mirror and
+watching the test fail.
 
 ### 11.5 — Email send is wired end-to-end but the green path is not reachable locally
 
