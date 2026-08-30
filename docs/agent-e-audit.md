@@ -688,3 +688,123 @@ out-of-enum token from the LLM breaks the entire import happy path.
 returns empty. A retry-with-repair or a lenient parse that drops unrecognised
 entries would fix it; flagging for the planner to route to whoever owns the
 importer slice.
+
+---
+
+## §11 · M3 DEVIATIONS AND FINDINGS (2026-08-30)
+
+### 11.1 — INCIDENT: a seed script clobbered Agent D's Gmail OAuth credential
+
+**What happened.** The M3 acceptance seed called `upsertCredential(...)` to give the
+send path a mock token. That helper keys on `(organizationId, provider)`, and a
+`gmail` credential already existed — created `2026-08-27T17:32:59Z` during Agent
+D's slice work. The upsert overwrote it in place: `emailAddress` became
+`m3smoke-ryan@example.com` and both encrypted tokens became mock values. The
+original address and tokens are **unrecoverable**.
+
+**What was not touched.** The `msft-graph` credential (`ryan@outlook.com`) is
+untouched. Google OAuth is a deferred item on this project, so the clobbered row
+was near-certainly D's dev credential rather than a live grant — but that is an
+inference, not a guarantee.
+
+**Current state.** The row is left exactly as the accident left it. The seed
+script no longer writes credentials at all, and deliberately does not delete or
+further mutate that row: the damage is done and any further write is a planner
+call. Reconnecting Gmail through the normal OAuth flow overwrites it cleanly.
+
+**Rule going forward.** Never `upsert` into a shared table from a seed script
+without reading the row first. `upsert` is not a safe "create if missing" — on a
+composite unique key it is a silent overwrite.
+
+### 11.2 — Close has no three-pane inbox, and this workspace has no threads
+
+The §5 capture found that Close's IA does not contain the surface M3 specifies:
+
+- `app.close.com/inbox/` **404s**. The Inbox nav item points at `/tasks/inbox/`,
+  a tabbed *task triage* list (Primary / Emails / Calls / Messages / Tasks /
+  Reminders / Potential Contacts), not a mail client.
+- `/conversations/history/` is call-and-meeting **history search**, and is empty.
+- Close's real "thread + reply" surface is the **lead activity timeline**, with
+  compose as icon buttons in the lead header (`reference/close/inbox-composer.png`).
+- Ryan's Emails tab is at **zero**, so there were no threads to photograph.
+
+The planner specified M3's shape in detail, so this was built to spec rather than
+blocked — but the spec is a Front/Superhuman-style inbox, not Close parity.
+Close's *visual language* was followed where it exists: filter tabs above a dense
+row list, channel icons, and the disabled-with-explanatory-tooltip pattern Close
+uses for unavailable actions (`reference/close/inbox-emails-tab.png`).
+
+Captured: `reference/close/inbox-emails-tab.png`, `reference/close/inbox-composer.png`.
+No Close data was mutated — the composer was opened and abandoned without typing,
+and a follow-up check confirmed **no draft was created**.
+
+### 11.3 — Filter state lives in the URL *and* localStorage
+
+The brief asked for localStorage. The URL is the source of truth (matching
+`/leads` from M1) because the thread detail is a **server** read — §13 forbids new
+API routes, so there is nothing for the client to fetch and the open thread has
+to be a URL parameter. localStorage mirrors the choice so a bare `/inbox` restores
+the last tab.
+
+### 11.4 — FOUND, NOT FIXED: replies do not thread
+
+`POST /api/comms/messages` neither accepts nor sets `threadId`, so a reply is
+persisted as a brand-new single-message thread instead of joining the one it
+answers. In the inbox this shows up as a second row carrying
+`Re: <same subject>` directly above the original.
+
+**Not fixed** — the brief is explicit that Agent E consumes D's API and does not
+touch its send path. Closing it needs one of: D accepting `threadId` on POST, or D
+deriving it from an `inReplyTo`. Flagged for the planner to route. The M3 e2e
+asserts the behaviour that exists today, with a comment pointing here.
+
+### 11.5 — Email send is wired end-to-end but the green path is not reachable locally
+
+`send.ts` already honours `GMAIL_MOCK_URL`, so the Gmail **API** can be mocked
+(`contracts/mocks/gmail/server.ts`, started via its exported `start()` — running
+the file directly does nothing). But before sending, D refreshes the access token
+against the **real** `https://oauth2.googleapis.com/token`, which is hardcoded.
+With no Google client credentials configured that returns
+`invalid_request: Could not determine client ID`, and the route 502s.
+
+Closing it needs a credential row with a future `expiresAt`, or real Google client
+credentials — the first is another credential write, which §11.1 rules out.
+
+So the e2e asserts the half Agent E owns, and asserts it strictly: the payload
+reaches D, and on a provider failure the drawer **stays open with the typed body
+intact** rather than silently eating the draft. The test takes the success branch
+automatically if a provider is ever configured.
+
+### 11.6 — Bugs found and fixed while testing
+
+1. **SMS threads were sendable as email.** An SMS row keeps the phone number in
+   `fromAddress`, and the composer picked its channel from "is `replyToAddress`
+   non-empty". Both the reply-target derivation and the composer now key off the
+   thread's `channel`. The e2e for this was itself wrong first: it asserted Send
+   was disabled on an **empty** composer, which passes even with no SMS gate at
+   all. It now types a body first.
+2. **Marking a thread unread did nothing while it was open.** The
+   open-thread-marks-read effect re-marked the messages on the very next refresh.
+   The effect now tracks which message ids it auto-marked, so an explicit `u`
+   wins over the automatic path.
+3. **"Voicemails have no read state"** was shown for any thread with no incoming
+   messages, including outbound-only email threads. Copy corrected.
+4. **The Focus "Start dialing" CTA vanished when no SavedView existed.** M2 made
+   it unconditional only inside the happy branch; the `no-view` and `error`
+   branches silently dropped the page's primary action. Now hoisted across all
+   three states.
+
+### 11.7 — Voicemails deliberately carry no read or archive state
+
+`Call` has no `readAt`/`archivedAt` — those columns are Agent E's addition to
+`Message` only. Rather than fabricate state on a table this slice does not own,
+voicemail rows report `unreadCount: 0` and empty id lists, and `u` / `e` on one
+says so plainly. This means the sidebar badge counts messages only, which matches
+the planner's stated definition.
+
+### 11.8 — The badge counts messages; the dots mark threads
+
+Worth stating because it looks like a bug at a glance: the sidebar shows **4**
+while the list shows **3** dots. That is correct — four unread messages spread
+across three threads (one thread holds two). Verified against the DB rather than
+assumed.

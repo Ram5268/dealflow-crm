@@ -7,22 +7,36 @@ import { PRIMARY_NAV, SETTINGS_NAV, isActivePath, type NavItem } from '@/lib/ui/
 import { cn } from '@/lib/ui/cn'
 import { UserMenu } from './UserMenu'
 
+/** How often the sidebar badge re-checks. Deliberately slow: the number is
+ *  ambient, and the inbox refreshes it immediately on any read/archive. */
+const UNREAD_POLL_MS = 30_000
+
 /** Live unread count for the Inbox badge. Silent on failure — a broken badge
  *  must never break the shell. */
 function useUnreadCount(): number | null {
   const [count, setCount] = useState<number | null>(null)
+  const pathname = usePathname()
+
   useEffect(() => {
     let cancelled = false
-    fetch('/api/comms/messages/unread-count')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled && d && typeof d.count === 'number') setCount(d.count)
-      })
-      .catch(() => {})
+    const load = () => {
+      fetch('/api/comms/messages/unread-count')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!cancelled && d && typeof d.count === 'number') setCount(d.count)
+        })
+        .catch(() => {})
+    }
+    load()
+    const id = setInterval(load, UNREAD_POLL_MS)
     return () => {
       cancelled = true
+      clearInterval(id)
     }
-  }, [])
+    // Re-reads on navigation too, so marking a thread read updates the badge
+    // without waiting out the poll interval.
+  }, [pathname])
+
   return count
 }
 
