@@ -3,8 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { PRIMARY_NAV, SEARCH_ICON, SETTINGS_NAV, isActivePath, type NavItem } from '@/lib/ui/nav'
-import { Kbd } from '@/components/ui'
+import { PRIMARY_NAV, SETTINGS_NAV, isActivePath, type NavItem } from '@/lib/ui/nav'
 import { cn } from '@/lib/ui/cn'
 import { UserMenu } from './UserMenu'
 
@@ -49,16 +48,9 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
   )
 }
 
-export function Sidebar({
-  displayName,
-  onOpenPalette,
-}: {
-  displayName: string
-  onOpenPalette: () => void
-}) {
+export function Sidebar({ displayName }: { displayName: string }) {
   const pathname = usePathname()
   const unread = useUnreadCount()
-  const SearchIcon = SEARCH_ICON
 
   return (
     <aside
@@ -78,20 +70,6 @@ export function Sidebar({
             badge={item.badge === 'inbox-unread' ? unread : undefined}
           />
         ))}
-
-        {/* Search is an action, not a destination — Close does the same. */}
-        <button
-          type="button"
-          onClick={onOpenPalette}
-          className={cn(
-            'flex h-8 items-center gap-2 rounded-md px-2 text-sm',
-            'text-muted transition-colors hover:bg-hover hover:text-fg',
-          )}
-        >
-          <SearchIcon size={15} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left">Search</span>
-          <Kbd>⌘K</Kbd>
-        </button>
       </nav>
 
       <div className="shrink-0 border-t border-line p-2">

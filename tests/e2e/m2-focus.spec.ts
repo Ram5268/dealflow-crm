@@ -22,11 +22,14 @@ test.describe('M2 focus + shell', () => {
   test('top-bar search launcher opens the command palette', async ({ page }) => {
     await page.goto('/leads')
 
-    // Scoped to the top bar: M1's sidebar carries its own "Search ⌘K" row, so
-    // an unscoped role query matches two controls.
+    // Scoped to the top bar deliberately: search lives there and nowhere else
+    // (the sidebar row was removed), so this also guards against it coming back.
     const launcher = page.getByRole('banner').getByRole('button', { name: /^Search/ })
     await expect(launcher).toBeVisible()
     await expect(launcher).toContainText('⌘K')
+
+    // Exactly one search affordance in the chrome — the sidebar row is gone.
+    await expect(page.getByRole('complementary').getByRole('button', { name: /Search/ })).toHaveCount(0)
 
     await launcher.click()
     await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()

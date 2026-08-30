@@ -556,16 +556,21 @@ get correct Enter/Space semantics and a real accessible name. An e2e case
 asserts the palette stays closed 300ms after Esc, which is the regression this
 would produce.
 
-### 10.2 — There are now TWO "Search ⌘K" controls · **planner decision wanted**
+### 10.2 — Duplicate "Search ⌘K" controls · **RESOLVED: sidebar row deleted**
 
 M1 already shipped a `Search ⌘K` row at the bottom of the sidebar nav
 (`Sidebar.tsx`), because search is an action rather than a destination. The M2
 top-bar launcher is a second control that opens the same palette, and both are
 visible at once (see `reference/dealflow/focus-home.png`).
 
-Not removed, because deleting working M1 chrome is rework under §9. Close's own
-IA puts search in the top bar only. **Ask:** keep both, or drop the sidebar row?
-One-line change either way.
+**Planner ruling (M2 review):** drop the sidebar row. Close's IA puts search in
+the top bar only, and the original §7 that produced the sidebar row was wrong.
+Authorized as rework under §9.
+
+Removed in FOLD 1 along with everything only it used — the `onOpenPalette` prop
+on `Sidebar`, the `Kbd` import, and `SEARCH_ICON` in `nav.ts`. Search now has
+exactly two entry points: the top-bar launcher and ⌘K. An e2e assertion pins the
+sidebar at zero search controls so the row cannot quietly return.
 
 ### 10.3 — Focus reads through Prisma in RSC · no new API routes
 

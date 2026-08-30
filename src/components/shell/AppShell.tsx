@@ -26,7 +26,7 @@ function ShellChrome({
 
   return (
     <div className="flex h-dvh overflow-hidden">
-      <Sidebar displayName={displayName} onOpenPalette={openPalette} />
+      <Sidebar displayName={displayName} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onOpenPalette={openPalette} />
         {/* Full-bleed: pages own their own padding (brief §7). */}
