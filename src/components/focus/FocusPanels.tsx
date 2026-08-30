@@ -38,9 +38,17 @@ export function PanelSkeleton() {
 export async function DialQueueCard({ organizationId }: { organizationId: string }) {
   const q = await getDialQueue(organizationId)
 
+  // Present in every branch: "dialing is the reason Ryan opens this app" applies
+  // just as much when the queue cannot be built as when it is empty.
+  const startDialing = (
+    <Button asChild variant="primary" size="sm">
+      <Link href="/dialer">Start dialing</Link>
+    </Button>
+  )
+
   if (q.kind === 'no-view') {
     return (
-      <PanelCard label="Dial queue" icon={<Target />} count="—">
+      <PanelCard label="Dial queue" icon={<Target />} count="—" action={startDialing}>
         <PanelEmpty>
           No lead view saved yet. <Link href="/leads" className="text-accent hover:underline">Build one</Link> to
           start a queue.
@@ -52,7 +60,7 @@ export async function DialQueueCard({ organizationId }: { organizationId: string
   if (q.kind === 'error') {
     // Compliance is fail-closed; say so rather than render a misleading zero.
     return (
-      <PanelCard label="Dial queue" icon={<Target />} count="—">
+      <PanelCard label="Dial queue" icon={<Target />} count="—" action={startDialing}>
         <PanelEmpty>Could not verify who is callable right now.</PanelEmpty>
       </PanelCard>
     )
@@ -64,13 +72,7 @@ export async function DialQueueCard({ organizationId }: { organizationId: string
       icon={<Target />}
       count={q.readyCount}
       countSuffix={q.atCap ? '+' : undefined}
-      // Always present: dialing is the reason Ryan opens this app, so the
-      // primary action must not vanish on a day the queue happens to be empty.
-      action={
-        <Button asChild variant="primary" size="sm">
-          <Link href="/dialer">Start dialing</Link>
-        </Button>
-      }
+      action={startDialing}
       href={`/queue?viewId=${q.viewId}`}
       hrefLabel="Review queue"
     >

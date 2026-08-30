@@ -4,6 +4,10 @@
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
 import { DISPLAY_TZ_FALLBACK, getQueue } from '@/lib/core-data/smart-view/queue-service'
+import { previewOf } from '@/lib/ui/text'
+
+// Re-exported: M2 imports it from here, M3's inbox shares the implementation.
+export { previewOf }
 
 /**
  * The Focus view's clock. "Today" has to be the user's day, not UTC's — a
@@ -27,16 +31,6 @@ export function dayWindow(now: Date = new Date()): { start: Date; end: Date } {
   return { start: start.toJSDate(), end: start.plus({ days: 1 }).toJSDate() }
 }
 
-/** First non-empty line of a message body, trimmed for a one-line preview. */
-export function previewOf(bodyText: string | null, max = 120): string {
-  if (!bodyText) return ''
-  const line = bodyText
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l.length > 0)
-  if (!line) return ''
-  return line.length > max ? line.slice(0, max - 1) + '…' : line
-}
 
 /** Bulk lead-name lookup. Call and Message hold `leadId` without a relation. */
 async function leadNames(ids: Array<string | null>): Promise<Map<string, string>> {
