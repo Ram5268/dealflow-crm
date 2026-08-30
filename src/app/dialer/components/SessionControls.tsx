@@ -29,21 +29,21 @@ export function SessionControls() {
   }
 
   return (
-    <div className="rounded-lg border p-4">
+    <div className="rounded-lg border border-line bg-elevated p-4">
       <div className="flex gap-2">
-        <button onClick={() => start("power")} className="rounded bg-green-600 px-3 py-2 text-white">
+        <button onClick={() => start("power")} className="rounded bg-accent px-3 py-2 text-accent-fg">
           Start power session
         </button>
         <button
           onClick={() => start("predictive")}
-          className="rounded bg-green-700 px-3 py-2 text-white"
+          className="rounded bg-accent-hover px-3 py-2 text-accent-fg"
         >
           Start predictive session
         </button>
       </div>
-      {sessionId && <div className="mt-2 text-sm text-gray-600">Session: {sessionId}</div>}
+      {sessionId && <div className="mt-2 text-sm text-muted">Session: {sessionId}</div>}
       {error && (
-        <div className="mt-2 text-sm text-red-600">
+        <div className="mt-2 text-sm text-danger">
           {error === "loser_twiml_unapproved"
             ? "Predictive blocked: loser message not yet approved."
             : error === "pacing_halted"

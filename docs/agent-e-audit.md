@@ -492,3 +492,199 @@ TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill \
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   https://api.github.com/repos/Ram5268/dealflow-crm/pulls -d @pr.json
 ```
+
+### 9.6 — iCloud duplicates images too, and a dupe can hold pre-redaction content
+
+`.gitignore` guarded `* 2.ts/tsx/md` but not images. After overwriting a Close
+capture with a redacted version, iCloud resurrected the ORIGINAL as
+`reference/close/leads 2.png` — still holding live client emails and phone
+numbers, staged for commit. Deleted, and `**/* 2.{png,jpg,jpeg,webp}` added to
+`.gitignore`.
+
+**Rule:** after replacing any committed binary in this repo, run
+`find . -name "* 2.*" -not -path "./node_modules/*"` before staging.
+
+### 9.7 — `xattr` fileprovider ignore does NOT solve iCloud node_modules stalls
+
+**Symptom:** `tsc --noEmit` hangs — 8m17s wall for 6.88s of CPU (1%), while
+`fileproviderd` sits at 98%. `next build` hangs past 10 minutes on the
+"Running TypeScript" phase. Began right after installing 51 packages.
+
+**Attempted fix that did NOT work:**
+`xattr -w 'com.apple.fileprovider.ignore#P' 1 node_modules .next`. The attribute
+applied and read back as `1`, and the stall continued unchanged. (The planner's
+note cites `com.apple.fileprovider.exclude`; the attribute actually used here was
+`com.apple.fileprovider.ignore#P` — neither helped.) The macOS file provider
+still materializes on read.
+
+**Working fix — mirror the worktree outside iCloud and run every gate there:**
+
+```bash
+rsync -a --delete --exclude node_modules --exclude .next --exclude .git \
+  --exclude 'coverage*' --exclude 'reference/dealflow' \
+  "worktrees/agent-e/" ~/dev/agent-e-gates/
+cd ~/dev/agent-e-gates && pnpm install --prefer-offline && npx prisma generate
+```
+
+Measured: typecheck **8m17s → 7s**, build **>10min → 19s**. ~67x.
+`scripts/gate.sh` wraps the rsync + gate invocation.
+
+Commit and push from the iCloud worktree as normal — git itself is fast enough.
+Moving the whole repo out of iCloud is the long-term fix (post-M6, Ryan's call).
+
+**Diagnostic:** a process at ~0% CPU in state `S` while `fileproviderd` is hot is
+iCloud, not the tool. `ps -o pid,etime,%cpu,state -p <pid>`.
+
+---
+
+## §10 · M2 DEVIATIONS AND FINDINGS (2026-08-29)
+
+Planner rule in force: *"reality wins, note the deviation in your PR description."*
+Each item below is either a deliberate departure from the literal instruction or
+something found while building that the planner should know about.
+
+### 10.1 — Top-bar search is a BUTTON, not an `<input>` · deviation
+
+The parity call said "Input primitive that opens ⌘K on focus." An `<input>`
+cannot do that without looping: Radix restores focus to the previously focused
+element when the dialog closes, so focus lands back on the input, the `focus`
+handler fires again, and the palette reopens forever.
+
+`SearchLauncher` is therefore a `<button>` styled with the same `controlBase` /
+`controlBorder` classes as `Input`, so it is pixel-wise an input. Keyboard users
+get correct Enter/Space semantics and a real accessible name. An e2e case
+asserts the palette stays closed 300ms after Esc, which is the regression this
+would produce.
+
+### 10.2 — Duplicate "Search ⌘K" controls · **RESOLVED: sidebar row deleted**
+
+M1 already shipped a `Search ⌘K` row at the bottom of the sidebar nav
+(`Sidebar.tsx`), because search is an action rather than a destination. The M2
+top-bar launcher is a second control that opens the same palette, and both are
+visible at once (see `reference/dealflow/focus-home.png`).
+
+**Planner ruling (M2 review):** drop the sidebar row. Close's IA puts search in
+the top bar only, and the original §7 that produced the sidebar row was wrong.
+Authorized as rework under §9.
+
+Removed in FOLD 1 along with everything only it used — the `onOpenPalette` prop
+on `Sidebar`, the `Kbd` import, and `SEARCH_ICON` in `nav.ts`. Search now has
+exactly two entry points: the top-bar launcher and ⌘K. An e2e assertion pins the
+sidebar at zero search controls so the row cannot quietly return.
+
+### 10.3 — Focus reads through Prisma in RSC · no new API routes
+
+§13 forbids new API routes. `src/lib/focus/summary.ts` is a server-only module
+imported by Server Components, mirroring the boundary convention
+`src/lib/leads/list.ts` established in M1. Zero routes added in M2.
+
+### 10.4 — Dial-queue count reuses `getQueue` at /queue's own limit
+
+The panel calls `getQueue(view, org, { limit: 50 })` — the identical call
+`/queue` already makes — so the two surfaces can never disagree. That runs an
+unconditional compliance scrub over a candidate pool 5x the limit, which is why
+each panel sits behind its own `<Suspense>` boundary instead of blocking the
+page on the slowest read.
+
+When compliance cannot answer, the panel says *"Could not verify who is callable
+right now"* rather than rendering `0`. A bare zero reads as "nobody to call",
+which is a different and dangerous claim. Compliance is fail-closed upstream and
+the UI now matches that posture.
+
+### 10.5 — Softphone "Hang up" replaced with "Open dialer"
+
+M1's bar carried an inert `Hang up` button. Wiring it for real means dial
+control, which §13 forbids. A visible control that does nothing is worse than no
+control, so the bar is now status-only and links to `/dialer`, where Agent B's
+real controls live. The bar renders `role="status" aria-live="polite"`.
+
+### 10.6 — `DialerShell` never cleared its active call · **FIXED in FOLD 2**
+
+`src/app/dialer/components/DialerShell.tsx` subscribes with `useEffect(…, [])`
+but compares `evt.callId === activeCallId` inside the handler. That closure
+captured `activeCallId` at mount, so it is `null` forever and the
+`call.completed` branch can never match. The ammunition panel therefore keeps
+showing a finished call until something else re-renders.
+
+**Planner ruling (M2 review):** fixed under a §13 micro-amendment — "no dialer
+LOGIC" does not cover correctness fixes to subscription bookkeeping.
+
+The transition now lives in `src/lib/telephony/softphone/activeCall.ts` as a pure
+`nextActiveCallId(current, evt)` reducer, applied through a functional
+`setActiveCallId` updater. Extracting it does double duty: a pure reducer is only
+reachable through the functional updater (so the bug cannot reappear by
+accident), and it is testable in the node environment — `DialerShell` itself
+pulls in `@twilio/voice-sdk` and cannot be mounted there.
+
+`tests/softphone.active-call.test.ts` covers the exact failing sequence
+(connect → complete → cleared), plus completion of a call we are not on, a new
+connect superseding a stale one, missing-callId frames, unrelated event types on
+the same channel, and duplicate completions. `activeCallId` is the prop
+`AmmunitionPanel` clears on, so "reducer returns null" *is* "the panel clears".
+
+`useSoftphoneSession` already avoided the same trap with a functional
+`setSession` updater and a comment naming it.
+
+### 10.7 — Nested `<main>` landmarks fixed on /dialer and /queue
+
+`AppShell` already renders the `<main>` landmark, so both pages were emitting a
+second one inside it — invalid HTML and a duplicated landmark for screen
+readers. Both now render a plain container. `/dialer` also dropped its `<h1>`,
+which duplicated the title `TopBar` already shows.
+
+`/imports/*` has the same nested-`<main>` bug in three files. Left alone: it is
+explicitly M6 scope.
+
+### 10.8 — Hardcoded palette migrated to tokens on /dialer and /queue
+
+Both surfaces used literal `bg-gray-*` / `text-neutral-*` / `bg-blue-50` classes
+and were unreadable in dark mode. Pure class substitution onto the M1 tokens —
+no structural or logic change. Verified zero remaining hardcoded palette classes
+under `src/app/dialer` and `src/app/queue`.
+
+### 10.9 — `gate.sh` uses `rsync --delete`, so mirror-only files evaporate
+
+Anything written directly into `~/dev/agent-e-gates` is destroyed by the next
+gate run. That is a feature — scratch scripts cannot leak into a commit — but it
+means an acceptance-seed script has to be rewritten each time it is needed.
+Write scratch tooling to the mirror on purpose, never to the worktree.
+
+### 10.10 — iCloud duplicated a `.sh`, which the ignore list did not cover
+
+`scripts/gate 2.sh` appeared as untracked and was ready to stage. The §9.6
+patterns only covered `.ts/.tsx/.md` and images. `.gitignore` now also ignores
+`* 2.sh`, `* 2.json`, `* 2.css`, `* 2.sql`, `* 2.mjs`. The two image dupes found
+in the same sweep were byte-identical to their originals — no PII regression —
+but **verify sizes before deleting**, never assume.
+
+### 10.11 — Acceptance evidence used a seeded-then-deleted dataset
+
+The main DB is empty (0 leads / calls / messages / tasks), so panels would have
+rendered as all-zero. Following the M1 precedent, a small `[M2_SMOKE]` dataset
+was created, captured, and deleted. Post-cleanup verification returned
+`RESIDUE {leads:0,contacts:0,tasks:0,messages:0,calls:0,views:0}` and
+`DB_TOTALS` back to all-zero — byte-identical to the pre-seed state. The seed
+script lived only in the gate mirror and was never committed (see §10.9).
+
+### 10.12 — FOUND, NOT FIXED: importer e2e fails inside Agent A's AI mapping
+
+`tests/e2e/importer-happy-path.spec.ts` fails at "at least one new custom field
+suggested". The cause is server-side, in Agent A's slice:
+
+```
+ERROR dependency:"anthropic" event:"proposed-mapping"
+ZodError: Invalid discriminator value at mapping[4].target.kind
+  expected 'standard_field' | 'new_custom_field' | 'existing_custom_field' | 'ignore'
+POST /api/imports/<id>/proposed-mapping 503
+```
+
+The model returned a `target.kind` outside the enum, `proposeMapping` throws on
+the Zod parse, and the route 503s with no repair or retry. It is non-deterministic
+by nature (depends on what the model emits) but it is a real gap: one
+out-of-enum token from the LLM breaks the entire import happy path.
+
+**Not Agent E's and not fixed.** M2's diff touches no importer file —
+`git diff --name-only 655ac49 HEAD -- src/app/imports src/app/api/imports src/lib/core-data/importer`
+returns empty. A retry-with-repair or a lenient parse that drops unrecognised
+entries would fix it; flagging for the planner to route to whoever owns the
+importer slice.

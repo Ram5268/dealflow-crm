@@ -29,38 +29,38 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
     };
   }, [activeCallId]);
 
-  if (!activeCallId) return <aside className="rounded-lg border p-4 text-gray-400">No active call</aside>;
-  if (!data) return <aside className="rounded-lg border p-4 text-gray-400">Loading ammunition…</aside>;
+  if (!activeCallId) return <aside className="rounded-lg border border-line bg-elevated p-4 text-subtle">No active call</aside>;
+  if (!data) return <aside className="rounded-lg border border-line bg-elevated p-4 text-subtle">Loading ammunition…</aside>;
 
   return (
-    <aside className="rounded-lg border p-4">
+    <aside className="rounded-lg border border-line bg-elevated p-4">
       <h2 className="mb-2 font-semibold">{data.lead?.displayName ?? "Lead"}</h2>
       {data.lead && (
         <dl className="grid grid-cols-2 gap-1 text-sm">
-          <dt className="text-gray-500">Priority</dt>
+          <dt className="text-muted">Priority</dt>
           <dd>{data.lead.priorityScore ?? "—"}</dd>
-          <dt className="text-gray-500">Top match fit</dt>
+          <dt className="text-muted">Top match fit</dt>
           <dd>{data.lead.topMatchFit ?? "—"}</dd>
-          <dt className="text-gray-500">Capture</dt>
+          <dt className="text-muted">Capture</dt>
           <dd>{data.lead.captureStatus ?? "—"}</dd>
-          <dt className="text-gray-500">Why</dt>
+          <dt className="text-muted">Why</dt>
           <dd>{data.lead.matchReason ?? "—"}</dd>
-          <dt className="text-gray-500">Address</dt>
+          <dt className="text-muted">Address</dt>
           <dd>{data.lead.primaryAddressSummary ?? "—"}</dd>
         </dl>
       )}
       {data.contact && (
         <div className="mt-2 text-sm">
-          <div className="text-gray-500">Phones</div>
+          <div className="text-muted">Phones</div>
           {data.contact.phones.map((p) => (
             <div key={p.id}>
-              {p.phoneFormatted ?? p.phone} <span className="text-gray-400">({p.type})</span>
+              {p.phoneFormatted ?? p.phone} <span className="text-subtle">({p.type})</span>
             </div>
           ))}
         </div>
       )}
       {data.lead?.dealflowDeepLink && (
-        <a href={data.lead.dealflowDeepLink} className="mt-2 block text-sm text-blue-600 underline">
+        <a href={data.lead.dealflowDeepLink} className="mt-2 block text-sm text-accent underline">
           Open in DealFlow
         </a>
       )}

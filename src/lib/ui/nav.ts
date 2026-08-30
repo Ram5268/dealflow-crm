@@ -3,7 +3,6 @@ import {
   Cog,
   FileText,
   Inbox,
-  Search,
   Target,
   Users,
   Zap,
@@ -20,7 +19,8 @@ export interface NavItem {
   badge?: 'inbox-unread'
 }
 
-/** Sidebar order mirrors Close (brief §7). Search is NOT a route — it opens ⌘K. */
+/** Sidebar order mirrors Close (brief §7). Search is NOT here — it lives in the
+ *  top bar (SearchLauncher) and on ⌘K, matching Close's real IA. */
 export const PRIMARY_NAV: NavItem[] = [
   { href: '/', label: 'Focus', icon: Target, goKey: 'f' },
   { href: '/inbox', label: 'Inbox', icon: Inbox, goKey: 'i', badge: 'inbox-unread' },
@@ -31,8 +31,6 @@ export const PRIMARY_NAV: NavItem[] = [
 ]
 
 export const SETTINGS_NAV: NavItem = { href: '/settings', label: 'Settings', icon: Cog }
-
-export const SEARCH_ICON = Search
 
 /** Every destination the ⌘K palette can jump to. */
 export const ALL_DESTINATIONS: NavItem[] = [

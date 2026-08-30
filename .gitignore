@@ -15,3 +15,17 @@ backups/
 **/* 2.tsx
 coverage-comms/
 **/* 2.md
+# Agent E: reference/ commits PNGs, and iCloud duplicated an image whose copy
+# still held the UNREDACTED Close capture (real client PII). Ignore image dupes
+# so a resurrected copy can never be staged.
+**/* 2.png
+**/* 2.jpg
+**/* 2.jpeg
+**/* 2.webp
+# M2: iCloud also duplicated a shell script, which the extension list above did
+# not cover and which git therefore offered up for staging.
+**/* 2.sh
+**/* 2.json
+**/* 2.css
+**/* 2.sql
+**/* 2.mjs
