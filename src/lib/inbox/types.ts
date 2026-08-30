@@ -66,6 +66,13 @@ export interface ThreadDetail {
   title: string
   subject: string | null
   items: ThreadItem[]
+  /**
+   * The `threadId` a reply should be filed under, i.e. the thread key without
+   * its `m:` prefix. For a lone message that is the message's own id, which
+   * `getThread` already resolves via `OR: [{ threadId: id }, { id }]`.
+   * Null for voicemail, which cannot be replied to in place.
+   */
+  replyThreadId: string | null
   /** Best-known reply target for the composer. */
   replyToAddress: string | null
   replyToPhone: string | null

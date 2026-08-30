@@ -103,6 +103,9 @@ export function ReplyDrawer({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           channel: 'email',
+          // Files the reply onto the thread being answered instead of starting
+          // a new one. Omitted (null) only for voicemail, which has no thread.
+          threadId: detail.replyThreadId,
           leadId: detail.leadId,
           contactId: detail.contactId,
           toAddresses: detail.replyToAddress ? [detail.replyToAddress] : [],

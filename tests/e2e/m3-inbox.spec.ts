@@ -122,16 +122,22 @@ test.describe('M3 inbox', () => {
     await expect(drawer.getByText('SMS pending 10DLC registration.')).toBeVisible()
   })
 
-  test('email reply reaches Agent D, and a provider failure never loses the draft', async ({ page }) => {
-    // The green path needs an OAuth credential with a future `expiresAt`, or real
-    // Google client credentials: D refreshes the access token against the REAL
-    // oauth2.googleapis.com before sending, and GMAIL_MOCK_URL only reroutes the
-    // Gmail API — not the token endpoint. So this asserts the half Agent E owns:
-    // the payload reaches D, and a 502 keeps the composer intact.
+  test('a reply is filed onto the thread it answers, not a new one', async ({ page }) => {
+    // M3.1 (§13 amendment): D's POST now accepts an org-scoped `threadId`.
+    // Before it did, every reply became its own single-message thread and showed
+    // up as "Re: <same subject>" sitting above the message it answered.
+    //
+    // The green send path is unreachable locally (D refreshes against the real
+    // oauth2.googleapis.com — audit §11.5), but D persists the Message row BEFORE
+    // sending, so the threading is observable either way.
     await page.goto('/inbox?filter=email')
     await page.waitForLoadState('networkidle')
-    await threadRows(page).first().click()
+
+    const rowsBefore = await threadRows(page).count()
+    await threadRows(page).filter({ hasText: 'Perfect, see you at 2' }).first().click()
     await expect(page).toHaveURL(/thread=/)
+    const threadUrl = page.url()
+    const articlesBefore = await page.getByRole('article').count()
 
     await page.getByRole('button', { name: /^Reply/ }).click()
     const drawer = page.getByRole('dialog')
@@ -139,49 +145,46 @@ test.describe('M3 inbox', () => {
 
     const body = 'Confirming 2pm Thursday.'
     await drawer.getByRole('textbox', { name: 'Message' }).fill(body)
-
     const post = page.waitForResponse((r) => r.url().includes('/api/comms/messages') && r.request().method() === 'POST')
-    const send = drawer.getByRole('button', { name: 'Send' })
-    await expect(send).toBeEnabled()
-    await send.click()
+    await drawer.getByRole('button', { name: 'Send' }).click()
     const res = await post
 
-    if (res.ok()) {
-      // Provider configured: the drawer closes and the message joins the thread.
-      await expect(drawer).toBeHidden({ timeout: 15_000 })
-      await expect(page.getByText(body)).toBeVisible()
-      return
+    if (!res.ok()) {
+      // Provider unavailable: say so, and never discard what was typed.
+      await expect(page.getByText('Send failed')).toBeVisible()
+      await expect(drawer.getByRole('textbox', { name: 'Message' })).toHaveValue(body)
     }
 
-    // Provider unavailable: say so, and above all do NOT discard what was typed.
-    await expect(page.getByText('Send failed')).toBeVisible()
-    await expect(drawer).toBeVisible()
-    await expect(drawer.getByRole('textbox', { name: 'Message' })).toHaveValue(body)
-
-    // D still persisted the attempt, so it is visible in the inbox.
-    //
-    // FINDING (audit §11.4): it appears as its OWN thread, not inside the one we
-    // replied to — D's POST /api/comms/messages neither accepts nor sets
-    // `threadId`. Agent E must not touch D's send path, so this asserts the
-    // behaviour that actually exists rather than the one we want.
-    await page.reload()
+    // THE POINT: the reply joins this thread, and no new thread appears.
+    await page.goto(threadUrl)
     await page.waitForLoadState('networkidle')
-    const newRow = threadRows(page).filter({ hasText: body })
-    await expect(newRow).toHaveCount(1)
-
-    await newRow.click()
+    await expect(page.getByRole('article')).toHaveCount(articlesBefore + 1)
     await expect(page.getByRole('article').getByText(body)).toBeVisible()
-    await expect(page.getByText('error', { exact: true }).first()).toBeVisible()
+    await expect(threadRows(page)).toHaveCount(rowsBefore)
+  })
+
+  test('a threadId from another org (or a malformed one) is refused', async ({ page }) => {
+    // Message.threadId is a free-form string, not a foreign key, so the route
+    // must not staple a message onto a thread the caller does not own.
+    const bogus = await page.request.post('/api/comms/messages', {
+      data: { channel: 'email', threadId: 'thread-that-does-not-exist', toAddresses: ['x@example.com'], bodyText: 'no' },
+    })
+    expect(bogus.status()).toBe(404)
+
+    const malformed = await page.request.post('/api/comms/messages', {
+      data: { channel: 'email', threadId: 42, toAddresses: ['x@example.com'], bodyText: 'no' },
+    })
+    expect(malformed.status()).toBe(400)
   })
 
   test('u toggles a thread back to unread', async ({ page }) => {
     await page.goto('/inbox')
     await page.waitForLoadState('networkidle')
 
-    // Target a thread known to hold incoming mail, by a string unique to it.
-    // Neither ordering nor the subject is a safe selector after the send case:
-    // that reply is newer AND carries "Re: <same subject>", so it matches too.
-    const row = threadRows(page).filter({ hasText: 'Perfect, see you at 2' }).first()
+    // Target a thread known to hold incoming mail, by its lead name. The preview
+    // is NOT a safe selector after the reply case above: now that replies thread
+    // (M3.1), the newest message represents the row, so the preview is the reply.
+    const row = threadRows(page).filter({ hasText: 'Dana Whitfield' }).first()
     await row.click()
     await expect(page).toHaveURL(/thread=/)
     // Opening clears it, so the row settles at zero unread first.
