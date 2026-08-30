@@ -930,3 +930,216 @@ The `insertAtCursor` case for a reversed selection asserted
 `ef`, the exact corruption the test existed to prevent. The implementation was
 right: `end` clamps up to `start`, so a backwards selection collapses to a caret
 insert and keeps the tail. The expectation was corrected, not the code.
+
+---
+
+## §13 · M5 DEVIATIONS AND FINDINGS (2026-08-30)
+
+Settings: five sub-pages under `/settings` behind a persistent left rail.
+Everything on this surface is READ-ONLY. Not one control writes, because not one
+of these values has a store to write to yet — they are env vars, Agent C's
+policy rows (confirmed through C's own route after counsel), and Agent B's
+derived spend. A control that silently does nothing would be worse than a
+caption saying where the value lives.
+
+### §13.1 Playwright reference — captured, with one genuinely unreachable page
+
+Captured to `reference/close/`: `settings-profile`, `settings-connected-accounts`,
+`settings-calling`, `settings-usage`. Emails were redacted in-page and verified
+`remainingLeaks: 0` before each shot.
+
+Close's compliance surface could NOT be captured. `/settings/phone/compliance/`
+returns "Phone number not found" — it is a per-phone-number page (10DLC
+registration, regulatory bundles) and Ryan has no number provisioned in Close.
+That is a real absence, not a Playwright failure, and it was not invented: the
+Compliance page is designed from Agent C's data model instead.
+
+Worth noting the concept does not map anyway. Close's "US Compliance" is carrier
+registration for a number you own; ours is DNC/litigator suppression and calling
+windows. There was never parity to diverge from.
+
+### §13.2 Close's settings IA, and where ours departs
+
+Close: seven grouped headers (`GENERAL`, `ORGANIZATION`, `CUSTOMIZATION`,
+`COMMUNICATION`, `CONNECT`, `BILLING`, `ACCOUNT`) over ~28 sub-pages. All five of
+our sections have a Close analogue — Profile → `/settings/`, Connected Accounts →
+`/settings/accounts-and-apps/connected-accounts/`, Calling → `/settings/phone/`,
+Usage → `/settings/billing/usage/`.
+
+We use a FLAT rail. Grouping five items under headers adds a level of hierarchy
+to navigate and nothing to navigate it for. The visual treatment (accent bar on
+the active row) matches Close.
+
+Close also nests compliance UNDER Phone. Ours is a peer section because it spans
+more than calling — suppression vendors apply to any outreach channel.
+
+### §13.3 Connected Accounts: two cards, not Close's account list
+
+Close renders one generic list behind a single "Add Account" button, because it
+supports many accounts across many providers. We support exactly two mailboxes.
+A card each names the provider up front and gives each its own connect,
+disconnect, and status, which a generic list cannot do without a modal.
+
+**Deliberate parity divergence.**
+
+### §13.4 There is no "last sync" timestamp anywhere — so the page does not claim one
+
+The brief asked for "last sync timestamp if connected". Nothing records one.
+`Message` has no provider or credential linkage, and the only `syncedAt` in the
+codebase belongs to DealFlow signal sync, which is unrelated to mailboxes.
+
+The nearest honest value is `OAuthCredential.updatedAt` — but a token refresh
+moves it too, so calling it "Last sync" would be a quiet lie. It is labelled
+**"Last updated"** with a caption stating what actually moves it, plus a second
+line derived from the delta cursors (`gmailHistoryId` / `graphDeltaLink`) saying
+whether a sync has ever run. That is the true decomposition of what we know.
+
+Same discipline as M4's opens/bounces.
+
+### §13.5 Provider naming is asymmetric across three layers — carried, not derived
+
+- Authorize routes: `/api/comms/oauth/**gmail**/authorize`, `/api/comms/oauth/**msft**/authorize`
+- Revoke route: `/api/oauth/**gmail**/revoke`, `/api/oauth/**outlook**/revoke`
+- DB column: `gmail`, `**msft-graph**`
+
+Three names for one provider. `getMailboxAccounts` carries all three explicitly
+per account rather than deriving one from another, because deriving is exactly
+what produces a 404 on a disconnect nobody notices until it matters. The e2e
+asserts both authorize hrefs literally.
+
+Also note the brief's `POST /api/oauth/[provider]/revoke` DOES exist and already
+carried the comment "Settings > Connected Accounts, M5" — Agent D built it
+anticipating this milestone, including the `remoteRevocation: false` flag that
+the Outlook hint text renders.
+
+### §13.6 The calling-window preview would have told Ryan he can call when every call is blocked
+
+**The load-bearing correction of this milestone.**
+
+The brief specified: *"Right now you can call between 8am–9pm America/New_York
+today"*. That sentence cannot be printed. Three separate reasons, any one of
+which is disqualifying:
+
+1. **Nothing is confirmed.** Agent C's policy gate is explicit: *"A tenant may
+   NOT dial any number in a timezone until Ryan has confirmed a
+   CallingWindowConfig for that timezone (after conferring with counsel). Until
+   then, every callable check returns `policy_unconfirmed`. This is never
+   bypassed in tests or dev."* The live org has **zero** `CallingWindowConfig`
+   rows. Every number is currently blocked.
+2. **8am–9pm is not our window.** It is the federal TCPA ceiling. C's schema
+   default is `earliestHour 9` / `latestHour 20`, Mon–Fri — stricter on both
+   ends. Hardcoding the federal maximum would advertise hours C blocks.
+3. **The window is half-open.** `windowCheck` blocks on `localHour >=
+   latestHour`, so `latestHour: 20` means 8pm is already closed. Rendering
+   "9pm" for a latestHour of 21 would be off by a full hour of legal exposure.
+
+So the page renders the **verdict**, not a literal. With nothing confirmed it
+says *"No calling policy is confirmed — calls are blocked"* and names the reason
+code. Hours appear only when a confirmed row supplies them, computed live
+through C's own `evaluateCallingWindow` — imported, never reimplemented.
+
+Had this shipped as written, the settings page would have told a broker he was
+clear to dial while the compliance engine rejected every number, in a TCPA
+context. `formatWindow(9, 20) === '9am–8pm'` is pinned by a unit test that also
+asserts C's evaluator agrees 8:30pm is outside a latestHour of 20.
+
+### §13.7 DNC "provider checkboxes" — there are no three providers, and no checkboxes
+
+The brief asked for checkboxes for *federal DNC, state DNC, TCPA Shield*. C's
+env exposes something different:
+
+- `DNC_VENDOR` — ONE vendor covering both federal and state registries. There is
+  no federal/state split to check independently.
+- `LITIGATOR_VENDOR` — the TCPA-litigator list ("TCPA Shield" is a vendor in
+  this class, not a setting).
+- `MOBILE_LINE_VENDOR` — defaults to `twilio_lookup`, absent from the brief.
+
+Both scrub vendors are currently **unselected**, and `isDncVendorConfigured` /
+`isLitigatorVendorConfigured` are the predicates that decide it. With no vendor
+keyed the factory returns the fail-closed noop client — numbers are blocked, not
+passed. The page shows all three vendors with their real configured state, and
+renders zero checkboxes: an unchecked box implies you may check it.
+
+### §13.8 Usage counts on Agent B's UTC month, not the local month
+
+`monthToDateSpendUsd` uses `Date.UTC(y, m, 1)`. Counting calls on an
+America/New_York month instead would put the spend and the call count on
+DIFFERENT months for the last five hours of every UTC month — the panel would
+contradict itself once a month, at 7pm ET.
+
+The spend figure is the one that halts the dialer, so the counts follow it. The
+boundary is stated on the page rather than hidden.
+
+Two further notes on B's tracker, neither of which M5 changes:
+- `monthToDateSpendUsd` is **not org-scoped** (`where: { activityAt: { gte } }`
+  only). Harmless while single-tenant; it would silently sum every org's spend
+  the day a second one exists. Flagged, not touched — it feeds the pacing worker.
+- `Call.durationSec` does not exist; the column is `Call.duration`.
+
+### §13.9 Profile: read from the DB, not the env the brief named
+
+The brief offered `USER_DISPLAY_NAME` or `"You"`, and said to hardcode or blank
+the email. A real `User` row exists (`Ryan Martin`), so the page reads it, with
+the env as fallback so it can never disagree with the sidebar (which reads the
+env). Email comes from the same row rather than being hardcoded.
+
+No `UserProfile` model exists and the brief said not to create one, so timezone
+is read-only from `NYC_TIMEZONE_DEFAULT`, and the card states *"Editable when
+auth lands"*. The e2e asserts the page renders **zero** input elements — a
+read-only page that looks editable is the failure mode being guarded.
+
+### §13.10 A revoked credential keeps its row — and nearly kept its email on screen
+
+`markRevoked` blanks the tokens and sets `status: 'revoked'`; it does NOT delete
+the row, and it leaves `emailAddress` intact. The first cut derived connection
+from row presence, which would have rendered a card badged **Not connected**
+still displaying the address it used to sync.
+
+Connection state is now `isMailboxConnected(cred)` — a pure function, unit
+tested across null / `active` / `reauth_required` / `error` / `revoked` — and
+the email and sync-cursor caption are gated on it. `error` and `reauth_required`
+stay CONNECTED deliberately: the mailbox is still linked and the badge says what
+is wrong, which is the actionable state.
+
+This branch is covered by unit test rather than e2e precisely because proving it
+end-to-end would require writing an OAuthCredential.
+
+### §13.11 The disconnect e2e intercepts the revoke call instead of making it
+
+Letting the test click through to the real route would have blanked Agent D's
+live Gmail tokens — the same class of destruction as the M3 seed incident, just
+through the UI instead of a script.
+
+`page.route('**/api/oauth/**/revoke')` captures the request, asserts method and
+URL, and fulfils locally. Credential rows were probed before and after the full
+suite: both unchanged, same `updatedAt` to the millisecond.
+
+No seed, fixture, or test in this milestone writes `OAuthCredential`.
+
+### §13.12 The M3 clobber is now visible in the product
+
+The Gmail card renders `m3smoke-ryan@example.com` — the value my M3 seed wrote
+over Agent D's credential. The row was deliberately left alone pending a ruling,
+so Settings now surfaces the damage instead of hiding it.
+
+The fix needs no migration and no ruling to be safe: clicking **Reconnect**
+re-runs OAuth and overwrites the row cleanly with the real account. Worth doing
+before any live Gmail send, since the stored tokens are the mock ones.
+
+### §13.13 The e2e suite is not self-sufficient — it depends on seeds that get deleted
+
+Running the full suite after M5 gave 3 failures. Two of them (`m3-inbox`,
+`m4-sequences`) were NOT regressions: those specs need the `[M3_SMOKE]` and
+`[M4_SMOKE]` fixtures, which are deliberately deleted at the end of every
+milestone. Re-seeding turned both green.
+
+So "38 passed" is only reproducible with the seeds present. The seed scripts live
+in the gate mirror, which `rsync --delete` wipes, so they cannot be committed as
+they stand. Flagging the shape of the problem rather than fixing it inside a UI
+milestone: these specs should either seed their own fixtures in a `beforeAll` or
+be explicitly skipped when the fixture is absent, instead of failing in a way
+that reads as a regression.
+
+The third failure, `importer-happy-path`, is Agent A's pre-existing
+`proposeMapping` bug reported in §12 — the AI mapping never yields a "new
+custom" suggestion and the step times out. Zero importer files in this diff.
