@@ -1143,3 +1143,107 @@ that reads as a regression.
 The third failure, `importer-happy-path`, is Agent A's pre-existing
 `proposeMapping` bug reported in §12 — the AI mapping never yields a "new
 custom" suggestion and the step times out. Zero importer files in this diff.
+
+---
+
+## §14 · M5.1 E2E SELF-SUFFICIENCY (2026-09-02)
+
+Fixes §13.13. Every spec now builds its own fixtures in `beforeAll` and removes
+them in `afterAll`, so the suite passes from a clean database — and, more to the
+point, still passes on the run after that.
+
+### §14.1 What was actually broken
+
+`m3-inbox` and `m4-sequences` depended on `[M3_SMOKE]` / `[M4_SMOKE]` seeds that
+were deleted at the end of each milestone. On a clean DB the baseline was:
+
+| | before | after |
+|---|---|---|
+| passed | 25 | **39** |
+| failed | 3 | 1 (Agent A's importer) |
+| skipped | 1 | 0 |
+| **did not run** | **10** | 0 |
+
+The 10 that "did not run" are the real cost: both files are `mode: 'serial'`, so
+one missing-fixture failure aborted every later case in the file. Nine inbox
+cases and one sequence case were silently not being exercised.
+
+### §14.2 `tests/e2e/fixtures.ts`
+
+One module, marker-scoped per spec (`[E2E_INBOX]`, `[E2E_SEQ]`, `[E2E_LEAD]`),
+so cleanup is exact rather than "delete everything". `seed*` calls `clean*`
+first, so a killed run cannot poison the next one.
+
+Two constraints shaped it:
+- Playwright does not load `.env` and does not resolve the `@/` alias in this
+  CommonJS context — hence the explicit `dotenv/config` and the direct
+  `@prisma/client` import rather than `@/lib/prisma`.
+- **Nothing writes `OAuthCredential`**, or any model keyed
+  `@@unique([organizationId, X])`. A composite-unique upsert from a fixture is
+  indistinguishable from a production write; that is how Agent D's Gmail token
+  was destroyed in M3.
+
+### §14.3 Two residue bugs found while auditing
+
+**The importer spec never cleaned up.** A successful run commits 500 leads and
+left every one of them. It only looked harmless because the spec fails before
+committing (§12, Agent A's `proposeMapping`). The moment that bug is fixed, the
+next full-suite run would no longer have started from a clean database. Added an
+`afterAll` sweeping `source: startsWith('import:')`.
+
+**`m1-shell`'s lead-detail case was silently skipping.** `test.skip(count === 0,
+'no leads seeded')` meant the detail page went unexercised on every clean run —
+a green suite that never touched `/leads/[id]`. It now seeds its own lead and
+asserts, converting a permanent skip into a real test.
+
+### §14.4 The suite now runs single-worker
+
+`workers: 1`, `fullyParallel: false`. Every spec builds fixtures in the SAME
+Railway database and several assert exact row counts (`toHaveCount(4)` on inbox
+threads). With files in parallel, one spec's fixtures land inside another's
+counts. Both specs also happen to name a lead "Dana Whitfield", which is
+unambiguous only while one fixture set exists at a time.
+
+Same reasoning as the vitest config's `fileParallelism: false`.
+
+### §14.5 A latent hydration flake, found only by running the suite twice
+
+Run 1 was green. Run 2 failed `⌘K opens the command palette` — the test did
+`page.goto('/leads')` and pressed the hotkey with no wait, so the keypress could
+land before the listener hydrated and be swallowed.
+
+Not a data problem and not caused by this change; a pre-existing race that
+chance had been hiding. The `g l` case four lines below already waited on
+`networkidle` for exactly this reason, so the fix matches the file's own
+convention. A scan confirmed it was the only unguarded `goto` → `keypress` in
+the suite.
+
+**This is the argument for running an e2e suite twice before calling it fixed.**
+One green run proves the fixtures build; the second proves they were cleaned up
+and that nothing depends on run order.
+
+Verified: runs 3 and 4 both 39 passed / 1 failed, and the DB afterwards holds 0
+leads, contacts, messages, calls, templates, sequences and enrollments — with
+both OAuth credentials unchanged to the millisecond.
+
+### §14.6 `zz-fixtures-residue.spec.ts`
+
+Playwright orders spec files by path, so the `zz-` prefix makes this run last.
+It asserts every fixture counter is zero and names the offender on failure. A
+leaked fixture is how the suite reached the state M5.1 exists to fix, so the
+invariant is now enforced rather than remembered.
+
+### §14.7 Perf tests are load-sensitive — a false-failure trap
+
+Running `pnpm test` immediately after four back-to-back Playwright suites failed
+three tests: the 25k smart-view p95, the ammunition-hydrate p95, and the 1000-row
+importer timing. All three are latency assertions against the same Railway host
+the Playwright runs had just saturated; one run even hit `P1001: Can't reach
+database server`.
+
+On a rested database, all 822 pass. Nothing in this diff is visible to vitest —
+its `tests/**` include is `*.test.ts`, and these are `*.spec.ts` under
+`tests/e2e/`.
+
+Worth knowing before anyone reads a red perf run as a regression: check what else
+was hammering Railway first.

@@ -6,6 +6,12 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 180_000,
+  // One worker: every spec builds its fixtures in the SAME Railway database, and
+  // several assert exact row counts. Running files in parallel makes one spec's
+  // fixtures visible to another's counts. Same reasoning as the vitest config's
+  // fileParallelism: false.
+  workers: 1,
+  fullyParallel: false,
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
     trace: 'on-first-retry',
