@@ -46,12 +46,17 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
       href={item.href}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        // 32px rows — dense on purpose (brief §6).
-        'group flex h-8 items-center gap-2 rounded-md px-2 text-sm transition-colors',
-        active ? 'bg-active font-medium text-fg' : 'text-muted hover:bg-hover hover:text-fg',
+        // 30px rows, 8px radius, 12px right pad — measured off Close.
+        'group flex h-[30px] items-center gap-2 rounded-md py-1 pl-2 pr-3',
+        'text-sm font-medium transition-colors',
+        // Close keeps every row at weight 500 and near-black; only the fill and
+        // a half-shade of text separate active from idle.
+        active
+          ? 'bg-active text-fg-strong'
+          : 'text-fg hover:bg-hover hover:text-fg-strong',
       )}
     >
-      <item.icon size={15} className="shrink-0" />
+      <item.icon size={14} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {badge != null && badge > 0 && (
         <span className="shrink-0 rounded bg-accent px-1 text-[10px] font-medium text-accent-fg">
@@ -69,10 +74,10 @@ export function Sidebar({ displayName }: { displayName: string }) {
   return (
     <aside
       style={{ width: 'var(--sidebar-w)' }}
-      className="flex shrink-0 flex-col border-r border-line bg-bg"
+      className="flex shrink-0 flex-col bg-bg"
     >
-      <div className="flex h-12 shrink-0 items-center px-4">
-        <span className="text-sm font-semibold tracking-tight text-fg">DealFlow</span>
+      <div className="flex h-14 shrink-0 items-center px-4">
+        <span className="text-sm font-semibold tracking-tight text-fg-strong">DealFlow</span>
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2">
