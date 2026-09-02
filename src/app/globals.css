@@ -31,11 +31,14 @@
   --text-muted: #5e5e5e;
   --text-subtle: #767676;
 
-  /* Brand action — warmer than stock #3B82F6 (brief §6) */
-  --accent: #2a6bd8;
-  --accent-hover: #2259b5;
+  /* Brand action — Close's measured primary (#2b6cf0). */
+  --accent: #2b6cf0;
+  --accent-hover: #2461d8;
   --accent-fg: #ffffff;
   --accent-subtle: #eef3fd;
+
+  /* Link — Close uses a deeper blue for row links than for buttons. */
+  --link: #245bc6;
 
   /* Status */
   --danger: #dc2626;
@@ -88,6 +91,8 @@
   --accent-fg: #0b0b0d;
   --accent-subtle: #16233a;
 
+  --link: #7aa7f5;
+
   --danger: #f87171;
   --danger-fg: #1a0b0b;
   --danger-subtle: #2a1515;
@@ -127,6 +132,7 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-fg);
   --color-accent-subtle: var(--accent-subtle);
+  --color-link: var(--link);
 
   --color-danger: var(--danger);
   --color-danger-fg: var(--danger-fg);
@@ -154,7 +160,7 @@
 
   --radius-sm: 4px;
   --radius-md: 8px;
-  --radius-lg: 10px;
+  --radius-lg: 8px;
   --radius-xl: 14px;
 
   --shadow-sm: var(--shadow-sm);

@@ -29,3 +29,6 @@ coverage-comms/
 **/* 2.css
 **/* 2.sql
 **/* 2.mjs
+
+# Playwright MCP scratch: page snapshots contain live Close content. Never commit.
+.playwright-mcp/

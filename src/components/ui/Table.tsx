@@ -109,12 +109,13 @@ export function DataTable<T>({
   }
 
   return (
-    <div className={cn('overflow-x-auto rounded-lg border border-line bg-elevated', className)}>
+    <div className={cn('overflow-x-auto bg-elevated', className)}>
       <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 z-10 bg-elevated">
-          <tr className="border-b border-line">
+        {/* Close bands the header in the page ground, not the card white. */}
+        <thead className="sticky top-0 z-10 bg-bg">
+          <tr>
             {selectable && (
-              <th className="w-9 px-3 py-0">
+              <th className="w-9 border-b border-r border-line px-3 py-0">
                 <Checkbox
                   checked={allSelected ? true : someSelected ? 'indeterminate' : false}
                   onCheckedChange={toggleAll}
@@ -129,7 +130,9 @@ export function DataTable<T>({
                   style={c.width ? { width: c.width } : undefined}
                   aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                   className={cn(
-                    'h-8 px-3 text-xs font-medium text-subtle',
+                    // Close: 41px tall, 14px/700 near-black, ruled on every edge.
+                    'h-[41px] border-b border-r border-line px-3 text-base font-bold text-fg',
+                    'last:border-r-0',
                     c.align === 'right' ? 'text-right' : 'text-left',
                   )}
                 >
@@ -166,7 +169,7 @@ export function DataTable<T>({
                 onKeyDown={(e) => onRowKeyDown(e, row)}
                 onClick={() => onRowActivate?.(row)}
                 className={cn(
-                  'h-11 border-b border-line last:border-b-0',
+                  'h-10 border-b border-line last:border-b-0',
                   'transition-colors duration-75',
                   'focus:outline-none focus-visible:bg-hover',
                   isSelected ? 'bg-accent-subtle' : 'hover:bg-hover',
@@ -175,7 +178,7 @@ export function DataTable<T>({
               >
                 {selectable && (
                   <td
-                    className="px-3"
+                    className="border-r border-line px-3"
                     // The checkbox is its own control; a click here must not
                     // also open the row.
                     onClick={(e) => e.stopPropagation()}
@@ -187,7 +190,7 @@ export function DataTable<T>({
                   <td
                     key={c.key}
                     className={cn(
-                      'px-3 text-fg',
+                      'border-r border-line px-3 text-base text-fg last:border-r-0',
                       c.align === 'right' ? 'text-right' : 'text-left',
                     )}
                   >
