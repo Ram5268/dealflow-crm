@@ -31,7 +31,7 @@ export function TemplatesView({ templates, channel }: { templates: TemplateRow[]
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-4">
+    <div className="px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
         <div className="flex flex-1 items-center gap-1">
           {CHANNEL_TABS.map((t) => (
@@ -41,8 +41,8 @@ export function TemplatesView({ templates, channel }: { templates: TemplateRow[]
               onClick={() => setChannel(t.key)}
               aria-pressed={t.key === channel}
               className={cn(
-                'rounded-md px-2 py-1 text-xs font-medium transition-colors',
-                t.key === channel ? 'bg-active text-fg' : 'text-muted hover:bg-hover hover:text-fg',
+                'flex h-6 items-center rounded-md px-2 text-sm font-normal transition-colors',
+                t.key === channel ? 'bg-line text-fg' : 'text-muted hover:bg-hover hover:text-fg',
               )}
             >
               {t.label}
@@ -72,33 +72,34 @@ export function TemplatesView({ templates, channel }: { templates: TemplateRow[]
           }
         />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-line">
-          <table className="w-full text-sm">
-            <thead className="bg-hover text-left text-xs font-medium text-muted">
+        <div className="overflow-hidden border-b border-line">
+          <table className="w-full border-collapse text-base">
+            {/* Close bands the header in the page ground at 14px/700. */}
+            <thead className="bg-bg text-left text-base font-bold text-fg">
               <tr>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Channel</th>
-                <th className="px-3 py-2">Subject</th>
-                <th className="px-3 py-2">Last used</th>
-                <th className="px-3 py-2">Created</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Name</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Channel</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Subject</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Last used</th>
+                <th className="h-[41px] border-b border-line px-3">Created</th>
               </tr>
             </thead>
             <tbody>
               {templates.map((t) => (
-                <tr key={t.id} className="border-t border-line hover:bg-hover">
-                  <td className="px-3 py-2">
+                <tr key={t.id} className="h-10 border-b border-line hover:bg-hover">
+                  <td className="border-r border-line px-3">
                     <Link href={`/templates/${t.id}`} className="font-medium text-accent hover:underline">
                       {t.name}
                     </Link>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="border-r border-line px-3">
                     <Badge tone={t.channel === 'sms' ? 'warning' : 'accent'}>{t.channel}</Badge>
                   </td>
-                  <td className="max-w-xs truncate px-3 py-2 text-muted">{t.subject ?? '—'}</td>
-                  <td className="px-3 py-2 text-muted">
+                  <td className="max-w-xs truncate border-r border-line px-3 text-muted">{t.subject ?? '—'}</td>
+                  <td className="border-r border-line px-3 text-muted">
                     {t.lastUsedAt ? shortStamp(new Date(t.lastUsedAt)) : 'Never'}
                   </td>
-                  <td className="px-3 py-2 text-muted">{shortStamp(new Date(t.createdAt))}</td>
+                  <td className="px-3 text-muted">{shortStamp(new Date(t.createdAt))}</td>
                 </tr>
               ))}
             </tbody>

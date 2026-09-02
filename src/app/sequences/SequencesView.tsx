@@ -15,7 +15,7 @@ import type { SequenceRow } from '@/lib/sequences/queries'
  */
 export function SequencesView({ sequences }: { sequences: SequenceRow[] }) {
   return (
-    <div className="mx-auto max-w-5xl px-4 py-4">
+    <div className="px-4 py-4">
       <div className="mb-3 flex items-center justify-end">
         <Button asChild variant="primary" size="sm">
           <Link href="/sequences/new">
@@ -40,22 +40,22 @@ export function SequencesView({ sequences }: { sequences: SequenceRow[] }) {
           }
         />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-line">
-          <table className="w-full text-sm">
-            <thead className="bg-hover text-left text-xs font-medium text-muted">
+        <div className="overflow-hidden border-b border-line">
+          <table className="w-full border-collapse text-base">
+            <thead className="bg-bg text-left text-base font-bold text-fg">
               <tr>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Steps</th>
-                <th className="px-3 py-2">Enrolled</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Last activity</th>
-                <th className="px-3 py-2">Created</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Name</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Steps</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Enrolled</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Status</th>
+                <th className="h-[41px] border-b border-r border-line px-3">Last activity</th>
+                <th className="h-[41px] border-b border-line px-3">Created</th>
               </tr>
             </thead>
             <tbody>
               {sequences.map((s) => (
-                <tr key={s.id} className="border-t border-line hover:bg-hover">
-                  <td className="px-3 py-2">
+                <tr key={s.id} className="h-10 border-b border-line hover:bg-hover">
+                  <td className="border-r border-line px-3">
                     <Link href={`/sequences/${s.id}`} className="font-medium text-accent hover:underline">
                       {s.name}
                     </Link>
@@ -63,22 +63,22 @@ export function SequencesView({ sequences }: { sequences: SequenceRow[] }) {
                       <span className="ml-2 text-xs text-subtle">{s.description}</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-muted">{s.stepCount}</td>
-                  <td className="px-3 py-2 text-muted">
+                  <td className="border-r border-line px-3 text-muted">{s.stepCount}</td>
+                  <td className="border-r border-line px-3 text-muted">
                     {s.activeEnrollments}
                     {s.totalEnrollments !== s.activeEnrollments && (
                       <span className="text-subtle"> / {s.totalEnrollments}</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="border-r border-line px-3">
                     <Badge tone={s.activity === 'active' ? 'success' : 'neutral'}>
                       {s.activity === 'active' ? 'Active' : 'Idle'}
                     </Badge>
                   </td>
-                  <td className="px-3 py-2 text-muted">
+                  <td className="border-r border-line px-3 text-muted">
                     {s.lastActivityAt ? shortStamp(new Date(s.lastActivityAt)) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-muted">{shortStamp(new Date(s.createdAt))}</td>
+                  <td className="px-3 text-muted">{shortStamp(new Date(s.createdAt))}</td>
                 </tr>
               ))}
             </tbody>
