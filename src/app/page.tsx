@@ -44,7 +44,7 @@ export default async function FocusPage() {
 
       <section className="mt-4 overflow-hidden rounded-lg border border-line bg-elevated">
         <header className="flex h-9 items-center border-b border-line px-3">
-          <h2 className="text-xs font-medium text-muted">Needs attention</h2>
+          <h2 className="text-[12px] font-medium text-muted">Needs attention</h2>
         </header>
         <Suspense fallback={<NeedsAttentionSkeleton />}>
           <NeedsAttentionList organizationId={organizationId} />
