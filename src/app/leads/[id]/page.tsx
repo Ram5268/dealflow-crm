@@ -14,7 +14,10 @@ export const dynamic = 'force-dynamic'
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-line bg-elevated">
-      <h2 className="border-b border-line px-3 py-2 text-xs font-semibold uppercase tracking-wide text-subtle">
+      {/* Close fills its section headers rather than ruling them, and does not
+          uppercase them. 12px is Close's small-label step; ours is 11px — see
+          docs/parity-notes/05-lead-detail.md. */}
+      <h2 className="rounded-t-lg bg-active px-3 py-2 text-[12px] font-medium text-muted">
         {title}
       </h2>
       <div className="px-3 py-2.5">{children}</div>
@@ -56,7 +59,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="min-w-0 truncate text-lg font-semibold text-fg">{lead.displayName}</h1>
+            <h1 className="min-w-0 truncate text-xl font-bold text-fg">{lead.displayName}</h1>
             {lead.statusLabel && <Badge>{lead.statusLabel}</Badge>}
             {lead.priorityScore != null && (
               <Badge tone="accent">Priority {lead.priorityScore}</Badge>
@@ -92,7 +95,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[418px_minmax(0,1fr)]">
           {/* Left rail — structured data, ~340px. Matches the live Close
               lead page, where Details/Tasks/Opportunities/Contacts/Fields sit
               in a narrow left rail. We ship the three we have data for.
