@@ -14,20 +14,22 @@
 
 :root {
   /* Surfaces */
-  --bg: #f7f7f8;
+  --bg: #f9f9f9;
   --bg-elevated: #ffffff;
   --bg-overlay: #ffffff;
-  --bg-hover: #f0f0f2;
-  --bg-active: #e8e8ec;
+  --bg-hover: #f4f4f4;
+  --bg-active: #f1f1f1;
 
-  /* Lines */
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
+  /* Lines — Close draws chrome rules lighter than content borders. */
+  --border: #e2e2e2;
+  --border-subtle: #f1f1f1;
+  --border-strong: #c9c9c9;
 
-  /* Text */
-  --text: #18181b;
-  --text-muted: #52525b;
-  --text-subtle: #a1a1aa;
+  /* Text — Close's body tone is #2e2e2e, reserving #191919 for emphasis. */
+  --text: #2e2e2e;
+  --text-strong: #191919;
+  --text-muted: #5e5e5e;
+  --text-subtle: #767676;
 
   /* Brand action — warmer than stock #3B82F6 (brief §6) */
   --accent: #2a6bd8;
@@ -48,8 +50,8 @@
   --ring: #2a6bd8;
 
   /* Type */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif,
-    system-ui, sans-serif;
+  --font-sans: -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue",
+    ui-sans-serif, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   /* Elevation — Close is FLAT; use sparingly */
@@ -58,8 +60,8 @@
   --shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.24), 0 4px 12px -4px rgb(0 0 0 / 0.10);
 
   /* Shell metrics */
-  --sidebar-w: 240px;
-  --topbar-h: 48px;
+  --sidebar-w: 252px;
+  --topbar-h: 56px;
   --softphone-h: 56px;
 
   color-scheme: light;
@@ -73,9 +75,11 @@
   --bg-active: #26262e;
 
   --border: #27272d;
+  --border-subtle: #212127;
   --border-strong: #3a3a44;
 
   --text: #f4f4f5;
+  --text-strong: #fafafa;
   --text-muted: #a1a1aa;
   --text-subtle: #71717a;
 
@@ -111,9 +115,11 @@
   --color-active: var(--bg-active);
 
   --color-line: var(--border);
+  --color-line-subtle: var(--border-subtle);
   --color-line-strong: var(--border-strong);
 
   --color-fg: var(--text);
+  --color-fg-strong: var(--text-strong);
   --color-muted: var(--text-muted);
   --color-subtle: var(--text-subtle);
 
@@ -147,7 +153,7 @@
   --text-2xl--line-height: 1.3;
 
   --radius-sm: 4px;
-  --radius-md: 6px;
+  --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 14px;
 

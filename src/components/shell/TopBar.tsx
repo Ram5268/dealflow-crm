@@ -30,9 +30,9 @@ export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
   return (
     <header
       style={{ height: 'var(--topbar-h)' }}
-      className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-bg px-4"
+      className="flex shrink-0 items-center justify-between gap-4 border-b border-line-subtle bg-elevated pl-6 pr-4"
     >
-      <h1 className="shrink-0 truncate text-sm font-semibold text-fg">{titleFor(pathname)}</h1>
+      <h1 className="shrink-0 truncate text-sm font-semibold text-fg-strong">{titleFor(pathname)}</h1>
 
       <SearchLauncher onOpenPalette={onOpenPalette} />
 
