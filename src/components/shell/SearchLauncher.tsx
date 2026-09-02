@@ -2,7 +2,6 @@
 
 import { Search } from 'lucide-react'
 import { Kbd } from '@/components/ui'
-import { controlBase, controlBorder } from '@/components/ui/Field'
 import { cn } from '@/lib/ui/cn'
 
 /**
@@ -25,14 +24,16 @@ export function SearchLauncher({ onOpenPalette }: { onOpenPalette: () => void })
       aria-label="Search — opens the command palette"
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        controlBase,
-        controlBorder(false),
-        'flex h-8 max-w-md flex-1 items-center gap-2 text-left',
+        // Close's search is a borderless filled pill, not a bordered input —
+        // so this deliberately does NOT reuse controlBase/controlBorder.
+        'flex h-10 w-full max-w-[500px] flex-1 items-center gap-2 rounded-md',
+        'bg-active px-3 text-left text-sm text-subtle transition-colors',
+        'hover:bg-[color-mix(in_srgb,var(--bg-active)_92%,black)]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
       )}
     >
-      <Search size={14} className="shrink-0 text-subtle" />
-      <span className="min-w-0 flex-1 truncate text-subtle">Search…</span>
+      <Search size={16} className="shrink-0 text-subtle" />
+      <span className="min-w-0 flex-1 truncate">Search…</span>
       <Kbd className="shrink-0">⌘K</Kbd>
     </button>
   )
