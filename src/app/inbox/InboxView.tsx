@@ -279,8 +279,9 @@ export function InboxView({
               onClick={() => setFilter(f)}
               aria-pressed={f === filter}
               className={cn(
-                'rounded-md px-2 py-1 text-xs font-medium transition-colors',
-                f === filter ? 'bg-active text-fg' : 'text-muted hover:bg-hover hover:text-fg',
+                // Close's filter chips: 24px, 13px/400, active fill #e2e2e2.
+                'flex h-6 items-center rounded-md px-2 text-sm font-normal transition-colors',
+                f === filter ? 'bg-line text-fg' : 'text-muted hover:bg-hover hover:text-fg',
               )}
             >
               {FILTER_LABELS[f]}
@@ -311,7 +312,7 @@ export function InboxView({
                       openThread(t)
                     }}
                     className={cn(
-                      'flex w-full items-start gap-2 px-3 py-2 text-left text-sm',
+                      'flex w-full items-start gap-2 px-3 py-2 text-left text-base',
                       t.key === selectedKey ? 'bg-active' : 'hover:bg-hover',
                       i === cursor && t.key !== selectedKey && 'bg-hover',
                     )}
@@ -322,9 +323,9 @@ export function InboxView({
                         <span className={cn('min-w-0 flex-1 truncate', unread ? 'font-semibold text-fg' : 'text-fg')}>
                           {t.title}
                         </span>
-                        <span className="shrink-0 text-xs text-subtle">{shortStamp(new Date(t.at))}</span>
+                        <span className="shrink-0 text-sm text-subtle">{shortStamp(new Date(t.at))}</span>
                       </span>
-                      <span className={cn('block truncate text-xs', unread ? 'text-muted' : 'text-subtle')}>
+                      <span className={cn('block truncate text-sm', unread ? 'text-muted' : 'text-subtle')}>
                         {t.subject ? `${t.subject} — ` : ''}
                         {t.preview}
                       </span>
