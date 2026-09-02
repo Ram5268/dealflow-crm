@@ -126,7 +126,7 @@ export function LeadsView({
         <Link
           href={`/leads/${r.id}`}
           onClick={(e) => e.stopPropagation()}
-          className="font-medium text-fg hover:text-accent hover:underline"
+          className="text-link hover:underline"
         >
           {r.displayName}
         </Link>
@@ -241,7 +241,8 @@ export function LeadsView({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      {/* Close runs the leads grid edge to edge — no card inset. */}
+      <div className="min-h-0 flex-1 overflow-auto">
         <DataTable
           columns={columns}
           rows={rows}
