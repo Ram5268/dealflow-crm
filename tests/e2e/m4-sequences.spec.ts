@@ -1,12 +1,14 @@
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
+import { seedSequenceLead, cleanSequences, disconnectFixtures } from './fixtures'
 
 /**
  * M4 acceptance smokes: Templates CRUD, Sequences CRUD, enrollment.
  *
- * Data is created BY these tests through the UI rather than seeded, because
- * "CRUD works end-to-end" is the acceptance criterion. The [M4_SMOKE] seed
- * supplies only the lead + contact that enrollment needs.
+ * Templates and sequences are created BY these tests through the UI rather than
+ * seeded, because "CRUD works end-to-end" is the acceptance criterion. Only the
+ * lead + contact that enrollment targets is seeded, by this file (M5.1) — it
+ * used to come from a [M4_SMOKE] seed deleted at the end of the milestone.
  *
  * Serial: sequences cannot be built until a template exists.
  */
@@ -20,6 +22,16 @@ async function shot(page: Page, name: string) {
 test.describe.configure({ mode: 'serial' })
 
 test.describe('M4 sequences + templates', () => {
+  test.beforeAll(async () => {
+    await seedSequenceLead()
+  })
+
+  // Also removes the templates and sequences the cases below create in the UI.
+  test.afterAll(async () => {
+    await cleanSequences()
+    await disconnectFixtures()
+  })
+
   test('creates a template, with merge tags rendering in the preview', async ({ page }) => {
     await page.goto('/templates')
     await page.waitForLoadState('networkidle')

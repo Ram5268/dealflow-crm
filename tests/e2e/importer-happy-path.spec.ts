@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { cleanImportedLeads, disconnectFixtures } from './fixtures'
 
 // M9 acceptance (brief §9): upload a 500-row synthetic CSV, review the AI
 // mapping (rows visible + ≥1 auto-suggested new_custom_field), commit, wait for
@@ -25,6 +26,13 @@ async function writeSyntheticCsv(): Promise<string> {
   await fs.writeFile(file, lines.join('\n'))
   return file
 }
+
+// A successful run commits 500 leads. Without this the NEXT run of the whole
+// suite no longer starts from a clean database (M5.1).
+test.afterAll(async () => {
+  await cleanImportedLeads()
+  await disconnectFixtures()
+})
 
 test('import happy path: upload → map → commit → lead visible with import: source', async ({ page }) => {
   const csv = await writeSyntheticCsv()

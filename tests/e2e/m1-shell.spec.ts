@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
+import { seedLead, cleanLead, disconnectFixtures } from './fixtures'
 
 /**
  * M1 acceptance smokes (brief §8): primitives catalog, shell navigation, ⌘K
@@ -20,6 +21,16 @@ async function shot(page: Page, name: string) {
 }
 
 test.describe('M1 shell', () => {
+  // One lead + contact, so /leads and /leads/[id] have something to render.
+  test.beforeAll(async () => {
+    await seedLead()
+  })
+
+  test.afterAll(async () => {
+    await cleanLead()
+    await disconnectFixtures()
+  })
+
   test('sidebar renders every primary destination and navigates', async ({ page }) => {
     await page.goto('/leads')
 
@@ -39,6 +50,10 @@ test.describe('M1 shell', () => {
 
   test('⌘K opens the command palette and Esc closes it', async ({ page }) => {
     await page.goto('/leads')
+    // The hotkey listener only exists after hydration; without this the press
+    // can land on a server-rendered page and be swallowed (flaked on a repeat
+    // run, M5.1). The `g l` case below already waits for the same reason.
+    await page.waitForLoadState('networkidle')
 
     await page.keyboard.press('ControlOrMeta+k')
     const palette = page.getByRole('dialog', { name: 'Command palette' })
@@ -71,9 +86,11 @@ test.describe('M1 shell', () => {
   })
 
   test('lead detail loads for the first row', async ({ page }) => {
+    // Seeded by this file since M5.1. It used to `test.skip` on an empty DB,
+    // which meant the detail page went unexercised on every clean run.
     await page.goto('/leads')
     const firstLink = page.locator('tbody tr a').first()
-    test.skip((await firstLink.count()) === 0, 'no leads seeded in this DB')
+    await expect(firstLink).toBeVisible()
 
     await firstLink.click()
     await expect(page).toHaveURL(/\/leads\/[^/]+$/)

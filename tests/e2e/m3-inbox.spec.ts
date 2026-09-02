@@ -1,12 +1,15 @@
 import { test, expect, type Page } from '@playwright/test'
 import path from 'node:path'
+import { seedInbox, cleanInbox, disconnectFixtures } from './fixtures'
 
 /**
  * M3 acceptance smokes: unified inbox, filters, keyboard nav, read/archive
  * state, reply drawer + template picker, SMS disabled, email send.
  *
- * Prereq: `pnpm dev` plus the [M3_SMOKE] seed. The send case additionally needs
- * the Gmail mock (contracts/mocks/gmail) with GMAIL_MOCK_URL pointed at it.
+ * Prereq: `pnpm dev`. The fixtures are created by this file (M5.1) — it used to
+ * depend on a [M3_SMOKE] seed that was deleted at the end of the milestone, so a
+ * later run failed as though the inbox had regressed. The send case additionally
+ * needs the Gmail mock (contracts/mocks/gmail) with GMAIL_MOCK_URL pointed at it.
  * Run: `pnpm exec playwright test m3-inbox`
  *
  * Serial by necessity — the later cases mutate read/archive state that the
@@ -23,6 +26,17 @@ const threadRows = (page: Page) => page.locator('ul > li > button')
 test.describe.configure({ mode: 'serial' })
 
 test.describe('M3 inbox', () => {
+  // The cases below mutate read/archive state, so the fixture is rebuilt for the
+  // file rather than shared with any other spec.
+  test.beforeAll(async () => {
+    await seedInbox()
+  })
+
+  test.afterAll(async () => {
+    await cleanInbox()
+    await disconnectFixtures()
+  })
+
   test('lists real threads across email, sms and voicemail', async ({ page }) => {
     await page.goto('/inbox')
     await page.waitForLoadState('networkidle')
