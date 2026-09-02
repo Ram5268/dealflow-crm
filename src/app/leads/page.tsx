@@ -1,3 +1,5 @@
+import { Suspense } from 'react'
+import { NewLeadModal } from './NewLeadModal'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { isLeadSortKey, listLeads } from '@/lib/leads/list'
@@ -35,17 +37,24 @@ export default async function LeadsPage({
   ])
 
   return (
-    <LeadsView
-      rows={result.rows}
-      total={result.total}
-      page={result.page}
-      pageSize={result.pageSize}
-      sortKey={sortKey}
-      sortDir={sortDir}
-      q={sp.q ?? ''}
-      viewId={sp.viewId ?? ''}
-      views={views}
-      viewError={result.viewError}
-    />
+    <>
+      {/* Opened by ?new=1 — the destination the top bar and ⌘K already linked
+          to (M6). Suspense because it reads useSearchParams. */}
+      <Suspense fallback={null}>
+        <NewLeadModal />
+      </Suspense>
+      <LeadsView
+        rows={result.rows}
+        total={result.total}
+        page={result.page}
+        pageSize={result.pageSize}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        q={sp.q ?? ''}
+        viewId={sp.viewId ?? ''}
+        views={views}
+        viewError={result.viewError}
+      />
+    </>
   )
 }

@@ -6,6 +6,8 @@ import { getObject } from '@/lib/core-data/importer/storage'
 import { parseFile } from '@/lib/core-data/importer/parser'
 import { proposeMapping, defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
 import { captureException } from '@/lib/shared/sentry'
+import { logger } from '@/lib/logger'
+import { ZodError } from 'zod'
 
 export const runtime = 'nodejs'
 
@@ -28,7 +30,26 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
     proposal = await proposeMapping(parsed, existing, defaultAnthropicCaller())
   } catch (err) {
     captureException(err, { dependency: 'anthropic', event: 'proposed-mapping' })
-    return errorResponse('AI mapping unavailable, retry', 503, correlationId)
+    // A ZodError here means the response was unusable even after coercion —
+    // that is a bad payload, not an outage, so it must not present as 503
+    // ("retry" is useless advice when a retry produces the same shape).
+    const unusable = err instanceof ZodError
+    return errorResponse(
+      unusable
+        ? 'AI returned a mapping we could not read. Map the columns manually to continue.'
+        : 'AI mapping unavailable, retry',
+      unusable ? 400 : 503,
+      correlationId
+    )
+  }
+
+  if (proposal.coercedColumns.length > 0) {
+    // Never silent: the model got these wrong and we rewrote them, so both the
+    // logs and the reviewer see exactly which columns were touched.
+    logger.warn(
+      { event: 'proposed-mapping.coerced', importBatchId: batch.id, coerced: proposal.coercedColumns },
+      'AI mapping returned out-of-enum target.kind values; coerced'
+    )
   }
 
   await prisma.importBatch.update({
@@ -40,6 +61,7 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
     {
       mapping: proposal.mapping,
       likelyDuplicates: proposal.likelyDuplicates,
+      coercedColumns: proposal.coercedColumns,
       headerRow: parsed.headerRow,
       totalRowsDetected: parsed.totalRowsDetected,
     },

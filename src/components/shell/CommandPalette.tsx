@@ -4,12 +4,21 @@ import { Command } from 'cmdk'
 import * as RD from '@radix-ui/react-dialog'
 import { useRouter } from 'next/navigation'
 import { useCallback } from 'react'
-import { Plus, Upload } from 'lucide-react'
+import { FileText, Mail, Upload, UserPlus, Zap } from 'lucide-react'
 import { ALL_DESTINATIONS } from '@/lib/ui/nav'
 import { cn } from '@/lib/ui/cn'
 
+/**
+ * Primary actions (M6 §5). Every href here is a surface that actually exists —
+ * `/leads?new=1` was a dead link until M6 gave it a modal, and "Compose email"
+ * needed `/inbox?compose=1` because the reply drawer is thread-scoped and
+ * cannot start a conversation.
+ */
 const ACTIONS = [
-  { id: 'new-lead', label: 'New Lead', icon: Plus, href: '/leads?new=1' },
+  { id: 'new-lead', label: 'New lead', icon: UserPlus, href: '/leads?new=1' },
+  { id: 'compose-email', label: 'Compose email', icon: Mail, href: '/inbox?compose=1' },
+  { id: 'new-sequence', label: 'New sequence', icon: Zap, href: '/sequences/new' },
+  { id: 'new-template', label: 'New template', icon: FileText, href: '/templates/new' },
   { id: 'import-csv', label: 'Import CSV', icon: Upload, href: '/imports' },
 ]
 
@@ -80,7 +89,11 @@ export function CommandPalette({
                   >
                     <d.icon size={14} className="shrink-0 text-subtle" />
                     <span className="min-w-0 flex-1 truncate">{d.label}</span>
-                    <span className="shrink-0 text-xs text-subtle">{d.href}</span>
+                    {/* The hotkey is worth teaching; the route is not. Falls
+                        back to the path for destinations without one. */}
+                    <span className="shrink-0 text-xs text-subtle">
+                      {d.goKey ? `g ${d.goKey}` : d.href}
+                    </span>
                   </Command.Item>
                 ))}
               </Command.Group>
@@ -92,7 +105,7 @@ export function CommandPalette({
                 {ACTIONS.map((a) => (
                   <Command.Item
                     key={a.id}
-                    value={a.label}
+                    value={`${a.label} ${a.href}`}
                     onSelect={() => go(a.href)}
                     className={cn(
                       'flex h-8 cursor-default select-none items-center gap-2 rounded px-2',
@@ -101,7 +114,7 @@ export function CommandPalette({
                     )}
                   >
                     <a.icon size={14} className="shrink-0 text-subtle" />
-                    <span className="truncate">{a.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{a.label}</span>
                   </Command.Item>
                 ))}
               </Command.Group>

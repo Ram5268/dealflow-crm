@@ -16,10 +16,10 @@ export const dynamic = 'force-dynamic'
 export default async function InboxPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string; thread?: string }>
+  searchParams: Promise<{ filter?: string; thread?: string; compose?: string }>
 }) {
   const organizationId = await getCurrentOrgId()
-  const { filter: rawFilter, thread } = await searchParams
+  const { filter: rawFilter, thread, compose } = await searchParams
   const filter: InboxFilter = isInboxFilter(rawFilter) ? rawFilter : 'all'
 
   const [{ threads, truncated }, detail] = await Promise.all([
@@ -27,5 +27,14 @@ export default async function InboxPage({
     thread ? getThread(organizationId, thread) : Promise.resolve(null),
   ])
 
-  return <InboxView threads={threads} detail={detail} filter={filter} truncated={truncated} />
+  return (
+    <InboxView
+      threads={threads}
+      detail={detail}
+      filter={filter}
+      truncated={truncated}
+      // ?compose=1 is how ⌘K's "Compose email" reaches the composer.
+      composeOpen={compose === '1'}
+    />
+  )
 }

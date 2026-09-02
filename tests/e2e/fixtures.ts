@@ -30,6 +30,7 @@ const prisma = new PrismaClient({
 export const MARK_INBOX = '[E2E_INBOX]'
 export const MARK_SEQ = '[E2E_SEQ]'
 export const MARK_LEAD = '[E2E_LEAD]'
+export const MARK_SESSION = '[E2E_SESSION]'
 
 export async function disconnectFixtures(): Promise<void> {
   await prisma.$disconnect()
@@ -327,6 +328,103 @@ export async function cleanLead(): Promise<void> {
   await removeLeadTree(await orgId(), MARK_LEAD)
 }
 
+/* --------------------------------------------------------- full session -- */
+
+export interface SessionFixture {
+  leadId: string
+  leadName: string
+  sequenceName: string
+  threadSubject: string
+}
+
+/**
+ * Everything the dogfood walk touches in one go: a lead with a contact, an
+ * unread email thread to reply to, and a template + one-step sequence to enrol
+ * that lead into.
+ */
+export async function seedFullSession(): Promise<SessionFixture> {
+  const org = await orgId()
+  await cleanFullSession()
+
+  const leadName = 'Imogen Castellanos'
+  const threadSubject = 'Offer on 88 Greenwich'
+  const sequenceName = `${MARK_SESSION} Buyer follow-up`
+
+  const lead = await prisma.lead.create({
+    data: {
+      organizationId: org,
+      displayName: leadName,
+      source: MARK_SESSION,
+      timezone: 'America/New_York',
+      statusLabel: 'Working',
+    },
+  })
+  const contact = await prisma.contact.create({
+    data: {
+      organizationId: org,
+      leadId: lead.id,
+      displayName: leadName,
+      name: leadName,
+      timezone: 'America/New_York',
+      phones: {
+        create: { phone: '+12125550177', phoneFormatted: '+12125550177', type: 'mobile', isPrimary: true },
+      },
+    },
+  })
+
+  await prisma.message.create({
+    data: {
+      organizationId: org,
+      leadId: lead.id,
+      contactId: contact.id,
+      threadId: 'e2e_session_a',
+      channel: 'email',
+      status: 'received',
+      direction: 'incoming',
+      fromAddress: 'e2e-session-imogen@example.com',
+      toAddresses: ['ryan@example.com'],
+      subject: threadSubject,
+      bodyText: 'We are ready to move on the offer. Can you call me today?',
+      activityAt: hoursAgo(3),
+    },
+  })
+
+  const template = await prisma.messageTemplate.create({
+    data: {
+      organizationId: org,
+      name: `${MARK_SESSION} Follow-up`,
+      channel: 'email',
+      subject: 'Following up',
+      bodyText: 'Checking in on the offer.',
+      mergeFields: [],
+    },
+  })
+  await prisma.sequence.create({
+    data: {
+      organizationId: org,
+      name: sequenceName,
+      channel: 'email',
+      steps: { create: { ordinal: 1, delayHours: 24, channel: 'email', templateId: template.id } },
+    },
+  })
+
+  return { leadId: lead.id, leadName, sequenceName, threadSubject }
+}
+
+export async function cleanFullSession(): Promise<void> {
+  const org = await orgId()
+  await removeLeadTree(org, MARK_SESSION)
+  await prisma.sequence.deleteMany({
+    where: { organizationId: org, name: { startsWith: MARK_SESSION } },
+  })
+  await prisma.messageTemplate.deleteMany({
+    where: { organizationId: org, name: { startsWith: MARK_SESSION } },
+  })
+  await prisma.message.deleteMany({
+    where: { organizationId: org, threadId: { startsWith: 'e2e_session_' } },
+  })
+}
+
 /* --------------------------------------------------------------- importer -- */
 
 /**
@@ -362,16 +460,27 @@ export async function fixtureResidue(): Promise<Record<string, number>> {
   const org = await orgId()
   return {
     inboxLeads: await prisma.lead.count({ where: { source: MARK_INBOX } }),
+    sessionLeads: await prisma.lead.count({ where: { source: MARK_SESSION } }),
+    sessionSequences: await prisma.sequence.count({
+      where: { organizationId: org, name: { startsWith: MARK_SESSION } },
+    }),
     sequenceLeads: await prisma.lead.count({ where: { source: MARK_SEQ } }),
     leadFixtures: await prisma.lead.count({ where: { source: MARK_LEAD } }),
     importedLeads: await prisma.lead.count({
       where: { organizationId: org, source: { startsWith: 'import:' } },
     }),
     fixtureThreads: await prisma.message.count({
-      where: { organizationId: org, threadId: { startsWith: 'e2e_inbox_' } },
+      where: { organizationId: org, threadId: { startsWith: 'e2e_' } },
     }),
     fixtureTemplates: await prisma.messageTemplate.count({
-      where: { organizationId: org, OR: [{ name: { startsWith: MARK_INBOX } }, { name: { startsWith: '[M4_SMOKE]' } }] },
+      where: {
+        organizationId: org,
+        OR: [
+          { name: { startsWith: MARK_INBOX } },
+          { name: { startsWith: MARK_SESSION } },
+          { name: { startsWith: '[M4_SMOKE]' } },
+        ],
+      },
     }),
   }
 }

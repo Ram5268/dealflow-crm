@@ -33,8 +33,12 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
     }
   }, [id])
 
+  // A <div>, not <main>: AppShell already renders the page's <main>, and a
+  // nested one is invalid HTML the browser hoists out of place, producing a
+  // hydration mismatch that silently kills interactivity on this subtree —
+  // the file picker and Upload button did nothing. M6 FIX 1.
   return (
-    <main>
+    <div>
       <div className="mx-auto max-w-lg px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Import progress</h1>
         {!batch && <p className="text-sm text-neutral-500">Loading…</p>}
@@ -56,6 +60,6 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
           </>
         )}
       </div>
-    </main>
+    </div>
   )
 }

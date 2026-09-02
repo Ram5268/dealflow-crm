@@ -1247,3 +1247,149 @@ its `tests/**` include is `*.test.ts`, and these are `*.spec.ts` under
 
 Worth knowing before anyone reads a red perf run as a regression: check what else
 was hammering Railway first.
+
+---
+
+## §15 · M6 DEVIATIONS AND FINDINGS (2026-09-02)
+
+The last milestone. Two fixes, the palette, the last bare route, docs, and a
+dogfood walk. **The full Playwright suite is green for the first time in the
+brief: 54/54, twice.**
+
+### §15.1 FIX 1 — nested `<main>` on all three /imports pages
+
+Exactly as diagnosed. Each page returned its own `<main>` inside AppShell's, and
+nested `<main>` is invalid HTML the browser hoists out of place; the resulting
+hydration mismatch left the subtree inert, so the file picker and Upload button
+did nothing. Changed to `<div>` in all three.
+
+Guarded by two assertions rather than a screenshot: exactly one `main` landmark
+on `/imports`, and Upload disabled → choose a file → Upload enabled, which only
+passes if the control is reacting to state at all.
+
+### §15.2 FIX 2 — the importer 503, fixed at the root and then defended
+
+**The root cause was the prompt, not the parser.** The system prompt spelled out
+`kind:"ignore"` literally but never named the other three discriminator tokens —
+it described the *fields* of a new custom field without ever saying
+`new_custom_field`. So the model invented a plausible name for the one column it
+had to map itself.
+
+I captured the live response before designing anything:
+
+```
+[4] Estimated Value -> {"kind":"custom_field","name":"Estimated Value","type":"number"}
+```
+
+That changes the fix. The payload is a **perfectly valid new-custom-field**
+wearing the wrong label. The brief's prescribed remedy — coerce an unrecognised
+kind to `'ignore'` — would have stopped the 503 while silently deleting
+"Estimated Value", which is precisely the sort of column Ryan imports Mojo data
+for. It would also have left the e2e's `/new custom/i` assertion failing.
+
+So the repair is ordered most- to least-informed:
+
+1. **alias table** — `custom_field`, `new_custom`, `standard`, `skip`, … → the real token
+2. **shape inference** — `name`+`type` ⇒ new custom field, `definitionId` ⇒ existing, a valid `field` ⇒ standard
+3. **`ignore`** — last, because it is the only outcome that loses a column
+
+Then the planner's other two layers: retry once with the error fed back **only
+when every column was coerced** (a partial coercion is a good result and a
+second API call buys nothing on a mapping Ryan reviews by hand), and a **400 —
+not 503 —** when the response is unusable, since "retry" is useless advice for a
+response that will come back the same shape. Coerced columns are logged and
+returned in the payload, so a rewrite is never invisible.
+
+`tests/unit/mapping-repair.test.ts` (12 cases) replays the exact live payload and
+pins that the column survives as a custom field.
+
+### §15.3 The importer e2e asserted something an LLM cannot guarantee
+
+With the 503 fixed the spec still failed — intermittently, and in two different
+places.
+
+`await expect(page.getByText(/new custom/i)).toBeVisible()` requires the model to
+choose to propose a NEW CUSTOM FIELD for "Estimated Value". That is its
+discretionary judgement and it varies run to run: one run proposed one, the next
+mapped everything to standard fields. **A model's discretion cannot be a gate.**
+Replaced with what the proposal deterministically produces — `500 rows detected`
+and one table row per source column, all five named.
+
+Out-of-enum coverage did not disappear; it moved to the unit test, where the
+exact live payload can be replayed every run instead of hoped for.
+
+The second failure was subtler: the final assertion read `Owner 0 LLC` off
+`/leads`, but the list is 50 per page sorted newest-first and the import commits
+500 rows — so `Owner 0`, the FIRST row committed, is on the LAST page. It could
+only ever have passed by accident. Now searched rather than scanned.
+
+With both fixed the importer e2e passes for the first time: upload → map →
+commit → 500 leads → lead findable.
+
+### §15.4 `/leads?new=1` had been a dead link for four milestones
+
+Both the top bar's "New Lead" item and the ⌘K action pointed at it, and
+`/leads` never read the parameter — its `Search` type is `q/viewId/sort/dir/page`.
+Two visible affordances that did nothing. `POST /api/leads` existed the whole
+time; only the surface was missing, so M6 adds the modal.
+
+The palette rule this earns: **an action's href must go somewhere that exists.**
+Recorded in `docs/ui-notes.md`.
+
+### §15.5 "Compose email" needed a surface, not just a palette entry
+
+The reply drawer is thread-scoped — it reads its recipient off the thread being
+answered and cannot start a conversation. Agent D's `POST /api/comms/messages`
+accepts a threadless email (the `threadId` I added in M3.1 is optional), so the
+gap was UI-only.
+
+`ComposeDrawer` opens on `/inbox?compose=1`, reusing the reply drawer's
+machinery. Open state lives in the URL so ⌘K can reach it from any page. Email
+only: SMS is off pending 10DLC, and a channel picker with one working option is
+just a broken control.
+
+This is the one place M6 added a surface rather than polishing one, and it is
+noted as such.
+
+### §15.6 Reports: stated, not stubbed
+
+There is no reporting backend — no lib, no route, no aggregating model. Rather
+than an empty chart implying the data merely failed to load, the page says it is
+not built and links to the three surfaces that answer the same questions today
+(Focus, Settings → Usage, Leads). It was the only remaining bare route.
+
+### §15.7 The dogfood walk stops where reality stops
+
+`full-session.spec.ts` walks Focus → Start dialing → dialer → Inbox → reply →
+Leads → enrol, in order, and passes.
+
+It does **not** "simulate a call" or "answer inbound", for two independent
+reasons: there is no TwiML application configured, and — more importantly —
+Agent C's gate blocks every number while no `CallingWindowConfig` is confirmed,
+which is the org's real state (§13.6). A dial attempt is *supposed* to be
+refused right now. So the walk asserts the refusal surfaces visibly and without
+crashing, and never places a call. A live call would cost money and dial a real
+person.
+
+That is the honest boundary. Everything either side of it is exercised.
+
+### §15.8 One assertion removed, deliberately
+
+The walk originally re-asserted that a failed send preserves the draft. That is
+`m3-inbox`'s contract, it still passes there, and duplicating it inside the
+longer walk made it flaky — the drawer re-renders as the thread refreshes.
+Removed from the walk, kept where it belongs. The guarantee is not weakened; the
+duplicate is gone.
+
+### §15.9 Final state
+
+| Gate | Result |
+|---|---|
+| `tsc --noEmit` | clean |
+| `pnpm test` | **834 passed** (597 + 237) |
+| `pnpm build` | clean |
+| Playwright run 1 | **54 passed, 0 failed** |
+| Playwright run 2 | **54 passed, 0 failed** |
+
+Zero fixture residue afterwards; both OAuth credentials unchanged to the
+millisecond. No seed or test writes `OAuthCredential`.
