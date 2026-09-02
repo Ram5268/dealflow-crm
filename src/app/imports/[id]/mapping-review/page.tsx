@@ -61,8 +61,12 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
     }
   }
 
+  // A <div>, not <main>: AppShell already renders the page's <main>, and a
+  // nested one is invalid HTML the browser hoists out of place, producing a
+  // hydration mismatch that silently kills interactivity on this subtree —
+  // the file picker and Upload button did nothing. M6 FIX 1.
   return (
-    <main>
+    <div>
       <div className="mx-auto max-w-3xl px-4 py-6">
         <h1 className="mb-4 text-lg font-semibold">Review AI mapping</h1>
         {error && <div className="mb-3 rounded bg-red-50 p-3 text-sm text-red-700">{error}</div>}
@@ -100,6 +104,6 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
           </>
         )}
       </div>
-    </main>
+    </div>
   )
 }

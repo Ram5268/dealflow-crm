@@ -18,6 +18,7 @@ import {
   type ThreadSummary,
 } from '@/lib/inbox/types'
 import { ReplyDrawer } from './ReplyDrawer'
+import { ComposeDrawer } from './ComposeDrawer'
 
 const CHANNEL_ICON: Record<InboxChannel, typeof Mail> = {
   email: Mail,
@@ -40,11 +41,13 @@ export function InboxView({
   detail,
   filter,
   truncated,
+  composeOpen,
 }: {
   threads: ThreadSummary[]
   detail: ThreadDetail | null
   filter: InboxFilter
   truncated: boolean
+  composeOpen: boolean
 }) {
   const router = useRouter()
   const { toast } = useToast()
@@ -54,6 +57,12 @@ export function InboxView({
   const listRef = useRef<HTMLUListElement>(null)
 
   const selectedKey = detail?.key ?? null
+
+  const closeCompose = useCallback(() => {
+    const next = new URLSearchParams(window.location.search)
+    next.delete('compose')
+    router.replace(next.size ? `/inbox?${next}` : '/inbox')
+  }, [router])
   const cursorThread = threads[cursor] ?? null
 
   // Keep the cursor on the open thread when the server sends a new list.
@@ -357,6 +366,20 @@ export function InboxView({
         detail={detail}
         onSent={() => {
           setReplyOpen(false)
+          router.refresh()
+        }}
+      />
+
+      {/* Open state lives in the URL (?compose=1) so ⌘K can reach it from any
+          page; closing drops the param rather than holding local state that the
+          URL would contradict on a back navigation. */}
+      <ComposeDrawer
+        open={composeOpen}
+        onOpenChange={(o) => {
+          if (!o) closeCompose()
+        }}
+        onSent={() => {
+          closeCompose()
           router.refresh()
         }}
       />
