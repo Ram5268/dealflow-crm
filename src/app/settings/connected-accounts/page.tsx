@@ -22,7 +22,7 @@ export default async function ConnectedAccountsPage() {
       {accounts.map((account) => (
         <MailboxCard key={account.key} account={{ ...account, updatedAt: account.updatedAt?.toISOString() ?? null }} />
       ))}
-      <p className="text-[11px] text-subtle">
+      <p className="text-xs text-subtle">
         DealFlow reads mail through these accounts and sends replies as them. Disconnecting stops
         both.
       </p>

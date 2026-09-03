@@ -14,10 +14,9 @@ export const dynamic = 'force-dynamic'
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-line bg-elevated">
-      {/* Close fills its section headers rather than ruling them, and does not
-          uppercase them. 12px is Close's small-label step; ours is 11px — see
-          docs/parity-notes/05-lead-detail.md. */}
-      <h2 className="rounded-t-lg bg-active px-3 py-2 text-[12px] font-medium text-muted">
+      {/* Close fills its section headers rather than ruling them, and does
+          not uppercase them. --text-xs is Close's 12px small-label step. */}
+      <h2 className="rounded-t-lg bg-active px-3 py-2 text-xs font-medium text-muted">
         {title}
       </h2>
       <div className="px-3 py-2.5">{children}</div>
