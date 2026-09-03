@@ -13,8 +13,10 @@ export function SettingsPanel({
   return (
     <div className="mx-auto max-w-2xl px-4 py-5">
       <header className="mb-4">
-        <h2 className="text-base font-semibold text-fg">{title}</h2>
-        <p className="mt-0.5 text-xs text-muted">{blurb}</p>
+        {/* 24px is Close's page-heading step; consolidating into the type
+            scale is deferred to PR-E with --text-xs. */}
+        <h2 className="text-[24px] font-bold text-fg">{title}</h2>
+        <p className="mt-1 text-base text-muted">{blurb}</p>
       </header>
       <div className="space-y-4">{children}</div>
     </div>
@@ -36,7 +38,7 @@ export function SettingsCard({
     <section className="rounded-lg border border-line bg-elevated">
       {(title || action) && (
         <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-          {title && <h3 className="text-sm font-medium text-fg">{title}</h3>}
+          {title && <h3 className="text-base font-semibold text-fg">{title}</h3>}
           {action}
         </header>
       )}
