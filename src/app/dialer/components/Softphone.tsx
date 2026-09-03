@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Device } from "@twilio/voice-sdk";
 import { SoftphoneController, type VoiceDeviceLike } from "@/lib/telephony/softphone/controller";
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/ui/cn";
 
 /**
  * Browser softphone shell. The testable logic lives in SoftphoneController
@@ -52,39 +54,36 @@ export function Softphone({ activeCallId }: { activeCallId: string | null }) {
   }
 
   return (
-    <div className="rounded-lg border border-line bg-elevated p-4">
-      <div className="mb-2 text-sm text-muted">
+    <section className="overflow-hidden rounded-lg border border-line bg-elevated">
+      <h2 className="flex items-center gap-2 bg-active px-3 py-2 text-xs font-medium text-muted">
         Softphone {ready ? "· ready" : "· connecting…"}
-        <span className="ml-2 rounded bg-warning-subtle px-2 py-0.5 text-warning">read-only email</span>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={toggleMute}
-          disabled={!onCall}
-          className="rounded bg-hover px-3 py-2 disabled:opacity-50"
-        >
+        <span className="rounded-full bg-warning-subtle px-2 py-0.5 text-warning">read-only email</span>
+      </h2>
+      <div className="flex flex-wrap items-center gap-2 p-3">
+        {/* Chrome only: every handler, and the !onCall guard on each control,
+            is exactly as Agent B wrote it. */}
+        <Button variant="secondary" onClick={toggleMute} disabled={!onCall}>
           {muted ? "Unmute" : "Mute"}
-        </button>
-        <button
-          onClick={hangup}
-          disabled={!onCall}
-          className="rounded bg-danger px-3 py-2 text-danger-fg disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="danger" onClick={hangup} disabled={!onCall}>
           Hang up
-        </button>
+        </Button>
         <div className="ml-auto flex gap-1">
           {["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"].map((d) => (
             <button
               key={d}
               onClick={() => controllerRef.current?.sendDigit(d)}
               disabled={!onCall}
-              className="h-8 w-8 rounded bg-hover disabled:opacity-50"
+              className={cn(
+                "h-8 w-8 rounded-md border border-line bg-elevated text-base text-fg",
+                "transition-colors hover:bg-hover disabled:opacity-50 disabled:hover:bg-elevated",
+              )}
             >
               {d}
             </button>
           ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

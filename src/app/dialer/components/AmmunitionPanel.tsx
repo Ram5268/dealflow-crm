@@ -29,14 +29,14 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
     };
   }, [activeCallId]);
 
-  if (!activeCallId) return <aside className="rounded-lg border border-line bg-elevated p-4 text-subtle">No active call</aside>;
-  if (!data) return <aside className="rounded-lg border border-line bg-elevated p-4 text-subtle">Loading ammunition…</aside>;
+  if (!activeCallId) return <Shell><p className="text-base text-subtle">No active call</p></Shell>;
+  if (!data) return <Shell><p className="text-base text-subtle">Loading ammunition…</p></Shell>;
 
   return (
-    <aside className="rounded-lg border border-line bg-elevated p-4">
-      <h2 className="mb-2 font-semibold">{data.lead?.displayName ?? "Lead"}</h2>
+    <Shell>
+      <h3 className="mb-2 text-base font-semibold text-fg-strong">{data.lead?.displayName ?? "Lead"}</h3>
       {data.lead && (
-        <dl className="grid grid-cols-2 gap-1 text-sm">
+        <dl className="grid grid-cols-2 gap-1 text-base">
           <dt className="text-muted">Priority</dt>
           <dd>{data.lead.priorityScore ?? "—"}</dd>
           <dt className="text-muted">Top match fit</dt>
@@ -50,7 +50,7 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
         </dl>
       )}
       {data.contact && (
-        <div className="mt-2 text-sm">
+        <div className="mt-2 text-base">
           <div className="text-muted">Phones</div>
           {data.contact.phones.map((p) => (
             <div key={p.id}>
@@ -60,10 +60,20 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
         </div>
       )}
       {data.lead?.dealflowDeepLink && (
-        <a href={data.lead.dealflowDeepLink} className="mt-2 block text-sm text-accent underline">
+        <a href={data.lead.dealflowDeepLink} className="mt-2 block text-base text-link hover:underline">
           Open in DealFlow
         </a>
       )}
+    </Shell>
+  );
+}
+
+/** Panel chrome shared by the three render states, so they cannot drift. */
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <aside className="overflow-hidden rounded-lg border border-line bg-elevated">
+      <h2 className="bg-active px-3 py-2 text-xs font-medium text-muted">Ammunition</h2>
+      <div className="p-3">{children}</div>
     </aside>
   );
 }

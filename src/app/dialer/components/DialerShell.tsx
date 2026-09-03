@@ -37,7 +37,7 @@ export function DialerShell() {
   }, []);
 
   return (
-    <div className="mx-auto grid max-w-4xl gap-4 p-4 md:grid-cols-2">
+    <div className="grid gap-4 p-4 md:grid-cols-2">
       <div className="space-y-4">
         <SessionControls />
         <Softphone activeCallId={activeCallId} />
