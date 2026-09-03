@@ -13,8 +13,6 @@ export function SettingsPanel({
   return (
     <div className="mx-auto max-w-2xl px-4 py-5">
       <header className="mb-4">
-        {/* 24px is Close's page-heading step; consolidating into the type
-            scale is deferred to PR-E with --text-xs. */}
         <h2 className="text-3xl font-bold text-fg">{title}</h2>
         <p className="mt-1 text-base text-muted">{blurb}</p>
       </header>
