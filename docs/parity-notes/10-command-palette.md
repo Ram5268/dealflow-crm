@@ -48,10 +48,16 @@ selected row text are our `--text-muted` and `--text`. Nothing new was added.
   in PR-D, replacing `text-[24px]` in `SettingsPanel` and `EmptyState`.
 - `--radius-xl` **14 → 16px**. `rounded-xl` had **no call sites**, so this was
   a free correction; the palette is its first user.
-- `--shadow-md` / `--shadow-lg` **re-measured off Close**. Blast radius:
-  `--shadow-md` → `DropdownMenu`; `--shadow-lg` → `Modal`, the right-hand
-  drawer, and this palette. Verified: the new-lead modal picks up
-  `rgba(0,0,0,.15) 0 15px 25px 0` and keeps its 8px radius and `#e2e2e2` line.
+- `--shadow-md` / `--shadow-lg` **re-measured off Close**. Full blast radius is
+  every overlay primitive, not just this palette:
+  - `--shadow-md` → `Popover`, `Tooltip`, `DropdownMenu`, `Toast`, `Select`
+  - `--shadow-lg` → `Modal`, `Drawer`, `CommandPalette`
+
+  Verified: the new-lead modal picks up `rgba(0,0,0,.15) 0 15px 25px 0` and
+  keeps its 8px radius and `#e2e2e2` line. The remaining six were not opened
+  individually — they take the token by construction, and the change is a
+  shadow geometry swap with no layout effect, but that is a *reasoned*
+  expectation rather than a measurement, so it is stated as one.
 
 ## The one place 11px survives
 A census of every element on Close under 12.5px found **11px used only for
@@ -76,3 +82,54 @@ catalog.
   `Kbd` primitive (bordered, 10px) is only used by the shortcuts sheet, which
   was not measured — out of scope, not a defect.
 - **Our shortcut vocabulary differs** (`g f` vs `⌘⇧L`). Content, not chrome.
+
+---
+
+# Found while measuring — global chrome, NOT fixed here
+
+Both of these are `globals.css` / PR-A territory, outside PR-E's stated scope,
+and both were found by measuring PR-E surfaces. Neither is fixed in this PR:
+the gate run was already in flight, and a change to the focus treatment
+touches every focusable control in the app, which wants its own before/after
+sweep rather than a late addition to this one.
+
+## 1. `:focus-visible` squares off every rounded control  [recommend fixing]
+
+```css
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 2px;   /* <- this */
+}
+```
+
+A focus style is mutating element **geometry**, not just its ring. Measured on
+the top-bar search launcher (`rounded-md`), same element, focus toggled:
+
+| | value |
+|---|---|
+| `radiusIfNotFocused` | **8px** |
+| `radiusWhileFocused` | **2px** |
+| `matches(':focus-visible')` | `true` |
+
+So every rounded control — buttons, inputs, the search launcher, the dropdown
+menu — visibly snaps from 8px corners to 2px the moment it takes keyboard
+focus, and snaps back on blur. In a product whose whole premise is being
+keyboard-first like Close, that fires on every Tab press.
+
+Worse on the dropdown menu specifically: its computed `outline-style` is
+`none` (Radix suppresses it), so there the rule contributes **the corner
+damage with no ring at all**.
+
+Fix is deleting that one declaration — `outline-offset: 1px` already makes the
+ring follow the element's own shape. Left out of PR-E deliberately.
+
+## 2. `--ring` is stale after PR-B  [my own loose end]
+
+`--ring: #2a6bd8` is the **pre-PR-B accent**. PR-B moved `--accent` to Close's
+measured `#2b6cf0` and did not move `--ring` with it, so the focus ring is a
+slightly different blue from the accent it is meant to echo. Measured
+`outlineColor: rgb(42,107,216)` against `--accent` `rgb(43,108,240)`.
+
+One hex digit. Mine to own — flagging rather than slipping it in after the
+gate run started.
