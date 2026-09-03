@@ -22,6 +22,16 @@ const ACTIONS = [
   { id: 'import-csv', label: 'Import CSV', icon: Upload, href: '/imports' },
 ]
 
+/**
+ * Close sets palette group headings at 11px/600 uppercase — the only place it
+ * uses 11px at all. Everything else on the small-label step is --text-xs (12px),
+ * so this size stays explicit rather than fighting the token.
+ */
+const GROUP_HEADING =
+  '[&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-1.5 ' +
+  '[&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold ' +
+  '[&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-subtle'
+
 /** ⌘K palette. Populated with every navigable page plus the top-level actions. */
 export function CommandPalette({
   open,
@@ -52,8 +62,8 @@ export function CommandPalette({
         <RD.Content
           aria-label="Command palette"
           className={cn(
-            'fixed left-1/2 top-[18vh] z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2',
-            'overflow-hidden rounded-lg border border-line bg-overlay shadow-lg',
+            'fixed left-1/2 top-[20vh] z-50 w-[min(674px,calc(100vw-2rem))] -translate-x-1/2',
+            'overflow-hidden rounded-xl border border-line-subtle bg-overlay shadow-lg',
             'data-[state=open]:animate-[dfFadeIn_120ms_ease-out]',
           )}
         >
@@ -63,18 +73,18 @@ export function CommandPalette({
               autoFocus
               placeholder="Jump to a page or run an action…"
               className={cn(
-                'h-11 w-full border-b border-line bg-transparent px-4',
-                'text-sm text-fg outline-none placeholder:text-subtle',
+                'h-11 w-full bg-active px-3',
+                'text-base text-fg outline-none placeholder:text-subtle',
               )}
             />
-            <Command.List className="max-h-80 overflow-y-auto p-1">
-              <Command.Empty className="px-3 py-6 text-center text-sm text-subtle">
+            <Command.List className="max-h-80 overflow-y-auto p-2">
+              <Command.Empty className="px-3 py-6 text-center text-base text-subtle">
                 No matches.
               </Command.Empty>
 
               <Command.Group
                 heading="Go to"
-                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-subtle"
+                className={GROUP_HEADING}
               >
                 {ALL_DESTINATIONS.map((d) => (
                   <Command.Item
@@ -82,9 +92,9 @@ export function CommandPalette({
                     value={`${d.label} ${d.href}`}
                     onSelect={() => go(d.href)}
                     className={cn(
-                      'flex h-8 cursor-default select-none items-center gap-2 rounded px-2',
-                      'text-sm text-fg',
-                      'data-[selected=true]:bg-hover',
+                      'flex h-[34px] cursor-default select-none items-center gap-2 rounded px-3',
+                      'text-base text-muted',
+                      'data-[selected=true]:bg-hover data-[selected=true]:text-fg',
                     )}
                   >
                     <d.icon size={14} className="shrink-0 text-subtle" />
@@ -100,7 +110,7 @@ export function CommandPalette({
 
               <Command.Group
                 heading="Actions"
-                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-subtle"
+                className={GROUP_HEADING}
               >
                 {ACTIONS.map((a) => (
                   <Command.Item
@@ -108,9 +118,9 @@ export function CommandPalette({
                     value={`${a.label} ${a.href}`}
                     onSelect={() => go(a.href)}
                     className={cn(
-                      'flex h-8 cursor-default select-none items-center gap-2 rounded px-2',
-                      'text-sm text-fg',
-                      'data-[selected=true]:bg-hover',
+                      'flex h-[34px] cursor-default select-none items-center gap-2 rounded px-3',
+                      'text-base text-muted',
+                      'data-[selected=true]:bg-hover data-[selected=true]:text-fg',
                     )}
                   >
                     <a.icon size={14} className="shrink-0 text-subtle" />
