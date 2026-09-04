@@ -13,9 +13,7 @@ export function SettingsPanel({
   return (
     <div className="mx-auto max-w-2xl px-4 py-5">
       <header className="mb-4">
-        {/* 24px is Close's page-heading step; consolidating into the type
-            scale is deferred to PR-E with --text-xs. */}
-        <h2 className="text-[24px] font-bold text-fg">{title}</h2>
+        <h2 className="text-3xl font-bold text-fg">{title}</h2>
         <p className="mt-1 text-base text-muted">{blurb}</p>
       </header>
       <div className="space-y-4">{children}</div>
@@ -70,7 +68,7 @@ export function SettingsRow({
         <dt className="text-xs text-muted">
           {hint ? <HintLabel label={label} hint={hint} /> : label}
         </dt>
-        {caption && <p className="mt-0.5 text-[11px] text-subtle">{caption}</p>}
+        {caption && <p className="mt-0.5 text-xs text-subtle">{caption}</p>}
       </div>
       <dd className="min-w-0 text-sm text-fg">{value}</dd>
     </div>

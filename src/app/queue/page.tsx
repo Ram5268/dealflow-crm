@@ -24,14 +24,21 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
 
   return (
     <div>
-      <div className="mx-auto max-w-4xl px-4 py-6">
-        <h1 className="mb-4 text-lg font-semibold text-fg">Call Queue (preview)</h1>
-        <div className="mb-4 flex flex-wrap gap-2">
+      <div className="px-4 py-4">
+        {/* AppShell's top bar already renders this page's title, so the page
+            contributes a heading, not a second <h1>. */}
+        <header className="mb-4">
+          <h2 className="text-3xl font-bold text-fg">Call Queue</h2>
+          <p className="mt-1 text-base text-muted">
+            Read-only preview of the ranked, pre-scrubbed callable list.
+          </p>
+        </header>
+        <div className="mb-4 flex flex-wrap gap-1">
           {views.map((v) => (
             <Link
               key={v.id}
               href={`/queue?viewId=${v.id}`}
-              className={`rounded border px-3 py-1 text-sm ${v.id === viewId ? 'border-accent bg-accent-subtle text-accent' : 'border-line text-muted'}`}
+              className={`flex h-6 items-center rounded-md px-2 text-sm font-normal transition-colors ${v.id === viewId ? 'bg-line text-fg' : 'text-muted hover:bg-hover hover:text-fg'}`}
             >
               {v.name}
             </Link>
@@ -39,37 +46,37 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
           {views.length === 0 && <span className="text-sm text-subtle">No saved views yet.</span>}
         </div>
 
-        {error && <div className="rounded bg-danger-subtle p-3 text-sm text-danger">{error}</div>}
+        {error && <div className="rounded-md bg-danger-subtle p-3 text-base text-danger">{error}</div>}
 
         {queue && (
           <>
             {queue.stale && (
-              <div className="mb-3 rounded bg-warning-subtle p-3 text-sm text-warning">
+              <div className="mb-3 rounded-md bg-warning-subtle p-3 text-base text-warning">
                 Stale: {queue.staleReason}
               </div>
             )}
-            <p className="mb-3 text-sm text-muted">
+            <p className="mb-3 text-base text-muted">
               {queue.leads.length} callable · {queue.excludedNoPhone} no-phone · {queue.excludedCompliance} compliance-excluded
             </p>
-            <div className="overflow-hidden rounded-lg border border-line">
-              <table className="w-full text-sm">
-                <thead className="bg-hover text-left text-xs uppercase text-muted">
+            <div className="overflow-x-auto border-b border-line">
+              <table className="w-full border-collapse text-base">
+                <thead className="bg-bg text-left">
                   <tr>
-                    <th className="px-4 py-2">Lead</th>
-                    <th className="px-4 py-2">Phone (E.164)</th>
-                    <th className="px-4 py-2">Priority</th>
-                    <th className="px-4 py-2">Capture</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Lead</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Phone (E.164)</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Priority</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Capture</th>
                   </tr>
                 </thead>
                 <tbody>
                   {queue.leads.map((l) => (
-                    <tr key={l.leadId} className="border-t border-line">
-                      <td className="px-4 py-2">
-                        <Link href={`/leads/${l.leadId}`} className="text-accent hover:underline">{l.displayName}</Link>
+                    <tr key={l.leadId} className="h-10 border-b border-line">
+                      <td className="border-r border-line px-3 last:border-r-0">
+                        <Link href={`/leads/${l.leadId}`} className="text-link hover:underline">{l.displayName}</Link>
                       </td>
-                      <td className="px-4 py-2 font-mono">{l.primaryPhoneE164}</td>
-                      <td className="px-4 py-2">{l.ammunition.priorityScore ?? '—'}</td>
-                      <td className="px-4 py-2">{l.ammunition.captureStatus ?? '—'}</td>
+                      <td className="border-r border-line px-3 font-mono last:border-r-0">{l.primaryPhoneE164}</td>
+                      <td className="border-r border-line px-3 last:border-r-0">{l.ammunition.priorityScore ?? '—'}</td>
+                      <td className="border-r border-line px-3 last:border-r-0">{l.ammunition.captureStatus ?? '—'}</td>
                     </tr>
                   ))}
                 </tbody>

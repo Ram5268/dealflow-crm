@@ -2,6 +2,9 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/Button'
+import { Field, controlBase, controlBorder } from '@/components/ui/Field'
+import { cn } from '@/lib/ui/cn'
 
 // Upload a Mojo CSV/XLSX. On success routes to the AI mapping-review screen.
 export default function ImportsPage() {
@@ -37,34 +40,36 @@ export default function ImportsPage() {
   // the file picker and Upload button did nothing. M6 FIX 1.
   return (
     <div>
-      <div className="mx-auto max-w-lg px-4 py-6">
-        <h1 className="mb-4 text-lg font-semibold">Import contacts</h1>
+      <div className="max-w-lg px-4 py-4">
+        {/* AppShell's top bar already renders this page's title. */}
+        <header className="mb-4">
+          <h2 className="text-3xl font-bold text-fg">Import contacts</h2>
+          <p className="mt-1 text-base text-muted">
+            Upload a CSV or XLSX export; the next step proposes a column mapping for review.
+          </p>
+        </header>
         <form onSubmit={upload} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm text-neutral-600">Source label</label>
+          <Field label="Source label" htmlFor="source-label">
             <input
+              id="source-label"
               value={sourceLabel}
               onChange={(e) => setSourceLabel(e.target.value)}
-              className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
+              className={cn(controlBase, controlBorder(), 'h-8')}
             />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm text-neutral-600">CSV or XLSX file</label>
+          </Field>
+          <Field label="CSV or XLSX file" htmlFor="import-file">
             <input
+              id="import-file"
               type="file"
               accept=".csv,.xlsx,.xls"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="w-full text-sm"
+              className="w-full text-base text-fg file:mr-3 file:rounded-md file:border file:border-line file:bg-elevated file:px-3 file:py-1.5 file:text-base file:font-medium file:text-fg hover:file:bg-hover"
             />
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={!file || busy}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
+          </Field>
+          {error && <p className="text-base text-danger">{error}</p>}
+          <Button type="submit" variant="primary" disabled={!file} loading={busy}>
             {busy ? 'Uploading…' : 'Upload & propose mapping'}
-          </button>
+          </Button>
         </form>
       </div>
     </div>

@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/Button'
 
 interface ColumnMapping {
   column: string
@@ -67,40 +68,44 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
   // the file picker and Upload button did nothing. M6 FIX 1.
   return (
     <div>
-      <div className="mx-auto max-w-3xl px-4 py-6">
-        <h1 className="mb-4 text-lg font-semibold">Review AI mapping</h1>
-        {error && <div className="mb-3 rounded bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-        {!proposal && !error && <p className="text-sm text-neutral-500">Proposing column mapping…</p>}
+      <div className="px-4 py-4">
+        {/* AppShell's top bar already renders this page's title. */}
+        <header className="mb-4">
+          <h2 className="text-3xl font-bold text-fg">Review AI mapping</h2>
+          <p className="mt-1 text-base text-muted">
+            Check each proposed column target before committing the import.
+          </p>
+        </header>
+        {error && <div className="mb-3 rounded-md bg-danger-subtle p-3 text-base text-danger">{error}</div>}
+        {!proposal && !error && <p className="text-base text-muted">Proposing column mapping…</p>}
         {proposal && (
           <>
-            <p className="mb-3 text-sm text-neutral-500">{proposal.totalRowsDetected} rows detected</p>
-            <table className="mb-4 w-full text-sm">
-              <thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-500">
-                <tr>
-                  <th className="px-3 py-2">Column</th>
-                  <th className="px-3 py-2">Samples</th>
-                  <th className="px-3 py-2">Mapping</th>
-                  <th className="px-3 py-2">Conf.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {proposal.mapping.map((m) => (
-                  <tr key={m.column} className="border-t border-neutral-100">
-                    <td className="px-3 py-2 font-medium">{m.column}</td>
-                    <td className="px-3 py-2 text-neutral-500">{m.sampleValues.slice(0, 3).join(', ')}</td>
-                    <td className="px-3 py-2">{targetLabel(m.target)}</td>
-                    <td className="px-3 py-2">{Math.round(m.confidence * 100)}%</td>
+            <p className="mb-3 text-base text-muted">{proposal.totalRowsDetected} rows detected</p>
+            <div className="mb-4 overflow-x-auto border-b border-line">
+              <table className="w-full border-collapse text-base">
+                <thead className="bg-bg text-left">
+                  <tr>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Column</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Samples</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Mapping</th>
+                    <th className="h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0">Conf.</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <button
-              onClick={commit}
-              disabled={committing}
-              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
+                </thead>
+                <tbody>
+                  {proposal.mapping.map((m) => (
+                    <tr key={m.column} className="h-10 border-b border-line">
+                      <td className="border-r border-line px-3 font-medium text-fg last:border-r-0">{m.column}</td>
+                      <td className="border-r border-line px-3 text-muted last:border-r-0">{m.sampleValues.slice(0, 3).join(', ')}</td>
+                      <td className="border-r border-line px-3 text-fg last:border-r-0">{targetLabel(m.target)}</td>
+                      <td className="border-r border-line px-3 text-fg last:border-r-0">{Math.round(m.confidence * 100)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Button variant="primary" onClick={commit} loading={committing}>
               {committing ? 'Committing…' : 'Commit import'}
-            </button>
+            </Button>
           </>
         )}
       </div>

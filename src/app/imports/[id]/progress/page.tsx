@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { Button } from '@/components/ui/Button'
 
 interface Batch {
   status: string
@@ -39,23 +40,34 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
   // the file picker and Upload button did nothing. M6 FIX 1.
   return (
     <div>
-      <div className="mx-auto max-w-lg px-4 py-6">
-        <h1 className="mb-4 text-lg font-semibold">Import progress</h1>
-        {!batch && <p className="text-sm text-neutral-500">Loading…</p>}
+      <div className="max-w-lg px-4 py-4">
+        {/* AppShell's top bar already renders this page's title. */}
+        <header className="mb-4">
+          <h2 className="text-3xl font-bold text-fg">Import progress</h2>
+        </header>
+        {!batch && <p className="text-base text-muted">Loading…</p>}
         {batch && (
           <>
-            <div className="mb-2 h-3 w-full overflow-hidden rounded bg-neutral-100">
-              <div className="h-full bg-blue-600 transition-all" style={{ width: `${batch.progress}%` }} />
+            <div
+              className="mb-2 h-3 w-full overflow-hidden rounded-md bg-active"
+              role="progressbar"
+              aria-valuenow={batch.progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div className="h-full bg-accent transition-all" style={{ width: `${batch.progress}%` }} />
             </div>
-            <p className="mb-4 text-sm text-neutral-600">
+            <p className="mb-4 text-base text-muted">
               {batch.status} · {batch.progress}% · {batch.importedRows}/{batch.totalRows} imported
               {batch.duplicateRows > 0 && ` · ${batch.duplicateRows} merged`}
               {batch.errorRows > 0 && ` · ${batch.errorRows} errors`}
             </p>
             {batch.status === 'completed' && (
-              <Link href="/leads" className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white" data-testid="view-leads">
-                View leads
-              </Link>
+              <Button asChild variant="primary">
+                <Link href="/leads" data-testid="view-leads">
+                  View leads
+                </Link>
+              </Button>
             )}
           </>
         )}

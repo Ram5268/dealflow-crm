@@ -99,7 +99,7 @@ export default async function UsageSettingsPage() {
 
       {/* The window is Agent B's UTC month boundary, reused so the spend figure
           and the counts beside it can never describe different months. */}
-      <p className="text-[11px] text-subtle">
+      <p className="text-xs text-subtle">
         Counted from {usage.periodStart.toISOString().slice(0, 10)} (UTC), matching the boundary the
         dialer&rsquo;s spend cap resets on.
       </p>

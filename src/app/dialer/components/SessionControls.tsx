@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
 
 /** Start/pause/end a dial session. Surfaces the 403/503 guard errors inline. */
 export function SessionControls() {
@@ -29,30 +30,33 @@ export function SessionControls() {
   }
 
   return (
-    <div className="rounded-lg border border-line bg-elevated p-4">
-      <div className="flex gap-2">
-        <button onClick={() => start("power")} className="rounded bg-accent px-3 py-2 text-accent-fg">
-          Start power session
-        </button>
-        <button
-          onClick={() => start("predictive")}
-          className="rounded bg-accent-hover px-3 py-2 text-accent-fg"
-        >
-          Start predictive session
-        </button>
-      </div>
-      {sessionId && <div className="mt-2 text-sm text-muted">Session: {sessionId}</div>}
-      {error && (
-        <div className="mt-2 text-sm text-danger">
-          {error === "loser_twiml_unapproved"
-            ? "Predictive blocked: loser message not yet approved."
-            : error === "pacing_halted"
-              ? "Halted: abandonment circuit breaker tripped."
-              : error === "spend_cap_reached"
-                ? "Halted: monthly spend cap reached."
-                : `Error: ${error}`}
+    <section className="overflow-hidden rounded-lg border border-line bg-elevated">
+      <h2 className="bg-active px-3 py-2 text-xs font-medium text-muted">Session</h2>
+      <div className="p-3">
+        {/* One primary per group: Close never sits two filled buttons side by
+            side. Which session each starts, and every guard behind them, is
+            unchanged. */}
+        <div className="flex gap-2">
+          <Button variant="primary" onClick={() => start("power")}>
+            Start power session
+          </Button>
+          <Button variant="secondary" onClick={() => start("predictive")}>
+            Start predictive session
+          </Button>
         </div>
-      )}
-    </div>
+        {sessionId && <div className="mt-2 text-base text-muted">Session: {sessionId}</div>}
+        {error && (
+          <div className="mt-2 text-base text-danger">
+            {error === "loser_twiml_unapproved"
+              ? "Predictive blocked: loser message not yet approved."
+              : error === "pacing_halted"
+                ? "Halted: abandonment circuit breaker tripped."
+                : error === "spend_cap_reached"
+                  ? "Halted: monthly spend cap reached."
+                  : `Error: ${error}`}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
