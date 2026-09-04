@@ -20,10 +20,16 @@ const VARIANTS: Record<ButtonVariant, string> = {
 }
 
 // Dense by design (brief §6): 28 / 32 / 36px tall, not consumer 44+.
+//
+// Close runs two button label steps, both measured off app.close.com: its
+// 32px buttons are 14px, its 24px ones 13px. `md` is our 32px, so it takes
+// 14px and `lg` follows it; `sm` is 28px and sits nearer Close's small step,
+// so it takes 13px rather than 14. That keeps the scale Close actually has
+// instead of flattening all three to one size.
 const SIZES: Record<ButtonSize, string> = {
-  sm: 'h-7 px-2 text-xs gap-1',
-  md: 'h-8 px-3 text-sm gap-1.5',
-  lg: 'h-9 px-4 text-sm gap-2',
+  sm: 'h-7 px-2 text-sm gap-1',
+  md: 'h-8 px-3 text-base gap-1.5',
+  lg: 'h-9 px-4 text-base gap-2',
 }
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {

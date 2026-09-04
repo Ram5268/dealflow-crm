@@ -49,8 +49,12 @@
   --warning: #d97706;
   --warning-subtle: #fffbeb;
 
-  /* Focus ring */
-  --ring: #2a6bd8;
+  /* Focus ring — echoes the brand action, so it can never drift from it
+     again. PR-B moved --accent to Close's #2b6cf0 and left --ring on the old
+     #2a6bd8; the var() reference means any future --accent change carries.
+     Resolved per-theme: dark redefines --accent on the same element, so this
+     one declaration covers both. */
+  --ring: var(--accent);
 
   /* Type */
   --font-sans: -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue",
@@ -101,7 +105,6 @@
   --warning: #fbbf24;
   --warning-subtle: #2a2010;
 
-  --ring: #4d8bf0;
 
   --shadow-sm: 0 1px 0 0 rgb(0 0 0 / 0.30);
   --shadow-md: 0 12px 12px -8px rgb(0 0 0 / 0.55);
@@ -190,11 +193,17 @@ body {
 }
 
 /* One focus treatment everywhere. Keyboard-only — Close is keyboard-first but
-   does not ring on mouse clicks. */
+   does not ring on mouse clicks.
+
+   No border-radius here. This rule used to set `border-radius: 2px`, which is
+   a focus style mutating element *geometry*: any rounded control — buttons,
+   inputs, the search launcher, the dropdown menu — snapped from 8px corners to
+   2px the moment it took keyboard focus, and snapped back on blur. `outline`
+   already follows the element's own border-radius, so the ring hugs the real
+   shape without the element having to change. */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
-  border-radius: 2px;
 }
 
 /* Respect reduced-motion for every transition we ship. */
