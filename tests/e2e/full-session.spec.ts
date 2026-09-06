@@ -104,6 +104,17 @@ test.describe('full session', () => {
 
     const body = 'Calling you this afternoon.'
     await drawer.getByRole('textbox', { name: 'Message' }).fill(body)
+
+    // REGRESSION (G3): opening this thread marks its incoming messages read and
+    // then calls router.refresh(). That handed ReplyDrawer a new `detail` object,
+    // and its reset effect — keyed on the object rather than the thread — wiped
+    // the draft mid-typing. An empty body disables Send with no way back, so this
+    // test used to hang until the 180s timeout. Settle the refresh, then prove
+    // the draft is still here BEFORE trying to send.
+    await page.waitForLoadState('networkidle')
+    await expect(drawer.getByRole('textbox', { name: 'Message' })).toHaveValue(body)
+    await expect(drawer.getByRole('button', { name: 'Send' })).toBeEnabled()
+
     const post = page.waitForResponse(
       (r) => r.url().includes('/api/comms/messages') && r.request().method() === 'POST',
     )

@@ -52,6 +52,11 @@ test.describe('M4 sequences + templates', () => {
     await expect(page).toHaveURL(/\/templates\/[^/]+$/)
 
     await page.goto('/templates')
+    // Settle before asserting: this navigation lands on a server-rendered list,
+    // and the bare assertion's 5s default was not always enough — it failed
+    // nondeterministically on pristine main too, not just under load. The same
+    // test's opening navigation already waits; this one did not.
+    await page.waitForLoadState('networkidle')
     await expect(page.getByRole('link', { name: `${MARK} Showing follow-up` })).toBeVisible()
     await shot(page, 'templates-list')
   })

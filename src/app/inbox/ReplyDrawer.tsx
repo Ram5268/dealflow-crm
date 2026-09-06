@@ -57,12 +57,31 @@ export function ReplyDrawer({
     detail?.channel === 'sms' ? 'sms' : detail?.replyToAddress ? 'email' : 'sms'
   const smsBlocked = channel === 'sms'
 
+  // Reset the composer when the drawer opens on a DIFFERENT thread — keyed on
+  // `detail.key`, never on the `detail` object itself.
+  //
+  // `detail` is a prop from a server component, so every parent re-render hands
+  // down a fresh object with identical contents. Depending on it made this
+  // effect fire on re-render and call `setBody('')`, silently wiping whatever
+  // had been typed. InboxView marks a thread's messages read on open and then
+  // calls `router.refresh()`, so the wipe landed a few hundred ms after the
+  // thread opened — right while the user is typing their reply.
+  //
+  // The draft going empty also disables Send (`body.trim().length === 0`) with
+  // no way back, which is what made `full-session › 5 · replying files onto the
+  // thread` hang until the 180s timeout. full-session.spec.ts already carried a
+  // note that asserting draft survival there "made it flaky … the drawer
+  // re-renders as the thread refreshes" — that was this bug, observed and
+  // worked around in the test rather than fixed here.
+  const detailKey = detail?.key ?? null
   useEffect(() => {
     if (!open || !detail) return
     setSubject(detail.subject ? `Re: ${detail.subject.replace(/^re:\s*/i, '')}` : '')
     setBody('')
     setTemplateId(undefined)
-  }, [open, detail])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on
+    // detailKey deliberately: adding `detail` restores the draft-wiping bug.
+  }, [open, detailKey])
 
   useEffect(() => {
     if (!open) return
