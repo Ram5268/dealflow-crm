@@ -1,0 +1,45 @@
+name: ci
+
+# Repo-wide CI. Was `agent-c.yml`, which triggered on the now-merged `agent-c`
+# branch and ran only that slice's vitest config — so the 237-test comms suite
+# was never covered in CI at all.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable corepack (pnpm 9)
+        run: corepack enable
+
+      - name: Install
+        run: corepack pnpm@9 install --frozen-lockfile
+
+      - name: Prisma generate
+        run: corepack pnpm@9 exec prisma generate
+
+      - name: Typecheck
+        # The default ~2GB V8 heap OOMs on this project — every CI run since the
+        # workflow was added died here (`FATAL ERROR: Reached heap limit`), so no
+        # step after this one had ever executed. ubuntu-latest has 16GB.
+        run: corepack pnpm@9 exec tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Test — comms suite
+        # `scripts/test-all.sh` runs two suites; only this one is runnable here.
+        # Suite 1 (vitest.config.ts) is DB-backed: its globalSetup requires
+        # DATABASE_URL_PERF and runs `prisma db push --accept-data-loss` against
+        # the shared Railway DB. Pointing CI at that on every push would add
+        # load to a DB that already saturates, so suite 1 stays a local gate.
+        # This suite is fully mocked (vi.mock on prisma, fetch stubs) — no DB.
+        run: corepack pnpm@9 exec vitest run --config vitest.agent-d.config.ts
