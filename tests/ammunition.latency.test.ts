@@ -98,24 +98,46 @@ describe("hydrateAmmunition", () => {
     expect(await hydrateAmmunition(prisma, "call_does_not_exist")).toBeNull();
   });
 
-  it("p95 latency < 200ms across 20 runs (allow 1 outlier ≤ 500ms)", async () => {
-    // Warm the connection pool so the first-query cold start isn't measured.
-    for (let i = 0; i < 5; i++) await hydrateAmmunition(prisma, callId);
-
-    const timings: number[] = [];
-    for (let i = 0; i < 20; i++) {
-      const t0 = performance.now();
+  it("hydrate adds < 50ms over a same-connection round-trip baseline", async () => {
+    // Warm the pool so the first-query cold start isn't measured.
+    for (let i = 0; i < 5; i++) {
+      await prisma.$queryRaw`SELECT 1`;
       await hydrateAmmunition(prisma, callId);
-      timings.push(performance.now() - t0);
     }
-    timings.sort((a, b) => a - b);
-    const p95 = timings[18]; // 19th of 20
-    const max = timings[19];
+
+    // Interleaved so any network drift biases BOTH samples equally. `SELECT 1`
+    // on the same Prisma pool is the cheapest possible statement, so it prices
+    // one round trip; hydrate minus that is the query's own cost.
+    const baseline: number[] = [];
+    const hydrate: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const b0 = performance.now();
+      await prisma.$queryRaw`SELECT 1`;
+      baseline.push(performance.now() - b0);
+
+      const h0 = performance.now();
+      await hydrateAmmunition(prisma, callId);
+      hydrate.push(performance.now() - h0);
+    }
+
+    const at = (xs: number[], i: number) => [...xs].sort((a, b) => a - b)[i];
+    const median = (xs: number[]) => at(xs, 10); // 11th of 20
+    const p95 = (xs: number[]) => at(xs, 18); // 19th of 20
+    const overhead = median(hydrate) - median(baseline);
+
+    // Absolute wall-clock is topology-dependent (dominated by client->DB RTT),
+    // so it is LOGGED for visibility but never asserted on. Only the marginal
+    // cost gates the build. See docs/known-drift.md "Test topology assumptions".
     // eslint-disable-next-line no-console
     console.log(
-      `ammunition hydrate: median=${timings[10].toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${max.toFixed(1)}ms`,
+      `ammunition hydrate: overhead=${overhead.toFixed(1)}ms | ` +
+        `hydrate median=${median(hydrate).toFixed(1)}ms p95=${p95(hydrate).toFixed(1)}ms | ` +
+        `baseline median=${median(baseline).toFixed(1)}ms p95=${p95(baseline).toFixed(1)}ms`,
     );
-    expect(p95).toBeLessThan(200);
-    expect(max).toBeLessThan(500); // the single allowed outlier
+
+    // One extra round trip costs a full RTT (~91ms from a dev laptop across
+    // Railway's public proxy), so an N+1 regression blows this budget on any
+    // network; the real query does single-digit ms of work.
+    expect(overhead).toBeLessThan(50);
   });
 });
