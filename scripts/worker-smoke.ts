@@ -5,7 +5,7 @@ import { getBoss, stopBoss } from '../src/lib/comms/jobs/boss'
 import { QUEUES } from '../src/lib/comms/jobs/queues'
 import { handleSendEmailJob } from '../src/lib/comms/jobs/outbound-email'
 import { prisma } from '../src/lib/prisma'
-import { upsertCredential } from '../src/lib/comms/oauth/store'
+import { installMockOAuthCredential } from './_mock-oauth-credential'
 import { runSequenceTick } from '../src/lib/comms/sequences/tick'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -23,14 +23,13 @@ async function main() {
     update: {},
     create: { slug: 'dealflow-ryan', name: 'DealFlow (Ryan)' },
   })
-  await upsertCredential({
-    orgId: org.id,
-    provider: 'gmail',
-    emailAddress: 'ryan@example.com',
-    accessToken: 'mock-access',
-    refreshToken: 'mock-refresh',
-    expiresAt: new Date(Date.now() + 3_600_000),
-  })
+  // NEVER write OAuthCredential from a smoke script — this is the REAL
+  // singleton org and upsertCredential keys on (organizationId, provider), so a
+  // write here would clobber Ryan's live Gmail tokens beyond recovery. The send
+  // path's credential read is served from memory instead.
+  installMockOAuthCredential([
+    { orgId: org.id, provider: 'gmail', emailAddress: 'ryan@example.com' },
+  ])
   const msg = await prisma.message.create({
     data: {
       organizationId: org.id,

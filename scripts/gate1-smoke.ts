@@ -6,7 +6,8 @@ import { start as startTwilio } from '../contracts/mocks/twilio/server'
 import { start as startGmail } from '../contracts/mocks/gmail/server'
 import { start as startGraph } from '../contracts/mocks/graph/server'
 import { prisma } from '../src/lib/prisma'
-import { upsertCredential, getCredential } from '../src/lib/comms/oauth/store'
+import { getCredential } from '../src/lib/comms/oauth/store'
+import { installMockOAuthCredential } from './_mock-oauth-credential'
 import { sendEmailMessage } from '../src/lib/comms/email/send'
 import { handleInboundSms } from '../src/lib/comms/sms/inbound'
 import { scrub } from '../src/lib/comms/clients/compliance'
@@ -67,14 +68,16 @@ async function main() {
     create: { slug: 'dealflow-ryan', name: 'DealFlow (Ryan)' },
   })
   const orgId = org.id
-  await upsertCredential({
-    orgId,
-    provider: 'gmail',
-    emailAddress: 'ryan@example.com',
-    accessToken: 'mock-access',
-    refreshToken: 'mock-refresh',
-    expiresAt: new Date(Date.now() + 3_600_000),
-  })
+
+  // NEVER write OAuthCredential from a smoke script: upsertCredential keys on
+  // (organizationId, provider), and this is the REAL singleton org, so a write
+  // here would overwrite Ryan's live Gmail tokens in place — unrecoverably.
+  // Both providers are mocked in memory up front; every read below is served
+  // from that, and every write to the table is swallowed.
+  installMockOAuthCredential([
+    { orgId, provider: 'gmail', emailAddress: 'ryan@example.com' },
+    { orgId, provider: 'msft-graph', emailAddress: 'ryan@outlook.com' },
+  ])
   const cred = await getCredential(orgId, 'gmail')
   assert(cred, 'credential seeded')
 
@@ -146,14 +149,7 @@ async function main() {
   console.log('✓ Gmail delta → thread reconstructed → crm_message NOTIFY (valid shape, M2)')
 
   // ── Smoke D: Graph delta → thread reconstructed → crm_message NOTIFY (M5) ──
-  await upsertCredential({
-    orgId,
-    provider: 'msft-graph',
-    emailAddress: 'ryan@outlook.com',
-    accessToken: 'mock-access',
-    refreshToken: 'mock-refresh',
-    expiresAt: new Date(Date.now() + 3_600_000),
-  })
+  // Seeded by installMockOAuthCredential() above — see the note there.
   const gcred = await getCredential(orgId, 'msft-graph')
   assert(gcred, 'graph credential seeded')
   const gports = createGraphSyncPorts({

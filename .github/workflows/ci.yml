@@ -12,11 +12,17 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          # v5 flipped this on by default and auto-detects the package manager
+          # from `packageManager: pnpm@…`, but corepack enables pnpm on the NEXT
+          # step — so the cache probe runs before pnpm exists and the job dies
+          # with "Unable to locate executable file: pnpm". v4 only cached when
+          # asked; this restores that.
+          package-manager-cache: false
 
       - name: Enable corepack (pnpm 9)
         run: corepack enable

@@ -132,9 +132,10 @@ export function TemplateEditor({ template }: { template: TemplateRow | null }) {
   return (
     <div className="mx-auto max-w-5xl px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
-        <h1 className="flex-1 text-sm font-semibold text-fg">
+        {/* AppShell's top bar owns the page <h1>; this contributes a heading, not a competing one (PR-D/PR-E pattern). */}
+        <h2 className="flex-1 text-sm font-semibold text-fg">
           {template ? 'Edit template' : 'New template'}
-        </h1>
+        </h2>
         {template && (
           <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}>
             <Trash2 size={13} />

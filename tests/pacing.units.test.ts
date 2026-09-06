@@ -6,6 +6,7 @@ import {
   rollingAmdFpRate,
   monthToDateSpendUsd,
   minuteBucketUtc,
+  SYSTEM_ORG,
 } from "@/lib/telephony/pacing/metrics";
 import { pacingStatus } from "@/lib/telephony/pacing/status";
 import { setHalt, clearHalt } from "@/lib/telephony/pacing/haltState";
@@ -74,6 +75,40 @@ describe("rolling metrics", () => {
       },
     });
     expect(await monthToDateSpendUsd(prisma)).toBeCloseTo(1.2345, 4);
+  });
+
+  it("month-to-date spend excludes SYSTEM_ORG sentinel rows", async () => {
+    // Sentinel/system rows are not dialing activity. Counting them inflates
+    // spend against TWILIO_MONTHLY_SPEND_CAP_USD and can trip the global
+    // spend-halt breaker on money that was never spent.
+    await prisma.call.create({
+      data: {
+        organizationId: SYSTEM_ORG,
+        direction: "outbound",
+        callMethod: "power",
+        localPhone: "+15555550100",
+        remotePhone: "+15555550101",
+        providerCallSid: "CA_pu_system",
+        source: "dealflow-crm",
+        cost: "999.00",
+      },
+    });
+    expect(await monthToDateSpendUsd(prisma)).toBe(0);
+
+    // ...and a real org's spend is still counted alongside it.
+    await prisma.call.create({
+      data: {
+        organizationId: ORG,
+        direction: "outbound",
+        callMethod: "power",
+        localPhone: "+15555550100",
+        remotePhone: "+15555550101",
+        providerCallSid: "CA_pu_real",
+        source: "dealflow-crm",
+        cost: "2.50",
+      },
+    });
+    expect(await monthToDateSpendUsd(prisma)).toBeCloseTo(2.5, 4);
   });
 });
 
