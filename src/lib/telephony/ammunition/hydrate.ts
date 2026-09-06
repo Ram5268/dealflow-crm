@@ -5,9 +5,13 @@ import type { PrismaClient } from "@prisma/client";
  * (Lead, Contact, ContactPhone, DealFlowDerivedSignal) — reads are allowed;
  * Agent B never writes them. Shape per brief §8.1.
  *
- * Latency budget: p95 < 100ms (contributes to the <200ms end-to-end panel
- * budget). We fetch lead + contact in parallel (one RTT), then the derived
- * signal keyed on lead.mojoId (a second RTT only when a mojoId exists).
+ * Latency: ONE round trip (see the query note below). The guard in
+ * tests/ammunition.latency.test.ts asserts hydrate's MARGINAL cost -- elapsed
+ * minus a same-connection `SELECT 1` -- stays under 50ms, so an added round
+ * trip fails the build wherever the DB lives. Absolute wall-clock is NOT
+ * asserted: it is dominated by client->DB RTT (~91ms from a dev laptop across
+ * Railway's public proxy), so it is logged, not gated. See docs/known-drift.md
+ * "Test topology assumptions".
  */
 export interface AmmoPhone {
   id: string;
@@ -65,8 +69,8 @@ interface AmmoRow {
 /**
  * Single-round-trip hydration. One LEFT-JOIN query across Call → Lead → Contact
  * → DealFlowDerivedSignal, with phones aggregated as JSON, keeps the endpoint
- * inside the <100ms p95 budget (3 sequential round trips would blow it over a
- * remote DB). Reads only; Agent B never writes A's tables.
+ * to a single round trip (3 sequential ones would cost 3x the RTT over a remote
+ * DB). Reads only; Agent B never writes A's tables.
  */
 export async function hydrateAmmunition(
   prisma: PrismaClient,
