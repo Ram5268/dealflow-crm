@@ -140,9 +140,10 @@ export function SequenceEditor({
   return (
     <div className="mx-auto max-w-3xl px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
-        <h1 className="flex-1 text-sm font-semibold text-fg">
+        {/* AppShell's top bar owns the page <h1>; this contributes a heading, not a competing one (PR-D/PR-E pattern). */}
+        <h2 className="flex-1 text-sm font-semibold text-fg">
           {sequence ? 'Edit sequence' : 'New sequence'}
-        </h1>
+        </h2>
         <Button asChild variant="secondary" size="sm">
           <Link href={sequence ? `/sequences/${sequence.id}` : '/sequences'}>Cancel</Link>
         </Button>

@@ -58,7 +58,9 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="min-w-0 truncate text-xl font-bold text-fg">{lead.displayName}</h1>
+            {/* AppShell's top bar owns the page <h1>; this contributes a heading, not a competing one (PR-D/PR-E pattern).
+                Prominence stays in the type scale (text-xl/bold), not the level. */}
+            <h2 className="min-w-0 truncate text-xl font-bold text-fg">{lead.displayName}</h2>
             {lead.statusLabel && <Badge>{lead.statusLabel}</Badge>}
             {lead.priorityScore != null && (
               <Badge tone="accent">Priority {lead.priorityScore}</Badge>

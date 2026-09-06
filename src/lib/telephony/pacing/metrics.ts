@@ -91,11 +91,20 @@ export async function rollingAmdFpRate(prisma: PrismaClient, windowHours = 24): 
   return (agg._sum.amdFalsePositive ?? 0) / dials;
 }
 
-/** Month-to-date Twilio spend (USD) = sum(Call.cost) since UTC month start. */
+/**
+ * Month-to-date Twilio spend (USD) = sum(Call.cost) since UTC month start.
+ *
+ * SYSTEM_ORG is excluded for the same reason `rollingAmdFpRate` excludes it:
+ * those rows are not real dialing activity. This feeds `monthlyCapStatus` and
+ * the pacing worker's spend-halt input, so sentinel or seeded rows counted here
+ * inflate spend against a cap Ryan never actually spent — and can trip the
+ * global breaker. The halt decision stays deliberately global (see
+ * `runPacingTick`), so this filters the synthetic org only, not by caller org.
+ */
 export async function monthToDateSpendUsd(prisma: PrismaClient, now = new Date()): Promise<number> {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const agg = await prisma.call.aggregate({
-    where: { activityAt: { gte: monthStart } },
+    where: { activityAt: { gte: monthStart }, organizationId: { not: SYSTEM_ORG } },
     _sum: { cost: true },
   });
   return agg._sum.cost ? Number(agg._sum.cost) : 0;

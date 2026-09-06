@@ -30,7 +30,8 @@ export function SequenceDetailView({ sequence }: { sequence: SequenceDetail }) {
     <div className="mx-auto max-w-4xl px-4 py-4">
       <header className="mb-3 flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold text-fg">{sequence.name}</h1>
+          {/* AppShell's top bar owns the page <h1>; this contributes a heading, not a competing one (PR-D/PR-E pattern). */}
+          <h2 className="truncate text-sm font-semibold text-fg">{sequence.name}</h2>
           <p className="truncate text-xs text-subtle">
             {sequence.description || 'No description'} · {sequence.channel}
           </p>
