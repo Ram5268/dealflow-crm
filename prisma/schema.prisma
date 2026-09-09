@@ -320,6 +320,9 @@ model ImportBatch {
   sourceLabel    String
   filename       String
   storageKey     String
+  // Raw uploaded bytes when R2 is not configured (the default). Nulled by the
+  // stale-blob sweep in POST /api/imports, so this is empty for old batches.
+  sourceBlob     Bytes?
   status         String    @default("pending")
   mappingJson    Json?
   totalRows      Int       @default(0)

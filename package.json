@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "test": "bash scripts/test-all.sh",
     "test:coverage": "vitest run --coverage",

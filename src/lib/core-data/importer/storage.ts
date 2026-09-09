@@ -1,13 +1,15 @@
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
+import { prisma } from '@/lib/prisma'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Object storage for raw import files. Cloudflare R2 in prod (S3-compatible);
-// a local-filesystem fallback during isolated build when R2 creds are absent, so
-// the importer runs end-to-end against mocks. Same put/get interface either way.
+// Object storage for raw import files. Cloudflare R2 (S3-compatible) when its
+// env vars are set; otherwise the bytes live in a Postgres BYTEA column on the
+// owning ImportBatch. Same put/get interface either way.
+//
+// The previous fallback wrote to `.imports/` under process.cwd(). On Vercel the
+// serverless filesystem is read-only, so every upload died with
+// `ENOENT: mkdir '/var/task/.imports'`. Postgres is already a hard dependency of
+// the app, so it costs no new vendor and works identically in dev and prod.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const LOCAL_ROOT = path.join(process.cwd(), '.imports')
 
 function r2Configured(): boolean {
   return !!(
@@ -30,6 +32,16 @@ async function r2Client() {
   })
 }
 
+// CONTRACT with POST /api/imports: keys are `imports/<orgId>/<batchId>/<filename>`.
+// The Postgres branch stores bytes on the ImportBatch row named by segment 2, so
+// any change to the key shape must change both this function and route.ts:35.
+// Index-based (not count-based) so a filename containing "/" can't shift it.
+function batchIdFromKey(key: string): string {
+  const id = key.split('/')[2]
+  if (!id) throw new Error(`storage: cannot derive ImportBatch id from key "${key}"`)
+  return id
+}
+
 export async function putObject(key: string, body: Buffer): Promise<void> {
   if (r2Configured()) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3')
@@ -39,9 +51,10 @@ export async function putObject(key: string, body: Buffer): Promise<void> {
     )
     return
   }
-  const full = path.join(LOCAL_ROOT, key)
-  await fs.mkdir(path.dirname(full), { recursive: true })
-  await fs.writeFile(full, body)
+  await prisma.importBatch.update({
+    where: { id: batchIdFromKey(key) },
+    data: { sourceBlob: body },
+  })
 }
 
 export async function getObject(key: string): Promise<Buffer> {
@@ -54,9 +67,19 @@ export async function getObject(key: string): Promise<Buffer> {
     const bytes = await res.Body!.transformToByteArray()
     return Buffer.from(bytes)
   }
-  return fs.readFile(path.join(LOCAL_ROOT, key))
+  const row = await prisma.importBatch.findUnique({
+    where: { id: batchIdFromKey(key) },
+    select: { sourceBlob: true },
+  })
+  if (!row?.sourceBlob) {
+    // Either the batch is gone or its blob was swept (see the sweep in
+    // POST /api/imports). Both are unrecoverable here — the caller needs the
+    // raw file, and there is no second copy to fall back to.
+    throw new Error(`storage: no stored bytes for key "${key}"`)
+  }
+  return Buffer.from(row.sourceBlob)
 }
 
-export function storageBackend(): 'r2' | 'local' {
-  return r2Configured() ? 'r2' : 'local'
+export function storageBackend(): 'r2' | 'postgres' {
+  return r2Configured() ? 'r2' : 'postgres'
 }

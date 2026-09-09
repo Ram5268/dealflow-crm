@@ -22,6 +22,17 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
   const user = await prisma.user.findFirstOrThrow({ where: { organizationId } })
   const buffer = Buffer.from(await file.arrayBuffer())
 
+  // Sweep stale import blobs before creating a new batch. sourceBlob is nulled
+  // on the next import upload rather than at batch.status='completed' because
+  // commitImport is documented idempotent and pg-boss can retry a commit long
+  // after the first attempt succeeds. Nulling at completion would break retry
+  // convergence. The 24h window is longer than any realistic pg-boss retry
+  // horizon and negligible at import volume (~1 MB x <24h per batch).
+  await prisma.importBatch.updateMany({
+    where: { sourceBlob: { not: null }, createdAt: { lt: new Date(Date.now() - 24 * 3600 * 1000) } },
+    data: { sourceBlob: null },
+  })
+
   const batch = await prisma.importBatch.create({
     data: {
       organizationId,
