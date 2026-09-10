@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { prisma } from '@/lib/prisma'
 import { putObject, getObject, storageBackend } from '@/lib/core-data/importer/storage'
 
@@ -43,6 +43,32 @@ describe.runIf(enabled)('importer storage (postgres backend)', () => {
 
   afterAll(async () => {
     await prisma.importBatch.deleteMany({ where: { id: { in: createdBatchIds } } })
+  })
+
+  // Belt-and-braces against the shared-process env bleed (`isolate: false`).
+  // Every case here asserts the POSTGRES backend, which only holds while R2 is
+  // unconfigured — and .env legitimately ships R2_BUCKET_IMPORTS, so a single
+  // leaked credential from another file is enough to flip storageBackend() to
+  // 'r2'. Clear the four keys per test, then restore, so this file neither
+  // depends on ambient env nor leaks its own clearing to later files.
+  const R2_KEYS = [
+    'R2_ACCOUNT_ID',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_IMPORTS',
+  ] as const
+  let r2Saved: Record<string, string | undefined> = {}
+
+  beforeEach(() => {
+    r2Saved = Object.fromEntries(R2_KEYS.map((k) => [k, process.env[k]]))
+    for (const k of R2_KEYS) delete process.env[k]
+  })
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(r2Saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
   })
 
   it('defaults to the postgres backend when R2 is unconfigured', () => {

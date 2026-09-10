@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { prismaPerf } from "./setup/pg";
 import { storeRecording, presignRecording, recordingKey } from "@/lib/telephony/twilio/recording";
@@ -28,6 +28,36 @@ async function seedCall(sid: string) {
     },
   });
 }
+
+// This suite mutates process.env (R2_* credentials, below). The shared vitest
+// config runs with `isolate: false` + `fileParallelism: false`, so EVERY test
+// file in suite 1 shares one process and one process.env — anything left set
+// here bleeds into every file that runs afterwards.
+//
+// It did: this file set R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+// and never restored them. Combined with R2_BUCKET_IMPORTS from .env, that made
+// storageBackend() report 'r2', failing all 7 tests in
+// tests/integration-local/importer-storage.test.ts whenever this file happened
+// to run first. vitest orders files by cached duration after the first run, so
+// it surfaced as an intermittent ~2-in-6 failure rather than a hard one.
+//
+// Snapshot/restore the WHOLE env rather than unsetting the specific R2 keys —
+// that way the next env var this suite starts touching can't re-arm the same
+// class of bug.
+let envSnapshot: NodeJS.ProcessEnv;
+
+beforeEach(() => {
+  envSnapshot = { ...process.env };
+});
+
+afterEach(() => {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in envSnapshot)) delete process.env[key];
+  }
+  for (const key of Object.keys(envSnapshot)) {
+    process.env[key] = envSnapshot[key];
+  }
+});
 
 beforeAll(async () => {
   prisma = prismaPerf(4);
