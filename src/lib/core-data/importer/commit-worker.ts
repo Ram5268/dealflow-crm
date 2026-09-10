@@ -54,6 +54,12 @@ export interface RowPlan {
   dedup: ReturnType<typeof dedupKey>
 }
 
+// Collapses internal runs of whitespace; returns '' for nullish so the
+// displayName fallback chain treats blank-ish values as absent.
+function collapseWs(v: string | undefined | null): string {
+  return (v ?? '').replace(/\s+/g, ' ').trim()
+}
+
 // Pure row → plan. No DB. Drops phones/emails that don't normalize.
 export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): RowPlan {
   const lead = {
@@ -84,8 +90,17 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
     .filter((c) => (row[c.column] ?? '').trim() !== '')
     .map((c) => ({ definitionId: c.definitionId, type: c.type, raw: row[c.column] }))
 
+  // Lead.name comes from Mojo's "Full Name" (the primary owner). Contact.name is
+  // mapped from Mojo's "Second Name" — the CO-OWNER. Letting contact.name win
+  // made the co-owner the headline name everywhere displayName is rendered
+  // (lead detail, leads list, queue, dialer ammunition panel), so Ryan would
+  // greet the wrong person on a cold call. Lead.name must outrank it.
   const displayName =
-    contact.name || lead.name || lead.primaryAddressFull || lead.mojoId || 'Imported Lead'
+    collapseWs(lead.name) ||
+    collapseWs(contact.name) ||
+    collapseWs(lead.primaryAddressFull) ||
+    collapseWs(lead.mojoId) ||
+    'Imported Lead'
 
   return {
     displayName,
