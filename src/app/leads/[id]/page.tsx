@@ -105,7 +105,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
             <Card title="Property">
               <dl>
                 <Row label="Address" value={lead.primaryAddressFull} />
-                <Row label="Neighborhood" value={lead.primaryAddressSummary} />
                 <Row label="Source" value={lead.source} />
                 <Row label="Timezone" value={lead.timezone} />
                 <Row
