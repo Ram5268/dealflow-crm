@@ -14,11 +14,30 @@
 # The summary prints on success as well as failure, so the two-suite shape is
 # always visible in the log rather than only surfacing when something breaks.
 
+# `vitest` lives in node_modules/.bin, which is only on PATH when a script is
+# invoked through a package manager. Running this file directly —
+# `bash scripts/test-all.sh`, which is exactly what CI or a manual gate check
+# does — produced `vitest: command not found` and exit 127 from BOTH suites,
+# reported as "RESULT: FAILED". A false red: no test ever ran.
+#
+# Resolve the repo root from this script's own location (not $PWD) so the gate
+# behaves identically no matter which directory it is invoked from.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$REPO_ROOT/node_modules/.bin:$PATH"
+
+if ! command -v vitest >/dev/null 2>&1; then
+  echo "ERROR: vitest not found on PATH (looked in $REPO_ROOT/node_modules/.bin)." >&2
+  echo "Run 'pnpm install' first. Refusing to report a gate result." >&2
+  exit 127
+fi
+
 set +e # both suites must run; do not abort on the first non-zero exit
 
+echo "running suite 1 (shared)"
 vitest run
 E1=$?
 
+echo "running suite 2 (agent-d)"
 vitest run --config vitest.agent-d.config.ts
 E2=$?
 
