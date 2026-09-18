@@ -81,3 +81,55 @@ describe('buildRowPlan', () => {
     expect(plan.displayName).toBe('Imported Lead')
   })
 })
+
+// ── FIX-1 PR A: displayName precedence (Mojo co-owner records) ───────────────
+// Mojo's export puts the primary owner in "Full Name" (→ Lead.name) and the
+// co-owner in "Second Name" (→ Contact.name). displayName must prefer the
+// primary owner, or the co-owner becomes the headline name everywhere.
+const coOwnerMapping: ColumnMapping[] = [
+  { column: 'Full Name', sampleValues: [], target: { kind: 'standard_field', field: 'Lead.name' }, confidence: 1, reasoning: '' },
+  { column: 'Second Name', sampleValues: [], target: { kind: 'standard_field', field: 'Contact.name' }, confidence: 1, reasoning: '' },
+  { column: 'Addr', sampleValues: [], target: { kind: 'standard_field', field: 'Lead.primaryAddressFull' }, confidence: 1, reasoning: '' },
+  { column: 'MojoID', sampleValues: [], target: { kind: 'standard_field', field: 'Lead.mojoId' }, confidence: 1, reasoning: '' },
+]
+const coOwnerResolved = resolveMapping(coOwnerMapping, [])
+
+describe('buildRowPlan — displayName precedence (co-owner records)', () => {
+  it('co-owner row: primary owner (Lead.name) wins over co-owner (Contact.name)', () => {
+    const plan = buildRowPlan(
+      { 'Full Name': 'Christine Tsivikas', 'Second Name': 'Georgios Tsivikas', Addr: '1050 Broadway', MojoID: '13370' },
+      coOwnerResolved
+    )
+    expect(plan.displayName).toBe('Christine Tsivikas')
+    // the co-owner is still preserved on the Contact, just not promoted
+    expect(plan.contact.name).toBe('Georgios Tsivikas')
+    expect(plan.lead.name).toBe('Christine Tsivikas')
+  })
+
+  it('single-owner row: no Second Name → primary owner still used', () => {
+    const plan = buildRowPlan(
+      { 'Full Name': 'Brad Bateman', 'Second Name': '', Addr: '90 Putnam Ave', MojoID: '13500' },
+      coOwnerResolved
+    )
+    expect(plan.displayName).toBe('Brad Bateman')
+  })
+
+  it('no Full Name → falls back to Contact.name, then address, then mojoId', () => {
+    const contactOnly = buildRowPlan({ 'Full Name': '', 'Second Name': 'Judy Artime', Addr: '5 Elm', MojoID: 'M3' }, coOwnerResolved)
+    expect(contactOnly.displayName).toBe('Judy Artime')
+    const addrOnly = buildRowPlan({ 'Full Name': '', 'Second Name': '', Addr: '5 Elm', MojoID: 'M3' }, coOwnerResolved)
+    expect(addrOnly.displayName).toBe('5 Elm')
+    const mojoOnly = buildRowPlan({ 'Full Name': '', 'Second Name': '', Addr: '', MojoID: 'M3' }, coOwnerResolved)
+    expect(mojoOnly.displayName).toBe('M3')
+  })
+
+  it('whitespace-only Full Name is treated as absent, not as a blank headline', () => {
+    const plan = buildRowPlan({ 'Full Name': '   ', 'Second Name': 'Fay Penn', Addr: '', MojoID: '' }, coOwnerResolved)
+    expect(plan.displayName).toBe('Fay Penn')
+  })
+
+  it('collapses internal whitespace in the chosen name', () => {
+    const plan = buildRowPlan({ 'Full Name': 'Halcyon   Ovanda  Chase', 'Second Name': '', Addr: '', MojoID: '' }, coOwnerResolved)
+    expect(plan.displayName).toBe('Halcyon Ovanda Chase')
+  })
+})
