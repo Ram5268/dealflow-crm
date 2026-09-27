@@ -4,6 +4,7 @@ const send = vi.hoisted(() => ({ sendEmailMessage: vi.fn() }))
 vi.mock('../email/send', () => send)
 
 import { handleSendEmailJob } from './outbound-email'
+import { EmailDisabledError } from '../email/config'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -23,5 +24,13 @@ describe('handleSendEmailJob', () => {
   it('rethrows so pg-boss retries on failure', async () => {
     send.sendEmailMessage.mockRejectedValue(new Error('gmail 500'))
     await expect(handleSendEmailJob({ data: { messageId: 'm1' } })).rejects.toThrow('gmail 500')
+  })
+})
+
+describe('Brief 37: email off', () => {
+  it('drops the job instead of retrying, so nothing goes out later', async () => {
+    send.sendEmailMessage.mockRejectedValue(new EmailDisabledError())
+    await expect(handleSendEmailJob([{ data: { messageId: 'a' } }, { data: { messageId: 'b' } }])).resolves.toBeUndefined()
+    expect(send.sendEmailMessage).toHaveBeenCalledTimes(2)
   })
 })

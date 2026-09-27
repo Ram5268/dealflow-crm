@@ -5,6 +5,8 @@
  * `degraded` only when a HARD requirement (encryption key, DB) is missing —
  * booting without token encryption is refused elsewhere; here we surface it.
  */
+import { emailEnabled } from './email/config'
+
 export interface HealthReport {
   status: 'ok' | 'degraded'
   checks: {
@@ -14,6 +16,8 @@ export interface HealthReport {
     graphConfigured: boolean
     twilioConfigured: boolean
     smsEnabled: boolean
+    dialingEnabled: boolean
+    emailEnabled: boolean
   }
 }
 
@@ -27,6 +31,10 @@ export function healthReport(
     graphConfigured: Boolean(env.MSFT_GRAPH_CLIENT_ID),
     twilioConfigured: Boolean(env.TWILIO_MESSAGING_SERVICE_SID),
     smsEnabled: env.SMS_ENABLED === 'true',
+    // Brief 37: the other two test-phase switches, next to SMS. Each is on
+    // only when exactly 'true'.
+    dialingEnabled: env.DIALING_ENABLED === 'true',
+    emailEnabled: emailEnabled(env),
   }
   const status: HealthReport['status'] =
     checks.databaseConfigured && checks.encryptionKeyPresent ? 'ok' : 'degraded'

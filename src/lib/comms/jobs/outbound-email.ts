@@ -1,4 +1,5 @@
 import { sendEmailMessage } from '../email/send'
+import { EmailDisabledError } from '../email/config'
 import { logger } from '../../logger'
 
 /**
@@ -21,6 +22,12 @@ export async function handleSendEmailJob(input: Job | Job[]): Promise<void> {
     try {
       await sendEmailMessage(messageId)
     } catch (err) {
+      // Brief 37: email is off. Drop the job rather than retry it, so nothing
+      // queued during the test phase can go out once the switch flips.
+      if (err instanceof EmailDisabledError) {
+        logger.warn({ messageId }, 'send-email job dropped: email is off (EMAIL_ENABLED)')
+        continue
+      }
       logger.error({ err, messageId }, 'send-email job failed; will retry')
       throw err
     }

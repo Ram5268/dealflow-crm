@@ -17,6 +17,7 @@ const HOUR = 3_600_000
 
 beforeEach(() => {
   vi.clearAllMocks()
+  process.env.EMAIL_ENABLED = 'true' // Brief 37: off by default; these tests exercise live sends
   db.contact.findUnique.mockResolvedValue({ id: 'c1', leadId: 'l1', timezone: 'America/New_York' })
   db.messageTemplate.findUnique.mockResolvedValue({
     id: 'tpl',
@@ -168,5 +169,18 @@ describe('runSequenceTick', () => {
     const data = (db.message.create.mock.calls[0][0] as any).data
     expect(data.contactId).toBeNull()
     expect(data.subject).toBeNull()
+  })
+})
+
+describe('Brief 37: email off', () => {
+  it('does nothing — no enrollment read, no message, no step advance, nothing enqueued', async () => {
+    delete process.env.EMAIL_ENABLED
+    const enqueueSend = vi.fn()
+    const r = await runSequenceTick({ now: ET_FRI_3PM, enqueueSend })
+    expect(r).toEqual({ processed: 0, sent: 0, finished: 0, errored: 0, skipped: 'email_disabled' })
+    expect(db.sequenceEnrollment.findMany).not.toHaveBeenCalled()
+    expect(db.message.create).not.toHaveBeenCalled()
+    expect(db.sequenceEnrollment.update).not.toHaveBeenCalled()
+    expect(enqueueSend).not.toHaveBeenCalled()
   })
 })

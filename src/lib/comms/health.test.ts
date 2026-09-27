@@ -34,4 +34,11 @@ describe('healthReport', () => {
     expect(r.checks.twilioConfigured).toBe(true)
     expect(r.checks.smsEnabled).toBe(true)
   })
+
+  it('Brief 37: reports all three test-phase switches, off unless exactly "true"', () => {
+    expect(healthReport(base).checks).toMatchObject({ smsEnabled: false, dialingEnabled: false, emailEnabled: false })
+    const on = healthReport({ ...base, SMS_ENABLED: 'true', DIALING_ENABLED: 'true', EMAIL_ENABLED: 'true' })
+    expect(on.checks).toMatchObject({ smsEnabled: true, dialingEnabled: true, emailEnabled: true })
+    expect(healthReport({ ...base, DIALING_ENABLED: '1', EMAIL_ENABLED: 'TRUE' }).checks).toMatchObject({ dialingEnabled: false, emailEnabled: false })
+  })
 })

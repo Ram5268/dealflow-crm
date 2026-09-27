@@ -2,6 +2,7 @@ import { prisma } from '../../prisma'
 import { logger } from '../../logger'
 import { render } from '../templates/render'
 import { resolveDueAt, DEFAULT_TIMEZONE } from './schedule'
+import { emailEnabled } from '../email/config'
 
 /**
  * Sequence tick (brief §3.4). Runs every ~15 min. For each ACTIVE enrollment:
@@ -22,6 +23,7 @@ export interface TickResult {
   sent: number
   finished: number
   errored: number
+  skipped?: 'email_disabled'
 }
 
 async function defaultEnqueue(messageId: string): Promise<void> {
@@ -119,6 +121,10 @@ async function processEnrollment(
 }
 
 export async function runSequenceTick(deps: TickDeps = {}): Promise<TickResult> {
+  // Brief 37: sequence steps send email. While email is off the tick does
+  // nothing — no step advances and nothing is marked sent.
+  if (!emailEnabled()) return { processed: 0, sent: 0, finished: 0, errored: 0, skipped: 'email_disabled' }
+
   const now = deps.now ?? new Date()
   const enqueue = deps.enqueueSend ?? defaultEnqueue
 
