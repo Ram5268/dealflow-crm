@@ -57,6 +57,15 @@ export async function DialQueueCard({ organizationId }: { organizationId: string
     )
   }
 
+  if (q.kind === 'calling-off') {
+    // Brief 37: no "Start dialing" while calling is off; the list is on /queue.
+    return (
+      <PanelCard label="Dial queue" icon={<Target />} count="—" href={`/queue?viewId=${q.viewId}`} hrefLabel="Review queue">
+        <PanelEmpty>Calling is off. {q.viewName} is ready to review.</PanelEmpty>
+      </PanelCard>
+    )
+  }
+
   if (q.kind === 'error') {
     // Compliance is fail-closed; say so rather than render a misleading zero.
     return (

@@ -4,11 +4,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 
 /** Start/pause/end a dial session. Surfaces the 403/503 guard errors inline. */
-export function SessionControls() {
+// Brief 37: `disabled` while calling is off (the route answers 403 regardless).
+export function SessionControls({ disabled = false }: { disabled?: boolean }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function start(method: "power" | "predictive") {
+    if (disabled) return;
     setError(null);
     const res = await fetch("/api/telephony/dial-sessions", {
       method: "POST",
@@ -37,10 +39,10 @@ export function SessionControls() {
             side. Which session each starts, and every guard behind them, is
             unchanged. */}
         <div className="flex gap-2">
-          <Button variant="primary" onClick={() => start("power")}>
+          <Button variant="primary" onClick={() => start("power")} disabled={disabled}>
             Start power session
           </Button>
-          <Button variant="secondary" onClick={() => start("predictive")}>
+          <Button variant="secondary" onClick={() => start("predictive")} disabled={disabled}>
             Start predictive session
           </Button>
         </div>
@@ -53,7 +55,9 @@ export function SessionControls() {
                 ? "Halted: abandonment circuit breaker tripped."
                 : error === "spend_cap_reached"
                   ? "Halted: monthly spend cap reached."
-                  : `Error: ${error}`}
+                  : error === "dialing_disabled"
+                    ? "Calling is off."
+                    : `Error: ${error}`}
           </div>
         )}
       </div>

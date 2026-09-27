@@ -46,14 +46,18 @@ test.describe('full session', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Needs attention' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Start dialing' })).toBeVisible()
+    // Brief 37: while calling is off (DIALING_ENABLED unset) the dial-queue card
+    // offers the review list instead of "Start dialing".
+    await expect(page.getByRole('link', { name: 'Start dialing' }).or(page.getByText('Calling is off.'))).toBeVisible()
     await shot(page, 'session-1-focus')
   })
 
   test('2 · Start dialing opens the dialer', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
-    await page.getByRole('link', { name: 'Start dialing' }).click()
+    const start = page.getByRole('link', { name: 'Start dialing' })
+    if (await start.count()) await start.click()
+    else await page.goto('/dialer') // Brief 37: calling is off, no "Start dialing" on Focus
 
     await expect(page).toHaveURL(/\/dialer/)
     await expect(page.getByRole('button', { name: /Start power session/i })).toBeVisible()
@@ -64,6 +68,15 @@ test.describe('full session', () => {
   test('3 · a dial attempt is refused visibly, and no call is placed', async ({ page }) => {
     await page.goto('/dialer')
     await page.waitForLoadState('networkidle')
+
+    // Brief 37: while calling is off the control is disabled under the banner,
+    // and the route would answer 403 dialing_disabled anyway.
+    const startButton = page.getByRole('button', { name: /Start power session/i })
+    if (await startButton.isDisabled()) {
+      await expect(page.getByRole('status').filter({ hasText: 'Calling is off' })).toBeVisible()
+      await shot(page, 'session-3-dial-attempt')
+      return
+    }
 
     const post = page.waitForResponse(
       (r) => r.url().includes('/api/telephony/dial-sessions') && r.request().method() === 'POST',

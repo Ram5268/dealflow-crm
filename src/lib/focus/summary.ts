@@ -5,6 +5,8 @@ import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
 import { DISPLAY_TZ_FALLBACK, getQueue } from '@/lib/core-data/smart-view/queue-service'
 import { previewOf } from '@/lib/ui/text'
+import { DEFAULT_VIEW_ID } from '@/lib/core-data/smart-view/defaultView'
+import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 
 // Re-exported: M2 imports it from here, M3's inbox shares the implementation.
 export { previewOf }
@@ -59,15 +61,25 @@ export interface DialQueuePanel {
 export type DialQueueResult =
   | DialQueuePanel
   | { kind: 'no-view' }
+  | { kind: 'calling-off'; viewId: string; viewName: string }
   | { kind: 'error'; message: string }
 
 export async function getDialQueue(organizationId: string): Promise<DialQueueResult> {
-  const view = await prisma.savedView.findFirst({
-    where: { organizationId, type: 'lead' },
-    orderBy: { updatedAt: 'desc' },
-    select: { id: true, name: true },
-  })
+  // Brief 37: the "DealFlow priority" view when it exists, else the newest.
+  const view =
+    (await prisma.savedView.findFirst({
+      where: { id: DEFAULT_VIEW_ID, organizationId, type: 'lead' },
+      select: { id: true, name: true },
+    })) ??
+    (await prisma.savedView.findFirst({
+      where: { organizationId, type: 'lead' },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, name: true },
+    }))
   if (!view) return { kind: 'no-view' }
+  // While calling is off the home page never runs the callable-now scrub (no
+  // compliance or vendor lookups); /queue shows the ranked review list instead.
+  if (!dialingEnabled()) return { kind: 'calling-off', viewId: view.id, viewName: view.name }
 
   try {
     const queue = await getQueue(view.id, organizationId, { limit: DIAL_QUEUE_LIMIT })

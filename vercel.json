@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/dealflow-signal-sync", "schedule": "0 11 * * *" }
+  ]
+}

@@ -4,9 +4,11 @@ import { withRoute, json, errorResponse } from '@/lib/shared/http'
 import { runDealflowSync } from '@/lib/core-data/dealflow-sync/run'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
-// Bearer-protected cron endpoint. On RO failure returns 503 and preserves
-// existing signals (sync throws before any delete — there is no delete).
+// Bearer-protected cron endpoint (fails closed without CRON_SECRET), scheduled
+// daily by vercel.json. On RO failure returns 503 and writes nothing; an empty
+// or stale DealFlow batch returns ok:false with `skipped` and writes nothing.
 export const GET = withRoute(async (req: NextRequest, { correlationId }) => {
   const auth = req.headers.get('authorization') ?? ''
   const token = auth.replace(/^Bearer\s+/i, '')
@@ -17,7 +19,7 @@ export const GET = withRoute(async (req: NextRequest, { correlationId }) => {
   const organizationId = await getCurrentOrgId()
   try {
     const result = await runDealflowSync(organizationId)
-    return json({ ok: true, ...result }, correlationId)
+    return json({ ok: !result.skipped, ...result }, correlationId)
   } catch (err) {
     return errorResponse('DealFlow RO sync failed', 503, correlationId, {
       detail: err instanceof Error ? err.message : String(err),

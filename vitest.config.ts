@@ -73,7 +73,7 @@ export default defineConfig({
           functions: 85,
           branches: 80,
         },
-        'src/lib/core-data/dealflow-sync/promote.ts': {
+        'src/lib/core-data/dealflow-sync/write.ts': {
           lines: 85,
           functions: 85,
           branches: 80,

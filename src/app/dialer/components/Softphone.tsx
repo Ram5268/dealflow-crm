@@ -11,13 +11,15 @@ import { cn } from "@/lib/ui/cn";
  * (unit-tested with a mocked transport); this component only wires the real
  * Twilio Device + buttons. Device audio is verified in the deferred device smoke.
  */
-export function Softphone({ activeCallId }: { activeCallId: string | null }) {
+export function Softphone({ activeCallId, disabled = false }: { activeCallId: string | null; disabled?: boolean }) {
   const controllerRef = useRef<SoftphoneController | null>(null);
   const [ready, setReady] = useState(false);
   const [muted, setMuted] = useState(false);
   const [onCall, setOnCall] = useState(false);
 
   useEffect(() => {
+    // Brief 37: no Twilio token or device registration while calling is off.
+    if (disabled) return;
     let device: Device | null = null;
     let cancelled = false;
     (async () => {
@@ -37,7 +39,7 @@ export function Softphone({ activeCallId }: { activeCallId: string | null }) {
       cancelled = true;
       device?.destroy();
     };
-  }, []);
+  }, [disabled]);
 
   useEffect(() => {
     if (!ready || !activeCallId || !controllerRef.current) return;
@@ -56,7 +58,7 @@ export function Softphone({ activeCallId }: { activeCallId: string | null }) {
   return (
     <section className="overflow-hidden rounded-lg border border-line bg-elevated">
       <h2 className="flex items-center gap-2 bg-active px-3 py-2 text-xs font-medium text-muted">
-        Softphone {ready ? "· ready" : "· connecting…"}
+        Softphone {disabled ? "· calling is off" : ready ? "· ready" : "· connecting…"}
         <span className="rounded-full bg-warning-subtle px-2 py-0.5 text-warning">read-only email</span>
       </h2>
       <div className="flex flex-wrap items-center gap-2 p-3">

@@ -1,4 +1,5 @@
 import { buildVoiceToken } from "@/lib/telephony/twilio/voiceToken";
+import { dialingEnabled, dialingDisabledResponse } from "@/lib/telephony/dialingSwitch";
 
 /**
  * Issue a Twilio Voice SDK access token for the browser softphone. Identity is
@@ -6,6 +7,7 @@ import { buildVoiceToken } from "@/lib/telephony/twilio/voiceToken";
  * default). TTL 1 hour.
  */
 export async function POST(req: Request): Promise<Response> {
+  if (!dialingEnabled()) return dialingDisabledResponse(); // Brief 37 calling switch
   const userId = req.headers.get("x-user-id") ?? "ryan";
   const identity = `user_${userId}`;
   try {
