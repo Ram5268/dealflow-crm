@@ -10,6 +10,7 @@ import { refreshAccessToken as gmailRefresh } from '../oauth/gmail'
 import { refreshAccessToken as graphRefresh } from '../oauth/graph'
 import { GmailClient } from './gmail-client'
 import { GraphClient, type GraphSendMessage } from './graph-client'
+import { emailEnabled, EmailDisabledError } from './config'
 
 /**
  * Outbound email send (brief §3.5 + §M5 provider routing).
@@ -153,6 +154,10 @@ export async function sendEmailMessage(
   messageId: string,
   injected: { send?: ProviderSender; now?: Date } = {},
 ): Promise<SendEmailResult> {
+  // Brief 37: email is off during the test phase. Refuse before reading the
+  // message, refreshing a token or calling Gmail/Graph.
+  if (!emailEnabled()) throw new EmailDisabledError()
+
   const msg = await prisma.message.findUnique({ where: { id: messageId } })
   if (!msg) throw new Error(`sendEmailMessage: message ${messageId} not found`)
   if (msg.channel !== 'email') {

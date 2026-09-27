@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { sendEmailMessage } from '@/lib/comms/email/send'
 import { sendSmsMessage, ComplianceBlockedError } from '@/lib/comms/sms/send'
 import { SmsDisabledError } from '@/lib/comms/sms/config'
+import { emailEnabled } from '@/lib/comms/email/config'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -95,6 +96,18 @@ export async function POST(req: Request) {
       logger.error({ err }, 'sms send failed')
       return NextResponse.json({ error: 'send_failed' }, { status: 500 })
     }
+  }
+
+  // Brief 37: email is off during the test phase. Refuse before saving anything,
+  // so no message waits in the outbox (or a schedule) to go out later.
+  if (!emailEnabled()) {
+    return NextResponse.json(
+      {
+        error: 'email_disabled',
+        message: 'Email is off during the test phase (EMAIL_ENABLED is not true). Nothing was sent or saved.',
+      },
+      { status: 403 },
+    )
   }
 
   // Thread-scoped replies — Agent E, planner-approved §13 amendment 2026-08-30.

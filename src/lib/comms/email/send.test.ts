@@ -26,12 +26,14 @@ vi.mock('./graph-client', () => ({
 
 import { encryptToken } from '../oauth/crypto'
 import { buildRawMessage, generateMessageId, sendEmailMessage, type ProviderSender } from './send'
+import { emailEnabled, EmailDisabledError } from './config'
 
 beforeAll(() => {
   process.env.OAUTH_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64')
 })
 beforeEach(() => {
   vi.clearAllMocks()
+  process.env.EMAIL_ENABLED = 'true' // Brief 37: off by default; these tests exercise a live send
   db.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(db))
   db.message.update.mockResolvedValue({})
 })
@@ -191,5 +193,24 @@ describe('defaultSend (real provider dispatch)', () => {
     graphClientSend.createAndSend.mockResolvedValue(undefined)
     await sendEmailMessage('m1')
     expect((graphClientSend.createAndSend.mock.calls[0][0] as any).body.contentType).toBe('Text')
+  })
+})
+
+describe('Brief 37: EMAIL_ENABLED switch', () => {
+  it('refuses while email is off — no message read, no token refresh, no send', async () => {
+    delete process.env.EMAIL_ENABLED
+    const send = vi.fn() as unknown as ProviderSender
+    await expect(sendEmailMessage('m1', { send })).rejects.toBeInstanceOf(EmailDisabledError)
+    expect(db.message.findUnique).not.toHaveBeenCalled()
+    expect(db.oAuthCredential.findMany).not.toHaveBeenCalled()
+    expect(gmailOAuth.refreshAccessToken).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('is on only for the exact string "true"', () => {
+    expect(emailEnabled({ EMAIL_ENABLED: 'true' })).toBe(true)
+    for (const v of [undefined, '', 'false', '1', 'TRUE', 'yes', ' true']) {
+      expect(emailEnabled({ EMAIL_ENABLED: v })).toBe(false)
+    }
   })
 })
