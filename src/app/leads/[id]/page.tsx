@@ -8,6 +8,8 @@ import { Badge, Button, EmptyState, Tooltip } from '@/components/ui'
 import { listSequenceRows } from '@/lib/sequences/queries'
 import { ActivityTimeline } from './ActivityTimeline'
 import { EnrollButton } from './EnrollButton'
+import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
+import { CallingOffBanner } from '@/components/CallingOffBanner'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,12 +74,24 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <Button asChild>
-            <Link href="/dialer">
-              <Phone size={13} />
-              Call
-            </Link>
-          </Button>
+          {dialingEnabled() ? (
+            <Button asChild>
+              <Link href="/dialer">
+                <Phone size={13} />
+                Call
+              </Link>
+            </Button>
+          ) : (
+            // Brief 37: calling is off during the test phase.
+            <Tooltip content="Calling is off">
+              <div>
+                <Button disabled>
+                  <Phone size={13} />
+                  Call
+                </Button>
+              </div>
+            </Tooltip>
+          )}
           {/* Compose lands with the Inbox in M3; sequences in M4. Both are shown
               disabled so the header does not reflow when they go live. */}
           <Tooltip content="Compose ships in M3">
@@ -94,6 +108,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           />
         </div>
       </header>
+      {!dialingEnabled() && (
+        <div className="shrink-0 px-4 pt-3">
+          <CallingOffBanner organizationId={organizationId} />
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[418px_minmax(0,1fr)]">

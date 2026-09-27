@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { twilioClient } from "../twilio/client";
 import { recordPacingEvent } from "../pacing/metrics";
 import { logger } from "@/lib/logger";
+import { dialingEnabled, DialingDisabledError } from "../dialingSwitch";
 
 /** Minimal shape of the Twilio calls.create API we depend on (for injection). */
 export interface TwilioCallCreator {
@@ -42,6 +43,9 @@ export async function placeCall(
   args: PlaceCallArgs,
   deps: PlaceCallDeps = {},
 ): Promise<{ callId: string; providerCallSid: string }> {
+  // Brief 37: while calling is off, refuse before Twilio is ever touched.
+  if (!dialingEnabled()) throw new DialingDisabledError();
+
   const client = deps.client ?? (twilioClient() as unknown as TwilioCallCreator);
   const webhookBase = deps.webhookBase ?? process.env.TWILIO_VOICE_WEBHOOK_BASE ?? "";
   const ringTimeoutSec =

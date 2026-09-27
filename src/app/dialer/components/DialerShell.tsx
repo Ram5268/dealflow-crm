@@ -12,7 +12,7 @@ import { nextActiveCallId, type CallStreamEvent } from "@/lib/telephony/softphon
  * it lifts the callId so the Softphone joins the conference and the panel
  * hydrates.
  */
-export function DialerShell() {
+export function DialerShell({ dialingEnabled }: { dialingEnabled: boolean }) {
   const [activeCallId, setActiveCallId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,8 +39,8 @@ export function DialerShell() {
   return (
     <div className="grid gap-4 p-4 md:grid-cols-2">
       <div className="space-y-4">
-        <SessionControls />
-        <Softphone activeCallId={activeCallId} />
+        <SessionControls disabled={!dialingEnabled} />
+        <Softphone activeCallId={activeCallId} disabled={!dialingEnabled} />
       </div>
       <AmmunitionPanel activeCallId={activeCallId} />
     </div>

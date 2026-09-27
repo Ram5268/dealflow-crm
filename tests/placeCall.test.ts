@@ -6,8 +6,10 @@ import { placeCall, type TwilioCallCreator } from "@/lib/telephony/dial-loop/pla
 const CALL_PREFIX = "CA_place_";
 const ORG = "org_place_1";
 let prisma: PrismaClient;
+const savedDialing = process.env.DIALING_ENABLED;
 
 beforeAll(async () => {
+  process.env.DIALING_ENABLED = "true"; // Brief 37: placeCall refuses unless calling is on
   prisma = prismaPerf(4);
   await prisma.$connect();
   await prisma.call.deleteMany({ where: { providerCallSid: { startsWith: CALL_PREFIX } } });
@@ -15,6 +17,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (savedDialing === undefined) delete process.env.DIALING_ENABLED;
+  else process.env.DIALING_ENABLED = savedDialing;
   await prisma.call.deleteMany({ where: { providerCallSid: { startsWith: CALL_PREFIX } } });
   await prisma.pacingMetric.deleteMany({ where: { organizationId: ORG } });
   await prisma?.$disconnect();

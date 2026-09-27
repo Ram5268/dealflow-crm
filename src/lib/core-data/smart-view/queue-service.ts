@@ -113,7 +113,7 @@ export interface GetQueueOptions {
   atInstant?: string
 }
 
-async function loadCustomFieldTypes(organizationId: string): Promise<CompileContext['customFieldTypes']> {
+export async function loadCustomFieldTypes(organizationId: string): Promise<CompileContext['customFieldTypes']> {
   const defs = await prisma.customFieldDefinition.findMany({
     where: { organizationId },
     select: { id: true, type: true },

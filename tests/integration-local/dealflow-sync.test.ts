@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/prisma'
 import { runDealflowSync } from '@/lib/core-data/dealflow-sync/run'
-import { fetchDealflowRows, buildSignals } from '@/lib/core-data/dealflow-sync/sync'
+import { fetchDealflowBatch, buildSignals } from '@/lib/core-data/dealflow-sync/sync'
 import { closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
 
 const enabled = !!process.env.DATABASE_URL_MAIN
@@ -68,10 +68,10 @@ describe.runIf(roEnabled)('dealflow RO live read (SELECT-only)', () => {
   })
   it('reads the latest CallQueueEntry batch and builds signals', async () => {
     delete process.env.DEALFLOW_SYNC_STUB
-    const rows = await fetchDealflowRows()
-    expect(Array.isArray(rows)).toBe(true)
-    // The live queue has ~50 rows; each should have a mojoId to be usable.
-    const signals = buildSignals(rows)
+    const batch = await fetchDealflowBatch()
+    expect(Array.isArray(batch.rows)).toBe(true)
+    // Brief 37: the whole ranked list; each row should have a mojoId to be usable.
+    const signals = buildSignals(batch)
     expect(signals.length).toBeGreaterThan(0)
     expect(signals[0].mojoId).toBeTruthy()
   })

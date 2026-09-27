@@ -1,5 +1,6 @@
 import { verifyTwilioWebhook } from "@/lib/telephony/twilio/signature";
 import { buildOperatorConferenceTwiml } from "@/lib/telephony/twilio/twiml";
+import { dialingEnabled, dialingDisabledResponse } from "@/lib/telephony/dialingSwitch";
 
 const XML_HEADERS = { "content-type": "text/xml" };
 
@@ -10,6 +11,7 @@ const XML_HEADERS = { "content-type": "text/xml" };
  * operator into `conf_<callId>`. Signature-validated.
  */
 export async function POST(req: Request): Promise<Response> {
+  if (!dialingEnabled()) return dialingDisabledResponse(); // Brief 37 calling switch
   const form = await req.formData();
   const params: Record<string, string> = {};
   for (const [k, v] of form.entries()) params[k] = String(v);
