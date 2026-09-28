@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AmmunitionPayload } from "@/lib/telephony/ammunition/hydrate";
+import { captureLabel, reasonText } from "@/lib/core-data/dealflow-sync/labels";
 
 /**
  * Ammunition panel. Fetches server-hydrated ammo for the active call. The
@@ -42,9 +43,9 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
           <dt className="text-muted">Top match fit</dt>
           <dd>{data.lead.topMatchFit ?? "—"}</dd>
           <dt className="text-muted">Capture</dt>
-          <dd>{data.lead.captureStatus ?? "—"}</dd>
+          <dd>{captureLabel(data.lead.captureStatus) ?? "—"}</dd>
           <dt className="text-muted">Why</dt>
-          <dd>{data.lead.matchReason ?? "—"}</dd>
+          <dd>{reasonText(data.lead.matchReason) ?? "—"}</dd>
           <dt className="text-muted">Address</dt>
           <dd>{data.lead.primaryAddressSummary ?? "—"}</dd>
         </dl>

@@ -3,6 +3,7 @@ import {
   Cog,
   FileText,
   Inbox,
+  ListOrdered,
   Target,
   Users,
   Zap,
@@ -23,6 +24,7 @@ export interface NavItem {
  *  top bar (SearchLauncher) and on ⌘K, matching Close's real IA. */
 export const PRIMARY_NAV: NavItem[] = [
   { href: '/', label: 'Focus', icon: Target, goKey: 'f' },
+  { href: '/queue', label: 'Call Queue', icon: ListOrdered }, // Brief 38
   { href: '/inbox', label: 'Inbox', icon: Inbox, goKey: 'i', badge: 'inbox-unread' },
   { href: '/leads', label: 'Leads', icon: Users, goKey: 'l' },
   { href: '/sequences', label: 'Sequences', icon: Zap, goKey: 's' },
@@ -36,7 +38,6 @@ export const SETTINGS_NAV: NavItem = { href: '/settings', label: 'Settings', ico
 export const ALL_DESTINATIONS: NavItem[] = [
   ...PRIMARY_NAV,
   { href: '/dialer', label: 'Dialer', icon: Target },
-  { href: '/queue', label: 'Call Queue', icon: Users },
   { href: '/imports', label: 'Imports', icon: FileText },
   SETTINGS_NAV,
 ]

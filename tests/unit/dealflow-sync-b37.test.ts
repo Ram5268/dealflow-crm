@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  BUYERS_SQL,
   RO_SQL,
   RUN_INFO_SQL,
   MAX_BATCH_AGE_MS,
@@ -29,7 +30,8 @@ describe('batch selection (RO_SQL)', () => {
     expect(sql).toContain('JOIN "CallQueueEntry" cqe ON cqe."generationRunId" = latest."generationRunId"')
     expect(sql.trim().endsWith('ORDER BY cqe."rank"')).toBe(true)
     expect(sql).not.toMatch(/LIMIT 500|MAX\("generatedAt"\)/)
-    expect(sql.match(/LIMIT/g)).toHaveLength(1) // only inside `latest`
+    // Only inside `latest`; the Brief 38 buyers subquery caps buyers per seller, not sellers.
+    expect(flat(RO_SQL.replace(BUYERS_SQL, '')).match(/LIMIT/g)).toHaveLength(1)
   })
 
   it('reads generatedAt as UTC (the column has no time zone), whatever the server TZ', () => {
