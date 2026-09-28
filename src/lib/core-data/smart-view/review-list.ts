@@ -5,6 +5,8 @@ import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
 import { sQuerySchema, sortSpecSchema, type SQuery } from '@/lib/core-data/query-dsl/schema'
 import { loadCustomFieldTypes } from './queue-service'
 import { HAS_DEALFLOW_PRIORITY } from './defaultView'
+import { bestBuyerLookup } from '@/lib/core-data/dealflow-sync/buyer-lookup'
+import type { DealflowBuyer } from '@/lib/core-data/dealflow-sync/buyers'
 
 // Brief 37 — the /queue review list, used only while calling is off: a view's
 // ranked leads in order, WITHOUT the callable-now scrub. Display-only: it selects
@@ -16,7 +18,7 @@ const REVIEW_CAP = 2_000
 // No phone numbers, on purpose.
 export const REVIEW_SELECT =
   'lead.id AS "leadId", lead."displayName", lead."primaryAddressSummary", lead."priorityScore", ' +
-  'lead."topMatchFit", lead."matchReason", lead."dealflowDeepLink"'
+  'lead."topMatchFit", lead."matchReason", lead."dealflowDeepLink", lead."mojoId"'
 
 export interface ReviewLead {
   leadId: string
@@ -26,6 +28,8 @@ export interface ReviewLead {
   topMatchFit: number | null
   matchReason: string | null
   dealflowDeepLink: string | null
+  mojoId: string | null
+  bestBuyer: DealflowBuyer | null // Brief 38
 }
 
 export interface ReviewList {
@@ -47,9 +51,10 @@ export async function getReviewList(viewId: string, organizationId: string): Pro
   const customFieldTypes = await loadCustomFieldTypes(organizationId)
   const compiled = compile(reviewQuery(sQuerySchema.parse(view.sQuery)), { organizationId, customFieldTypes })
   const orderBySql = compileOrderBy(sortSpecSchema.parse(view.sort ?? []))
-  const [leads, total] = await Promise.all([
-    execute<ReviewLead>(compiled, prisma, { organizationId, selectSql: REVIEW_SELECT, orderBySql, limit: REVIEW_CAP }),
+  const [leads, total, bestBuyer] = await Promise.all([
+    execute<Omit<ReviewLead, 'bestBuyer'>>(compiled, prisma, { organizationId, selectSql: REVIEW_SELECT, orderBySql, limit: REVIEW_CAP }),
     executeCount(compiled, prisma, organizationId),
+    bestBuyerLookup(organizationId),
   ])
-  return { view: { id: view.id, name: view.name }, leads, total }
+  return { view: { id: view.id, name: view.name }, leads: leads.map((l) => ({ ...l, bestBuyer: bestBuyer(l) })), total }
 }

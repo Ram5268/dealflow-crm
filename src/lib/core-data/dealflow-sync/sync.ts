@@ -1,4 +1,5 @@
 import { roQuery } from './ro-client'
+import { toBuyers } from './buyers'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DealFlow signal sync — reads the latest nightly CallQueueEntry batch from
@@ -19,6 +20,7 @@ import { roQuery } from './ro-client'
 // Brief 37: the WHOLE latest batch (DealFlow now persists every ranked CRM
 // seller, ~1,478), in rank order, with the CRM Lead id DealFlow keeps in
 // MojoContact.metadata.crmLeadId, plus the run's includeTestBuyers flag.
+// Brief 38: plus each seller's matched buyers (up to 5), kept in dealflowRawJson.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Shape of a joined RO row (snake-cased aliases from the SELECT below).
@@ -37,6 +39,7 @@ export interface DealflowJoinRow {
   contributions: unknown
   generation_run_id: string | null
   generated_at: Date | string | null
+  buyers?: unknown // Brief 38: the seller's matched buyers (BUYERS_SQL), whitelisted by toBuyers
 }
 
 export interface DealflowBatch {
@@ -101,6 +104,7 @@ export function buildSignals(batch: DealflowBatch): DerivedSignalUpsert[] {
         primaryMatchConfidence: r.primary_match_confidence,
         matchReason: r.match_reason,
         contributions: r.contributions ?? null,
+        buyers: toBuyers(r.buyers),
         // Run-level facts, stored with every signal of the run (no run table).
         generationRunId: r.generation_run_id ?? null,
         generatedAt: r.generated_at instanceof Date ? r.generated_at.toISOString() : r.generated_at,
@@ -130,6 +134,32 @@ export function checkFreshness(rows: DealflowJoinRow[], now: Date = new Date()):
   return { ok: true, generatedAt: at }
 }
 
+// Brief 38: each seller's matched buyers — its entry's primary + contributing
+// matches (max 5, best first) — with the buyer's facts read the way DealFlow's
+// matcher reads them (adapters.ts opportunityToBuyerData / mojoContactToBuyerData:
+// neighborhoods fall back to the single neighborhood, ranges to the point value,
+// cashOnly means a cash buyer). Selects no phone number or email of any kind.
+export const BUYERS_SQL = `(
+    SELECT COALESCE(jsonb_agg(to_jsonb(b) - 'ord' ORDER BY b."score" DESC, b.ord), '[]'::jsonb) FROM (
+      SELECT x.ord, m."id" AS "matchId", m."score", m."tier", string_to_array(m."reason", ' + ') AS "reasonKeys",
+        m."captureStatus", m."counterpartType" AS "type",
+        COALESCE(eo."sourceAgentName", bc."fullName") AS "name", eo."sourceBrokerage" AS "brokerage",
+        CASE WHEN cardinality(eo."neighborhoods") > 0 THEN eo."neighborhoods" ELSE array_remove(ARRAY[COALESCE(
+          NULLIF(eo."neighborhood", ''), NULLIF(bc."neighborhood", ''), NULLIF(bc."initialNeighborhood", ''))], NULL) END AS "neighborhoods",
+        COALESCE(eo."propertyTypes", '{}') AS "propertyTypes",
+        COALESCE(eo."minBeds", eo."beds", bc."bedsMin") AS "bedsMin",
+        COALESCE(eo."maxBeds", eo."beds", bc."bedsMax") AS "bedsMax",
+        COALESCE(eo."minPrice", eo."price", bc."budgetMin") AS "priceMin",
+        COALESCE(eo."maxPrice", eo."price", bc."budgetMax") AS "priceMax",
+        COALESCE(eo."buyerArchetype", CASE WHEN bc."cashOnly" THEN 'CASH_BUYER' END) AS "buyerArchetype",
+        COALESCE(eo."isTestData", bc."isTestData", false) AS "isTestData"
+      FROM unnest(array_prepend(cqe."primaryMatchId", cqe."contributingMatchIds")) WITH ORDINALITY AS x(id, ord)
+      JOIN "Match" m ON m."id" = x.id
+      LEFT JOIN "ExtractedOpportunity" eo ON m."counterpartType" = 'opportunity' AND eo."id" = m."counterpartId"
+      LEFT JOIN "MojoContact" bc ON m."counterpartType" = 'mojo' AND bc."id" = m."counterpartId"
+      ORDER BY x.ord LIMIT 5
+    ) b)`
+
 // Brief 37: the whole latest batch (the run owning the newest generatedAt), in
 // rank order, no cap.
 export const RO_SQL = `
@@ -150,7 +180,8 @@ export const RO_SQL = `
     m."score"              AS primary_match_fit,
     m."captureStatus"       AS primary_capture_status,
     m."matchFitConfidence"  AS primary_match_confidence,
-    m."reason"             AS match_reason
+    m."reason"             AS match_reason,
+    ${BUYERS_SQL} AS buyers
   FROM latest
   JOIN "CallQueueEntry" cqe ON cqe."generationRunId" = latest."generationRunId"
   JOIN "MojoContact" mc ON mc."id" = cqe."contactId"
@@ -198,5 +229,8 @@ export const STUB_ROWS: DealflowJoinRow[] = [
     contributions: { matchFitLift: 32 },
     generation_run_id: 'run_stub_1',
     generated_at: '2026-08-24T06:14:36.587Z',
+    buyers: [{ matchId: 'match_stub_1', score: 94, tier: 'HOT', reasonKeys: ['neighborhood', 'beds'], captureStatus: 'OWN_BUYER_ONLY',
+      type: 'opportunity', name: 'Stub Agent', brokerage: null, neighborhoods: ['West Village'], propertyTypes: ['Condo'],
+      bedsMin: 2, bedsMax: 3, priceMin: 1500000, priceMax: 2500000, buyerArchetype: 'CASH_BUYER', isTestData: true }],
   },
 ]

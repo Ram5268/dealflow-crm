@@ -8,6 +8,7 @@ import { execute } from "@/lib/core-data/query-dsl/executor";
 import type { SQuery } from "@/lib/core-data/query-dsl/schema";
 import { DEFAULT_VIEW, DEFAULT_VIEW_ID } from "@/lib/core-data/smart-view/defaultView";
 import { reviewQuery } from "@/lib/core-data/smart-view/review-list";
+import { bestBuyerLookup, getLeadBuyers } from "@/lib/core-data/dealflow-sync/buyer-lookup";
 
 // Brief 37 — the DealFlow sync writer against the perf DB, inside a throwaway
 // organization so no other suite's rows are touched. Proves stale-clearing,
@@ -123,5 +124,39 @@ describe("applySync (Brief 37)", () => {
       })).map((r) => r.id);
     expect(await run(DEFAULT_VIEW.sQuery)).toEqual([ids.a, ids.b]); // c and d have NULL priority
     expect(await run(reviewQuery({ type: "match_all" }))).toEqual([ids.a, ids.b]);
+  });
+});
+
+describe("matched buyers (Brief 38)", () => {
+  const buyer = (matchId: string, score: number) => ({
+    matchId, score, tier: "HOT", reasonKeys: ["neighborhood"], captureStatus: "EXTERNAL_BOTH", type: "opportunity",
+    name: `Agent ${matchId}`, brokerage: null, neighborhoods: ["Bushwick"], propertyTypes: ["2-Family"], bedsMin: 3,
+    bedsMax: null, priceMin: 1_000_000, priceMax: 2_000_000, buyerArchetype: null, isTestData: true,
+    phone: "+15550000000", email: "buyer@example.com", // must never reach the CRM
+  });
+
+  it("stores each seller's buyers on its signal and reads them back per lead, with no contact details", async () => {
+    await applySync(org, buildSignals({
+      includeTestBuyers: true,
+      rows: [
+        row({ mojo_id: `${TAG}_a`, crm_lead_id: ids.a, queue_rank: 1, priority_score: 83, primary_match_id: "m_a", buyers: [buyer("m_a", 95), buyer("m_a2", 90)] }),
+        row({ mojo_id: `${TAG}_b`, crm_lead_id: null, queue_rank: 2, priority_score: 80, primary_match_fit: 90, buyers: [buyer("m_b", 90)] }),
+        row({ mojo_id: `${TAG}_ghost`, crm_lead_id: "no_such_lead", queue_rank: 3 }),
+      ],
+    }), db);
+
+    const signal = await db.dealFlowDerivedSignal.findUnique({ where: { mojoId: `${TAG}_a` } });
+    expect(JSON.stringify(signal?.dealflowRawJson)).not.toMatch(/phone|email|5550000000/i);
+
+    const a = await getLeadBuyers(org, { id: ids.a, mojoId: `${TAG}_a` }, db);
+    expect(a.map((b) => [b.matchId, b.name])).toEqual([["m_a", "Agent m_a"], ["m_a2", "Agent m_a2"]]);
+    expect(Object.keys(a[0])).not.toContain("phone");
+    expect((await getLeadBuyers(org, { id: ids.b, mojoId: `${TAG}_b` }, db)).map((b) => b.matchId)).toEqual(["m_b"]); // by mojoId
+    expect(await getLeadBuyers(org, { id: ids.c, mojoId: `${TAG}_c` }, db)).toEqual([]); // not ranked
+
+    const best = await bestBuyerLookup(org, db);
+    expect(best({ leadId: ids.a, mojoId: `${TAG}_a` })?.matchId).toBe("m_a");
+    expect(best({ leadId: ids.b, mojoId: `${TAG}_b` })?.matchId).toBe("m_b");
+    expect(best({ leadId: ids.d, mojoId: `${TAG}_d` })).toBeNull();
   });
 });

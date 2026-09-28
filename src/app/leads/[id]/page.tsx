@@ -10,8 +10,15 @@ import { ActivityTimeline } from './ActivityTimeline'
 import { EnrollButton } from './EnrollButton'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
+import { pickPrimaryContact } from '@/lib/core-data/smart-view/queue-service'
+import { getLeadBuyers } from '@/lib/core-data/dealflow-sync/buyer-lookup'
+import { captureLabel, reasonText, timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
+import { MatchingBuyers } from './MatchingBuyers'
 
 export const dynamic = 'force-dynamic'
+
+// Date custom fields ("Home Close Date") read "Apr 15, 2016". Stored as UTC midnight.
+const DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -44,7 +51,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   })
   if (!lead) notFound()
 
-  const [customFields, activities, sequences] = await Promise.all([
+  const [customFields, activities, sequences, buyers] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
@@ -52,7 +59,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       take: 50,
     }),
     listSequenceRows(organizationId),
+    getLeadBuyers(organizationId, lead),
   ])
+  // Brief 38: the sync fills Contact.timezone, so show the primary contact's
+  // zone (then the lead's). A blank stays blank rather than guessing Eastern.
+  const timezone = pickPrimaryContact(lead.contacts)?.timezone ?? lead.timezone
 
   return (
     <div className="flex h-full flex-col">
@@ -125,13 +136,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               <dl>
                 <Row label="Address" value={lead.primaryAddressFull} />
                 <Row label="Source" value={lead.source} />
-                <Row label="Timezone" value={lead.timezone} />
+                <Row label="Timezone" value={timezoneLabel(timezone)} />
                 <Row
                   label="Match fit"
                   value={lead.topMatchFit != null ? `${lead.topMatchFit}` : null}
                 />
-                <Row label="Capture" value={lead.captureStatus} />
-                <Row label="Why" value={lead.matchReason} />
+                <Row label="Capture" value={captureLabel(lead.captureStatus)} />
+                <Row label="Why" value={reasonText(lead.matchReason)} />
                 {lead.dealflowDeepLink && (
                   <Row
                     label="DealFlow"
@@ -178,7 +189,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               <Card title="Custom fields">
                 <dl>
                   {customFields.map((f) => (
-                    <Row key={f.definitionId} label={f.name} value={String(f.value)} />
+                    <Row
+                      key={f.definitionId}
+                      label={f.name}
+                      value={f.value instanceof Date ? DATE.format(f.value) : String(f.value)}
+                    />
                   ))}
                 </dl>
               </Card>
@@ -186,24 +201,30 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           </div>
 
           {/* Activity timeline owns the wide column — a broker lives in the
-              feed, so it gets the space. */}
-          <Card title="Activity">
-            {activities.length === 0 ? (
-              <EmptyState
-                title="No activity yet"
-                description="Calls, emails and notes on this lead will appear here."
-              />
-            ) : (
-              <ActivityTimeline
-                items={activities.map((a) => ({
-                  id: a.id,
-                  type: a.type,
-                  activityAt: a.activityAt.toISOString(),
-                  bodyText: a.bodyText,
-                }))}
-              />
-            )}
-          </Card>
+              feed, so it gets the space. Brief 38: the buyers DealFlow matched
+              to this seller sit first, above it. */}
+          <div className="flex min-w-0 flex-col gap-4">
+            <Card title="Matching buyers">
+              <MatchingBuyers buyers={buyers} />
+            </Card>
+            <Card title="Activity">
+              {activities.length === 0 ? (
+                <EmptyState
+                  title="No activity yet"
+                  description="Calls, emails and notes on this lead will appear here."
+                />
+              ) : (
+                <ActivityTimeline
+                  items={activities.map((a) => ({
+                    id: a.id,
+                    type: a.type,
+                    activityAt: a.activityAt.toISOString(),
+                    bodyText: a.bodyText,
+                  }))}
+                />
+              )}
+            </Card>
+          </div>
 
         </div>
       </div>

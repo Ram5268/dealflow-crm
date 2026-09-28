@@ -6,12 +6,15 @@ import { getReviewList } from '@/lib/core-data/smart-view/review-list'
 import { DEFAULT_VIEW_ID } from '@/lib/core-data/smart-view/defaultView'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
+import { Badge } from '@/components/ui'
+import { buyerName } from '@/lib/core-data/dealflow-sync/buyers'
+import { captureLabel, reasonText } from '@/lib/core-data/dealflow-sync/labels'
 
 export const dynamic = 'force-dynamic'
 
 const TH = 'h-[41px] border-b border-r border-line px-3 font-bold text-fg last:border-r-0'
 const TD = 'border-r border-line px-3 last:border-r-0'
-const REVIEW_COLUMNS = ['#', 'Lead', 'Address', 'Priority', 'Top match', 'Why', 'DealFlow']
+const REVIEW_COLUMNS = ['#', 'Lead', 'Address', 'Priority', 'Top match', 'Best buyer', 'Why', 'DealFlow']
 
 // Read-only queue preview (Agent B owns the real dialer UI). Opens the
 // "DealFlow priority" view by default (Brief 37).
@@ -95,7 +98,18 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
                       <td className={TD}>{l.primaryAddressSummary ?? '—'}</td>
                       <td className={TD}>{l.priorityScore ?? '—'}</td>
                       <td className={TD}>{l.topMatchFit ?? '—'}</td>
-                      <td className={TD}>{l.matchReason ?? '—'}</td>
+                      <td className={TD}>
+                        {l.bestBuyer ? (
+                          <span className="flex items-center gap-2 whitespace-nowrap">
+                            {buyerName(l.bestBuyer)}
+                            {l.bestBuyer.score != null && <span className="text-muted">{l.bestBuyer.score}</span>}
+                            {l.bestBuyer.isTestData && <Badge>Test</Badge>}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className={TD}>{reasonText(l.matchReason) ?? '—'}</td>
                       <td className={TD}>
                         {l.dealflowDeepLink ? (
                           <a href={l.dealflowDeepLink} target="_blank" rel="noreferrer" className="text-link hover:underline">
@@ -141,7 +155,7 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
                       </td>
                       <td className="border-r border-line px-3 font-mono last:border-r-0">{l.primaryPhoneE164}</td>
                       <td className="border-r border-line px-3 last:border-r-0">{l.ammunition.priorityScore ?? '—'}</td>
-                      <td className="border-r border-line px-3 last:border-r-0">{l.ammunition.captureStatus ?? '—'}</td>
+                      <td className="border-r border-line px-3 last:border-r-0">{captureLabel(l.ammunition.captureStatus) ?? '—'}</td>
                     </tr>
                   ))}
                 </tbody>
