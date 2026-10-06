@@ -69,7 +69,7 @@ describe('integration-local suites (mainIsTestDb)', () => {
 describe('scripts/assert-test-db.ts (run-isolation-boot.sh)', () => {
   const run = (url: string, ...args: string[]) =>
     spawnSync('node_modules/.bin/tsx', ['scripts/assert-test-db.ts', 'DATABASE_URL_MAIN', 'boot', ...args], {
-      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', DATABASE_URL_MAIN: url },
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', NODE_ENV: 'test', DATABASE_URL_MAIN: url },
       encoding: 'utf8',
     })
   it('exits 1 with the reason for a live database, 0 for a test one or with --i-mean-live', () => {
