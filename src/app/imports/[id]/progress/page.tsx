@@ -12,6 +12,17 @@ interface Batch {
   duplicateRows: number
   skippedRows: number
   errorRows: number
+  errorLog?: Array<{ row: number; message: string }>
+}
+
+// Plain words for a failed import (Brief 41: a failed commit now stops at
+// 'failed' instead of polling forever).
+function failureText(batch: Batch): string {
+  const reason = batch.errorLog?.find((e) => e.row === 0)?.message.replace(/^Import stopped: /, '') ?? 'unknown error'
+  if (/no stored bytes/.test(reason)) {
+    return "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
+  }
+  return `The import stopped: ${reason}. Rows imported before it stopped are kept. You can run it again from the mapping page.`
 }
 
 export default function ProgressPage({ params }: { params: Promise<{ id: string }> }) {
@@ -26,7 +37,7 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
       const b = (await res.json()) as Batch
       if (!active) return
       setBatch(b)
-      if (b.status !== 'completed') setTimeout(poll, 1500)
+      if (b.status !== 'completed' && b.status !== 'failed') setTimeout(poll, 1500)
     }
     poll()
     return () => {
@@ -62,6 +73,11 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
               {batch.duplicateRows > 0 && ` · ${batch.duplicateRows} merged`}
               {batch.errorRows > 0 && ` · ${batch.errorRows} errors`}
             </p>
+            {batch.status === 'failed' && (
+              <p className="mb-4 text-base text-danger" data-testid="import-failed">
+                {failureText(batch)}
+              </p>
+            )}
             {batch.status === 'completed' && (
               <Button asChild variant="primary">
                 <Link href="/leads" data-testid="view-leads">

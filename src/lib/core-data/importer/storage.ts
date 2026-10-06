@@ -1,3 +1,4 @@
+import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ function batchIdFromKey(key: string): string {
   return id
 }
 
-export async function putObject(key: string, body: Buffer): Promise<void> {
+export async function putObject(key: string, body: Buffer, db: PrismaClient = prisma): Promise<void> {
   if (r2Configured()) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3')
     const client = await r2Client()
@@ -51,13 +52,13 @@ export async function putObject(key: string, body: Buffer): Promise<void> {
     )
     return
   }
-  await prisma.importBatch.update({
+  await db.importBatch.update({
     where: { id: batchIdFromKey(key) },
     data: { sourceBlob: body },
   })
 }
 
-export async function getObject(key: string): Promise<Buffer> {
+export async function getObject(key: string, db: PrismaClient = prisma): Promise<Buffer> {
   if (r2Configured()) {
     const { GetObjectCommand } = await import('@aws-sdk/client-s3')
     const client = await r2Client()
@@ -67,7 +68,7 @@ export async function getObject(key: string): Promise<Buffer> {
     const bytes = await res.Body!.transformToByteArray()
     return Buffer.from(bytes)
   }
-  const row = await prisma.importBatch.findUnique({
+  const row = await db.importBatch.findUnique({
     where: { id: batchIdFromKey(key) },
     select: { sourceBlob: true },
   })

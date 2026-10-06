@@ -1,3 +1,4 @@
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { emit as defaultEmit } from '@/lib/core-data/events/emit'
 import { getObject } from './storage'
@@ -13,6 +14,11 @@ import type { MappingProposal, ColumnMapping } from './ai-mapping'
 // `lead.upserted-from-import` (channel crm_lead_sync, NO eventName), and stamps
 // Lead.source = "import:" + importBatchId on every upsert (locked A-side
 // commitment for C's bulk-scrub). buildRowPlan is pure and unit-tested.
+//
+// Brief 41 (H4, M25): a merge writes only the fields the file has and never
+// blanks or replaces a Mojo ID; a different incoming Mojo ID is another
+// property (a new lead); rows that could be the same lead run one after
+// another; a failed commit is marked 'failed'; a completed batch never re-runs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DuplicateStrategy = 'skip' | 'merge' | 'add-anyway'
@@ -113,15 +119,58 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   }
 }
 
+// Rows that could resolve to the same lead (same Mojo ID, any shared phone, or
+// the same name + address when there is no phone) are grouped so they import
+// one after another: two rows for one owner can no longer both miss each other
+// and both create. Groups keep file order; different owners run concurrently.
+export function groupRowsByIdentity(plans: RowPlan[]): number[][] {
+  const parent = plans.map((_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  const firstRowWithKey = new Map<string, number>()
+  plans.forEach((plan, i) => {
+    const keys = [
+      plan.lead.mojoId ? `mojo:${plan.lead.mojoId}` : null,
+      ...plan.phones.map((p) => `phone:${p.phoneE164}`),
+      plan.dedup.kind === 'name-address' ? plan.dedup.key : null,
+    ]
+    for (const key of keys) {
+      if (!key) continue
+      const j = firstRowWithKey.get(key)
+      if (j === undefined) {
+        firstRowWithKey.set(key, i)
+        continue
+      }
+      const a = find(i)
+      const b = find(j)
+      if (a !== b) parent[Math.max(a, b)] = Math.min(a, b)
+    }
+  })
+  const groups = new Map<number, number[]>()
+  plans.forEach((_, i) => {
+    const root = find(i)
+    const group = groups.get(root)
+    if (group) group.push(i)
+    else groups.set(root, [i])
+  })
+  return [...groups.values()]
+}
+
 // Ensure custom-field definitions exist for every new_custom_field / existing
 // column; returns columnName → { definitionId, type }.
 async function ensureCustomFieldDefinitions(
+  db: PrismaClient,
   organizationId: string,
   mapping: ColumnMapping[]
 ): Promise<Array<{ column: string; definitionId: string; type: string }>> {
   const out: Array<{ column: string; definitionId: string; type: string }> = []
   let order = 0
-  const maxOrder = await prisma.customFieldDefinition.aggregate({
+  const maxOrder = await db.customFieldDefinition.aggregate({
     where: { organizationId, objectType: 'lead' },
     _max: { displayOrder: true },
   })
@@ -129,7 +178,7 @@ async function ensureCustomFieldDefinitions(
 
   for (const col of mapping) {
     if (col.target.kind === 'new_custom_field') {
-      const def = await prisma.customFieldDefinition.upsert({
+      const def = await db.customFieldDefinition.upsert({
         where: {
           organizationId_objectType_name: {
             organizationId,
@@ -149,7 +198,7 @@ async function ensureCustomFieldDefinitions(
       })
       out.push({ column: col.column, definitionId: def.id, type: def.type })
     } else if (col.target.kind === 'existing_custom_field') {
-      const def = await prisma.customFieldDefinition.findFirst({
+      const def = await db.customFieldDefinition.findFirst({
         where: { id: col.target.definitionId, organizationId },
       })
       if (def) out.push({ column: col.column, definitionId: def.id, type: def.type })
@@ -176,6 +225,8 @@ export function resolveMapping(
 
 export interface CommitDeps {
   emit?: typeof defaultEmit
+  // Defaults to the app's client; tests point it at the perf DB.
+  db?: PrismaClient
 }
 
 export interface CommitResult {
@@ -187,8 +238,9 @@ export interface CommitResult {
 }
 
 // Full commit path. Reads the raw file, resolves the mapping, and upserts every
-// row. Idempotent: re-running the same file with the same batch converges (mojoId
-// unique, phone dedup, custom-value upsert).
+// row. A completed batch is never imported twice: a retry or a second run
+// returns the counts the first run recorded. Any failure marks the batch
+// 'failed' (with the reason) before rethrowing, so it can't sit at 'importing'.
 export async function commitImport(
   importBatchId: string,
   duplicateStrategy: DuplicateStrategy,
@@ -197,17 +249,14 @@ export async function commitImport(
   deps: CommitDeps = {}
 ): Promise<CommitResult> {
   const emit = deps.emit ?? defaultEmit
-  const batch = await prisma.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
+  const db = deps.db ?? prisma
+  const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
+  if (batch.status === 'completed') return counts(batch)
   const organizationId = batch.organizationId
   const source = `import:${importBatchId}`
 
-  const buffer = await getObject(batch.storageKey)
-  const parsed = parseFile(buffer, batch.filename)
-  const customColumns = await ensureCustomFieldDefinitions(organizationId, mapping.mapping)
-  const resolved = resolveMapping(mapping.mapping, customColumns)
-
   const result: CommitResult = {
-    totalRows: parsed.allRows.length,
+    totalRows: 0,
     importedRows: 0,
     duplicateRows: 0,
     skippedRows: 0,
@@ -215,50 +264,98 @@ export async function commitImport(
   }
   const errorLog: Array<{ row: number; message: string }> = []
 
-  // Rows are processed with bounded concurrency: sequential .create over the
-  // Railway network is ~90ms/row, so 1k rows serially blows past any budget.
-  // A modest pool keeps wall-clock in check while the unique constraints
-  // (Lead.mojoId, ContactPhone[contactId,phone]) still guard against races.
-  const CONCURRENCY = 25
-  await mapWithConcurrency(parsed.allRows, CONCURRENCY, async (row, i) => {
-    const plan = buildRowPlan(row, resolved)
-    try {
-      const outcome = await upsertRow(organizationId, source, plan, duplicateStrategy)
-      if (outcome === 'skipped') {
-        result.skippedRows++
-      } else {
-        result.importedRows++
-        if (outcome.merged) result.duplicateRows++
-        await emit('crm_lead_sync', {
-          leadId: outcome.leadId,
-          sourceLabel: batch.sourceLabel,
-          importBatchId,
-          correlationId,
-        })
-      }
-    } catch (err) {
-      result.errorRows++
-      errorLog.push({ row: i + 2, message: err instanceof Error ? err.message : String(err) })
-    }
-    if (plan.phones.some((p) => p.nonstandard)) {
-      errorLog.push({ row: i + 2, message: 'nonstandard phone type kept as-is' })
-    }
-  })
+  try {
+    const buffer = await getObject(batch.storageKey, db)
+    const parsed = parseFile(buffer, batch.filename)
+    const customColumns = await ensureCustomFieldDefinitions(db, organizationId, mapping.mapping)
+    const resolved = resolveMapping(mapping.mapping, customColumns)
+    const plans = parsed.allRows.map((row) => buildRowPlan(row, resolved))
+    result.totalRows = plans.length
+    await db.importBatch.update({ where: { id: importBatchId }, data: { totalRows: result.totalRows } })
 
-  await prisma.importBatch.update({
-    where: { id: importBatchId },
-    data: {
-      status: 'completed',
-      totalRows: result.totalRows,
-      importedRows: result.importedRows,
-      duplicateRows: result.duplicateRows,
-      skippedRows: result.skippedRows,
-      errorRows: result.errorRows,
-      errorLog: errorLog.slice(0, 500),
-      completedAt: new Date(),
-    },
-  })
-  return result
+    // Counts are written every PROGRESS_EVERY rows so the progress page moves.
+    let processed = 0
+    let reported = 0
+    const reportProgress = async () => {
+      if (processed - reported < PROGRESS_EVERY) return
+      reported = processed
+      await db.importBatch
+        .update({ where: { id: importBatchId }, data: counts(result) })
+        .catch(() => {}) // progress is best-effort; the final write is authoritative
+    }
+
+    const importRow = async (i: number) => {
+      const plan = plans[i]
+      try {
+        const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy)
+        if (outcome === 'skipped') {
+          result.skippedRows++
+        } else {
+          result.importedRows++
+          if (outcome.merged) result.duplicateRows++
+          await emit('crm_lead_sync', {
+            leadId: outcome.leadId,
+            sourceLabel: batch.sourceLabel,
+            importBatchId,
+            correlationId,
+          })
+        }
+      } catch (err) {
+        result.errorRows++
+        errorLog.push({ row: i + 2, message: err instanceof Error ? err.message : String(err) })
+      }
+      if (plan.phones.some((p) => p.nonstandard)) {
+        errorLog.push({ row: i + 2, message: 'nonstandard phone type kept as-is' })
+      }
+      processed++
+      await reportProgress()
+    }
+
+    // Rows are processed with bounded concurrency: sequential .create over the
+    // Railway network is ~90ms/row, so 1k rows serially blows past any budget.
+    // Rows that could be the same lead share a group and run in file order.
+    const CONCURRENCY = 25
+    await mapWithConcurrency(groupRowsByIdentity(plans), CONCURRENCY, async (group) => {
+      for (const i of group) await importRow(i)
+    })
+
+    await db.importBatch.update({
+      where: { id: importBatchId },
+      data: {
+        status: 'completed',
+        ...counts(result),
+        errorLog: errorLog.slice(0, 500),
+        completedAt: new Date(),
+      },
+    })
+    return result
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    await db.importBatch
+      .update({
+        where: { id: importBatchId },
+        data: {
+          status: 'failed',
+          ...counts(result),
+          errorLog: [...errorLog.slice(0, 499), { row: 0, message: `Import stopped: ${message}` }],
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => {}) // the original error is what the caller needs
+    throw err
+  }
+}
+
+const PROGRESS_EVERY = 100
+
+function counts(r: CommitResult) {
+  return {
+    totalRows: r.totalRows,
+    importedRows: r.importedRows,
+    duplicateRows: r.duplicateRows,
+    skippedRows: r.skippedRows,
+    errorRows: r.errorRows,
+  }
 }
 
 interface UpsertOk {
@@ -269,32 +366,29 @@ interface UpsertOk {
 // Returns the affected leadId + whether it merged into an existing lead, or
 // 'skipped'. Kept as its own function so commitImport stays readable.
 async function upsertRow(
+  db: PrismaClient,
   organizationId: string,
   source: string,
   plan: RowPlan,
   strategy: DuplicateStrategy
 ): Promise<'skipped' | UpsertOk> {
-  const existing = await findExistingLead(organizationId, plan)
+  const existing = await findExistingLead(db, organizationId, plan)
 
   if (existing && strategy === 'skip') return 'skipped'
-
-  const leadData = {
-    name: plan.lead.name ?? null,
-    primaryAddressFull: plan.lead.primaryAddressFull ?? null,
-    primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
-    statusLabel: plan.lead.statusLabel ?? null,
-    mojoId: plan.lead.mojoId ?? null,
-    source,
-  }
 
   // Fast path: a brand-new lead is created with its contact + phones + emails
   // nested in a SINGLE query (no contact lookup — there is nothing to reuse yet).
   if (!existing || strategy === 'add-anyway') {
-    const lead = await prisma.lead.create({
+    const lead = await db.lead.create({
       data: {
         organizationId,
         displayName: plan.displayName,
-        ...leadData,
+        name: plan.lead.name ?? null,
+        primaryAddressFull: plan.lead.primaryAddressFull ?? null,
+        primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
+        statusLabel: plan.lead.statusLabel ?? null,
+        mojoId: plan.lead.mojoId ?? null,
+        source,
         contacts: {
           create: {
             organizationId,
@@ -311,19 +405,20 @@ async function upsertRow(
         },
       },
     })
-    await writeCustomValues(organizationId, lead.id, plan.customValues)
+    await writeCustomValues(db, organizationId, lead.id, plan.customValues)
     return { leadId: lead.id, merged: false }
   }
 
-  // Merge path: update the existing lead, reuse its primary contact, dedup phones.
-  await prisma.lead.update({ where: { id: existing }, data: { ...leadData, displayName: plan.displayName } })
-  const leadId = existing
-  let contact = await prisma.contact.findFirst({
+  // Merge path: update the existing lead with only what the file has, reuse its
+  // primary contact, dedup phones.
+  await db.lead.update({ where: { id: existing.id }, data: mergeUpdate(plan, source, existing.mojoId) })
+  const leadId = existing.id
+  let contact = await db.contact.findFirst({
     where: { leadId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   })
   if (!contact) {
-    contact = await prisma.contact.create({
+    contact = await db.contact.create({
       data: {
         organizationId, leadId,
         displayName: plan.contact.name ?? plan.displayName,
@@ -333,29 +428,49 @@ async function upsertRow(
     })
   }
   if (plan.phones.length) {
-    await prisma.contactPhone.createMany({
+    await db.contactPhone.createMany({
       data: plan.phones.map((p, idx) => ({ contactId: contact!.id, phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
       skipDuplicates: true,
     })
   }
   if (plan.emails.length) {
-    await prisma.contactEmail.createMany({
+    await db.contactEmail.createMany({
       data: plan.emails.map((e, idx) => ({ contactId: contact!.id, email: e, type: 'work', isPrimary: idx === 0 })),
       skipDuplicates: true,
     })
   }
-  await writeCustomValues(organizationId, leadId, plan.customValues)
+  await writeCustomValues(db, organizationId, leadId, plan.customValues)
   return { leadId, merged: true }
 }
 
+// Brief 41 (H4): a merge writes only the fields the file actually has. A blank
+// cell never wipes a value, the name only changes when the file has one (a
+// co-owner name never replaces it), and a Mojo ID only fills a blank —
+// findExistingLead never matches a lead with a different Mojo ID.
+function mergeUpdate(plan: RowPlan, source: string, existingMojoId: string | null): Prisma.LeadUpdateInput {
+  const data: Prisma.LeadUpdateInput = { source }
+  if (plan.lead.name) {
+    data.name = plan.lead.name
+    data.displayName = plan.displayName
+  }
+  if (plan.lead.primaryAddressFull) {
+    data.primaryAddressFull = plan.lead.primaryAddressFull
+    data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
+  }
+  if (plan.lead.statusLabel) data.statusLabel = plan.lead.statusLabel
+  if (plan.lead.mojoId && !existingMojoId) data.mojoId = plan.lead.mojoId
+  return data
+}
+
 async function writeCustomValues(
+  db: PrismaClient,
   organizationId: string,
   leadId: string,
   values: RowPlan['customValues']
 ): Promise<void> {
   for (const cv of values) {
     const cols = buildCustomValueColumns(cv.type, cv.raw)
-    await prisma.customFieldValue.upsert({
+    await db.customFieldValue.upsert({
       where: { definitionId_objectId: { definitionId: cv.definitionId, objectId: leadId } },
       create: { organizationId, definitionId: cv.definitionId, objectType: 'lead', objectId: leadId, ...cols },
       update: cols,
@@ -381,31 +496,39 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers)
 }
 
-async function findExistingLead(organizationId: string, plan: RowPlan): Promise<string | null> {
+// Mojo ID first, then the first phone, then name + address. A lead found by
+// phone or name that already has a DIFFERENT Mojo ID is another property of the
+// same owner, so it is not a match (the row becomes a new lead).
+async function findExistingLead(
+  db: PrismaClient,
+  organizationId: string,
+  plan: RowPlan
+): Promise<{ id: string; mojoId: string | null } | null> {
   if (plan.lead.mojoId) {
-    const byMojo = await prisma.lead.findFirst({
+    const byMojo = await db.lead.findFirst({
       where: { organizationId, mojoId: plan.lead.mojoId },
-      select: { id: true },
+      select: { id: true, mojoId: true },
     })
-    if (byMojo) return byMojo.id
+    if (byMojo) return byMojo
   }
+  let match: { id: string; mojoId: string | null } | null = null
   if (plan.phones[0]) {
-    const byPhone = await prisma.contactPhone.findFirst({
+    const byPhone = await db.contactPhone.findFirst({
       where: { phone: plan.phones[0].phoneE164, contact: { organizationId } },
-      select: { contact: { select: { leadId: true } } },
+      select: { contact: { select: { lead: { select: { id: true, mojoId: true } } } } },
     })
-    if (byPhone) return byPhone.contact.leadId
+    match = byPhone?.contact.lead ?? null
   }
-  if (plan.dedup.kind === 'name-address') {
-    const byNameAddr = await prisma.lead.findFirst({
+  if (!match && plan.dedup.kind === 'name-address') {
+    match = await db.lead.findFirst({
       where: {
         organizationId,
         displayName: plan.displayName,
         primaryAddressFull: plan.lead.primaryAddressFull ?? null,
       },
-      select: { id: true },
+      select: { id: true, mojoId: true },
     })
-    if (byNameAddr) return byNameAddr.id
   }
-  return null
+  if (match && plan.lead.mojoId && match.mojoId && match.mojoId !== plan.lead.mojoId) return null
+  return match
 }

@@ -16,6 +16,11 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
   const organizationId = await getCurrentOrgId()
   const batch = await prisma.importBatch.findFirst({ where: { id: params!.id, organizationId } })
   if (!batch) throw new HttpError(404, 'ImportBatch not found')
+  // Brief 41: revisiting the mapping page must not reset an import that is
+  // running or finished (that reset let the same file be committed twice).
+  if (batch.status === 'importing' || batch.status === 'completed') {
+    throw new HttpError(409, batch.status === 'completed' ? 'This import has already run.' : 'This import is already running.')
+  }
 
   const buffer = await getObject(batch.storageKey)
   const parsed = parseFile(buffer, batch.filename)
