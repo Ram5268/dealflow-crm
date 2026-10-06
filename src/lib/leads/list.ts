@@ -247,8 +247,8 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
     db.lead.count({ where }),
     db.lead.findMany({
       where,
-      // The same order a Smart View page uses (compileOrderBy): the chosen
-      // column, blanks last, then id.
+      // The same order a Smart View with no saved sort uses (compileOrderBy):
+      // the chosen column, blanks last, then id.
       orderBy: [leadOrderBy(sortKey, sortDir), { id: 'asc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
