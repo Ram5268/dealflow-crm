@@ -106,7 +106,13 @@ export async function internalDncHits(
   db: InternalDncDb = defaultPrisma as unknown as InternalDncDb
 ): Promise<Set<string>> {
   if (phones.length === 0) return new Set()
-  const formsOf = new Map(phones.map((p) => [normalizeE164(p), storedForms(p)]))
+  // Two phones in one batch can be the same number typed differently: keep
+  // every form of each (a Map entry would otherwise be overwritten).
+  const formsOf = new Map<string, string[]>()
+  for (const p of phones) {
+    const key = normalizeE164(p)
+    formsOf.set(key, [...new Set([...(formsOf.get(key) ?? []), ...storedForms(p)])])
+  }
   const rows = await db.dncSuppression.findMany({
     where: { organizationId: orgId, source: 'internal', phone: { in: [...new Set([...formsOf.values()].flat())] } },
     select: { phone: true },

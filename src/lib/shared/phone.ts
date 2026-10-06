@@ -11,7 +11,8 @@ export function toE164(raw: string | null | undefined): string | null {
   return parsed && parsed.isPossible() ? parsed.number : null
 }
 
-// A list of phones in canonical form, or the first value that isn't a phone
+// A list of phones in canonical form (the same number typed twice is kept
+// once: a contact's phones are unique), or the first value that isn't a phone
 // number (the contacts API answers 400 with it).
 export function canonicalPhones<T extends { phone: string }>(
   phones: T[],
@@ -20,7 +21,7 @@ export function canonicalPhones<T extends { phone: string }>(
   for (const p of phones) {
     const phone = toE164(p.phone)
     if (!phone) return { ok: false, invalid: p.phone }
-    out.push({ ...p, phone })
+    if (!out.some((q) => q.phone === phone)) out.push({ ...p, phone })
   }
   return { ok: true, phones: out }
 }

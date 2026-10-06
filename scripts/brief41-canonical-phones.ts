@@ -26,7 +26,7 @@ async function main() {
   // Brief 41 (H11): writing to a non-test database is a deliberate step.
   if (apply) assertTestDatabase(process.env.DATABASE_URL_MAIN, 'brief41-canonical-phones --apply (DATABASE_URL_MAIN)', { allowOverride: true })
   const dncRows = await prisma.dncSuppression.findMany({ select: { id: true, organizationId: true, source: true, phone: true } })
-  const phoneRows = await prisma.contactPhone.findMany({ select: { id: true, phone: true } })
+  const phoneRows = await prisma.contactPhone.findMany({ select: { id: true, contactId: true, phone: true } })
   const plan = planPhoneBackfill(dncRows, phoneRows)
   console.log(JSON.stringify({
     optOutRows: dncRows.length,
@@ -35,6 +35,7 @@ async function main() {
     optOutsNotAPhoneNumber: plan.dnc.unparseable,
     contactPhoneRows: phoneRows.length,
     contactPhonesToRewrite: plan.contactPhones.rewrite.length,
+    contactPhonesAlreadyCoveredOnTheirContact: plan.contactPhones.alreadyCovered.length,
     contactPhonesNotAPhoneNumber: plan.contactPhones.unparseable,
   }, null, 2))
 

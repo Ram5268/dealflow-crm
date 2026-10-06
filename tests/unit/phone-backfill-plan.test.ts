@@ -26,8 +26,26 @@ describe('planPhoneBackfill', () => {
   })
 
   it('reports values that are not phone numbers and never changes them', () => {
-    const plan = planPhoneBackfill([dnc('a', 'n/a')], [{ id: 'p1', phone: 'call office' }, { id: 'p2', phone: '(917) 331-2047' }, { id: 'p3', phone: '+19173312047' }])
+    const plan = planPhoneBackfill([dnc('a', 'n/a')], [
+      { id: 'p1', contactId: 'c1', phone: 'call office' },
+      { id: 'p2', contactId: 'c1', phone: '(917) 331-2047' },
+      { id: 'p3', contactId: 'c2', phone: '+19173312047' },
+    ])
     expect(plan.dnc).toEqual({ rewrite: [], alreadyCovered: [], unparseable: ['a'] })
-    expect(plan.contactPhones).toEqual({ rewrite: [{ id: 'p2', phone: '+19173312047' }], unparseable: ['p1'] })
+    expect(plan.contactPhones).toEqual({ rewrite: [{ id: 'p2', phone: '+19173312047' }], alreadyCovered: [], unparseable: ['p1'] })
+  })
+
+  it("never gives one contact the same phone twice (contact phones are unique per contact)", () => {
+    // A contact with the number typed by hand and in E.164 from an import, and
+    // another contact with two typed formats.
+    const plan = planPhoneBackfill([], [
+      { id: 'a1', contactId: 'cA', phone: '917-331-2047' },
+      { id: 'a2', contactId: 'cA', phone: '+19173312047' },
+      { id: 'b1', contactId: 'cB', phone: '(917) 331-2047' },
+      { id: 'b2', contactId: 'cB', phone: '9173312047' },
+      { id: 'c1', contactId: 'cC', phone: '917.331.2047' },
+    ])
+    expect(plan.contactPhones.rewrite).toEqual([{ id: 'b1', phone: '+19173312047' }, { id: 'c1', phone: '+19173312047' }])
+    expect(plan.contactPhones.alreadyCovered).toEqual(['a1', 'b2'])
   })
 })

@@ -29,7 +29,7 @@ export async function GET(req: Request) {
   try {
     const orgId = await getCurrentOrgId()
     const rows = await prisma.dncSuppression.findMany({
-      where: { organizationId: orgId, phone: { in: storedForms(phone) } },
+      where: { organizationId: orgId, phone: { in: [...new Set([...storedForms(phone), ...storedForms(phoneParam)])] } },
       select: { source: true, addedAt: true, addedBy: true, reason: true },
       orderBy: { addedAt: 'desc' },
     })

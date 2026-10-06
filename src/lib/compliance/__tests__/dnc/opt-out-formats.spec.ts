@@ -83,6 +83,12 @@ describe('the internal opt-out list matches a number however it was typed (Brief
     })
   }
 
+  it('a batch with the same number typed two ways still matches an old row stored as typed', async () => {
+    const { db } = fakeDncDb([{ phone: '9173312047x5' }])
+    const hits = await internalDncHits(ORG, ['917-331-2047 x5', '+19173312047'], db)
+    expect(hits.has('+19173312047')).toBe(true)
+  })
+
   it('re-adding the same number in another format is idempotent (added:false, one row)', async () => {
     const { db, rows } = fakeDncDb()
     await addInternalDnc(ORG, { phone: '+19173312047' }, db)

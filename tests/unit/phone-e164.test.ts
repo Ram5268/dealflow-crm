@@ -25,6 +25,12 @@ describe('canonicalPhones (contacts API)', () => {
       phones: [{ phone: '+19173312047', type: 'mobile', isPrimary: true }, { phone: '+12125550101', type: 'home', isPrimary: false }],
     })
   })
+  it('keeps one number typed twice once (a contact\'s phones are unique)', () => {
+    expect(canonicalPhones([{ phone: '917-331-2047', type: 'mobile' }, { phone: '+19173312047', type: 'home' }])).toEqual({
+      ok: true,
+      phones: [{ phone: '+19173312047', type: 'mobile' }],
+    })
+  })
   it('names the first value that is not a phone number (→ 400)', () => {
     expect(canonicalPhones([{ phone: '917-331-2047' }, { phone: 'call me' }])).toEqual({ ok: false, invalid: 'call me' })
   })
