@@ -163,7 +163,10 @@ async function listViewPage(
 ): Promise<{ rows: LeadRow[]; total: number; sort: AppliedSort }> {
   const { organizationId, viewId, term, sortKey, sortDir, page, pageSize } = args
   const { compiled, viewSort } = await compileView(db, organizationId, viewId, term)
-  const orderSpec: SortSpec = sortKey ? [{ field: sortKey, direction: sortDir }] : viewSort
+  // A chosen column leads; the view's own saved sort still breaks its ties.
+  const orderSpec: SortSpec = sortKey
+    ? [{ field: sortKey, direction: sortDir }, ...viewSort.filter((s) => s.field !== sortKey)]
+    : viewSort
   const sort: AppliedSort = sortKey ? { key: sortKey, dir: sortDir, fromView: false } : viewSortState(viewSort)
   const [idRows, total] = await Promise.all([
     execute<{ id: string }>(compiled, db, {

@@ -105,6 +105,12 @@ describe("Leads page with a Smart View (Brief 41, H1)", () => {
     expect(names[0]).toBe(nameOf(0));
   });
 
+  it("clicking the view's own first column keeps the view's tie order", async () => {
+    const viewOrder = (await everyPage({})).rows.map((r) => r.id);
+    const explicit = (await everyPage({ sortKey: "priorityScore", sortDir: "desc" })).rows.map((r) => r.id);
+    expect(explicit).toEqual(viewOrder);
+  });
+
   it("a page past the end is empty but keeps the real total", async () => {
     const r = await listLeads({ organizationId: org, viewId, page: 7, pageSize: PAGE }, db);
     expect(r.rows).toEqual([]);
