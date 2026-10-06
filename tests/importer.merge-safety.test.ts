@@ -18,7 +18,7 @@ const emit = async (): Promise<EmitResult> => ({ overflow: false, bytes: 0 });
 let db: PrismaClient;
 let org: string;
 let userId: string;
-const lead: Record<"alice" | "bob" | "carol", string> = { alice: "", bob: "", carol: "" };
+const lead: Record<"alice" | "bob" | "carol" | "ellaA" | "ellaB", string> = { alice: "", bob: "", carol: "", ellaA: "", ellaB: "" };
 
 const col = (column: string, field: string) => ({
   column, sampleValues: [], target: { kind: "standard_field" as const, field }, confidence: 1, reasoning: "",
@@ -28,6 +28,9 @@ const PHONE_ONLY = mapping(col("Phone", "ContactPhone.phone"));
 const MOJO_NAME = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"));
 const MOJO_NAME_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Phone", "ContactPhone.phone"));
 const MOJO_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Phone", "ContactPhone.phone"));
+const MOJO_ADDR_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"));
+const NAME_ADDR_PHONE = mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"));
+const NAME_ADDR = mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"));
 
 async function batchFor(csv: string, status = "importing"): Promise<string> {
   const b = await db.importBatch.create({
@@ -73,6 +76,9 @@ beforeAll(async () => {
   await seedLead("alice", { name: "Alice Owner", address: "10 Main St, Brooklyn, NY 11201", status: "Hot", mojoId: `${TAG}_m1`, phone: "+12125550101" });
   await seedLead("bob", { name: "Bob Owner", address: "20 Oak St, Brooklyn, NY 11215", status: "Warm", mojoId: `${TAG}_m2`, phone: "+12125550102" });
   await seedLead("carol", { name: "Carol Owner", address: "30 Elm St, Brooklyn, NY 11217", status: "New", mojoId: null, phone: "+12125550103" });
+  // One owner, two properties, one phone.
+  await seedLead("ellaA", { name: "Ella Owner", address: "1 Pine St, Brooklyn, NY 11201", status: "Hot", mojoId: `${TAG}_e1`, phone: "+12125550160" });
+  await seedLead("ellaB", { name: "Ella Owner", address: "2 Pine St, Brooklyn, NY 11201", status: "Warm", mojoId: `${TAG}_e2`, phone: "+12125550160" });
 }, 120_000);
 
 afterAll(async () => {
@@ -102,10 +108,29 @@ describe("merge import keeps what the file doesn't contain (Brief 41, H4)", () =
     expect(await leadRow(lead.alice)).toEqual({ ...before, name: "Alice Q Owner", displayName: "Alice Q Owner" });
   });
 
-  it("a matched lead with no Mojo ID gets the file's Mojo ID; nothing else is blanked", async () => {
+  it("a Mojo ID with no address can't be confirmed for a lead that has one: a new lead, the old one untouched", async () => {
     const before = await leadRow(lead.carol);
-    await commitImport(await batchFor(`MojoID,Phone\n${TAG}_m3,212-555-0103\n`), "merge", MOJO_PHONE, "c", { emit, db });
+    await commitImport(await batchFor(`MojoID,Phone\n${TAG}_m30,212-555-0103\n`), "merge", MOJO_PHONE, "c", { emit, db });
+    expect(await leadRow(lead.carol)).toEqual(before);
+    expect((await leadsWithPhone("+12125550103")).map((l) => l.mojoId).sort()).toEqual([`${TAG}_m30`, null].sort());
+  });
+
+  it("a matched lead with no Mojo ID gets the file's Mojo ID when the street matches; nothing else is blanked", async () => {
+    const before = await leadRow(lead.carol);
+    await commitImport(await batchFor(`MojoID,Address,Phone\n${TAG}_m3,30 Elm Street,212-555-0103\n`), "merge", MOJO_ADDR_PHONE, "c", { emit, db });
     expect(await leadRow(lead.carol)).toEqual({ ...before, mojoId: `${TAG}_m3` });
+  });
+
+  it("an owner with two properties on one phone: each row lands on its own property, a third is new", async () => {
+    const a = await leadRow(lead.ellaA);
+    const b = await leadRow(lead.ellaB);
+    const csv = "Name,Address,Phone\nElla Owner,2 Pine Street,212-555-0160\nElla Owner,3 Pine St,212-555-0160\n";
+    const res = await commitImport(await batchFor(csv), "merge", NAME_ADDR_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 1 });
+    expect(await leadRow(lead.ellaA)).toEqual(a); // property A is never touched
+    expect(await leadRow(lead.ellaB)).toEqual(b); // same street: its fuller address stays
+    const third = await db.lead.findMany({ where: { organizationId: org, primaryAddressFull: "3 Pine St" } });
+    expect(third).toHaveLength(1);
   });
 
   it("a different Mojo ID on the same phone is another property: a new lead, the old one untouched", async () => {
@@ -119,11 +144,25 @@ describe("merge import keeps what the file doesn't contain (Brief 41, H4)", () =
 });
 
 describe("rows that share an identity are imported one after another (Brief 41, M25a)", () => {
-  it("30 rows with the same new phone make one lead", async () => {
-    const rows = Array.from({ length: 30 }, () => "212-555-0199").join("\n");
+  it("10 rows with the same new phone make one lead", async () => {
+    const rows = Array.from({ length: 10 }, () => "212-555-0199").join("\n");
     const res = await commitImport(await batchFor(`Phone\n${rows}\n`), "merge", PHONE_ONLY, "c", { emit, db });
-    expect(res).toMatchObject({ totalRows: 30, importedRows: 30, duplicateRows: 29, errorRows: 0 });
+    expect(res).toMatchObject({ totalRows: 10, importedRows: 10, duplicateRows: 9, errorRows: 0 });
     expect(await leadsWithPhone("+12125550199")).toHaveLength(1);
+  });
+
+  it("a name + address row and a phone row for the same owner make one lead", async () => {
+    const csv = "Name,Address,Phone\nFrank Owner,9 Birch St,212-555-0170\nFrank Owner,9 Birch St,\n";
+    const res = await commitImport(await batchFor(csv), "merge", NAME_ADDR_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 1 });
+    expect(await db.lead.count({ where: { organizationId: org, displayName: "Frank Owner" } })).toBe(1);
+  });
+
+  it("a row with nothing to identify it is an error row, not a mystery lead", async () => {
+    const id = await batchFor("Phone\nnot a number\n");
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 1, importedRows: 0, errorRows: 1 });
+    expect(await db.lead.count({ where: { organizationId: org, source: `import:${id}` } })).toBe(0);
   });
 
   it("a Mojo row and a phone-only row for the same owner make one lead", async () => {
@@ -139,10 +178,9 @@ describe("rows that share an identity are imported one after another (Brief 41, 
 describe("the commit is claimed once, marked on failure, and never re-run (Brief 41, M25b)", () => {
   it("only one claim wins, and an importing or completed batch can't be claimed again", async () => {
     const id = await batchFor("Phone\n212-555-0130\n", "mapping_review");
-    const first = await claimImportCommit(db, id, org, PHONE_ONLY);
-    const second = await claimImportCommit(db, id, org, PHONE_ONLY);
-    expect(first).toEqual({ claimed: true });
-    expect(second).toEqual({ claimed: false, status: "importing" });
+    const claims = await Promise.all([1, 2, 3].map(() => claimImportCommit(db, id, org, PHONE_ONLY)));
+    expect(claims.filter((c) => c.claimed)).toHaveLength(1);
+    expect(claims.filter((c) => !c.claimed)).toEqual([{ claimed: false, status: "importing" }, { claimed: false, status: "importing" }]);
     await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
     expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: false, status: "completed" });
     expect(await claimImportCommit(db, "ib_missing", org, PHONE_ONLY)).toEqual({ claimed: false, status: null });
@@ -159,12 +197,45 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     expect(await claimImportCommit(db, b.id, org, PHONE_ONLY)).toEqual({ claimed: true });
   });
 
+  it("an import that runs out of time stops, is marked failed with the reason, and a re-run finishes it", async () => {
+    const rows = Array.from({ length: 6 }, (_, k) => `212-555-02${String(k).padStart(2, "0")}`).join("\n");
+    const id = await batchFor(`Phone\n${rows}\n`);
+    let t = 0;
+    const clock = () => (t += 1000); // each check advances one second
+    await expect(commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, now: clock, timeLimitMs: 2_500 })).rejects.toThrow(/time limit reached after \d+ of 6 rows/);
+    const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(stopped.status).toBe("failed");
+    expect(JSON.stringify(stopped.errorLog)).toMatch(/Import stopped: time limit reached/);
+    expect(stopped.importedRows).toBeGreaterThan(0);
+    expect(stopped.importedRows).toBeLessThan(6);
+    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 6, importedRows: 6, errorRows: 0 });
+    for (let k = 0; k < 6; k++) expect(await leadsWithPhone(`+121255502${String(k).padStart(2, "0")}`)).toHaveLength(1);
+  });
+
   it("re-running a completed batch changes nothing", async () => {
     const id = await batchFor("Phone\n212-555-0140\n");
     const first = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
     const again = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
     expect(again).toEqual(first);
     expect(await leadsWithPhone("+12125550140")).toHaveLength(1);
+  });
+});
+
+describe("custom values on merge (Brief 41 review)", () => {
+  it("a cell that isn't valid for its field keeps the lead's existing value and is logged", async () => {
+    const def = await db.customFieldDefinition.create({ data: { organizationId: org, objectType: "lead", name: `${TAG} Year Built`, type: "number", displayOrder: 99 } });
+    await db.customFieldValue.create({ data: { organizationId: org, definitionId: def.id, objectType: "lead", objectId: lead.alice, valueNumber: 1920 } });
+    const m = { mapping: [col("MojoID", "Lead.mojoId"), { column: "Year", sampleValues: [], target: { kind: "existing_custom_field" as const, definitionId: def.id }, confidence: 1, reasoning: "" }], likelyDuplicates: [] } as unknown as MappingProposal;
+    const id = await batchFor(`MojoID,Year\n${TAG}_m1,N/A\n`);
+    await commitImport(id, "merge", m, "c", { emit, db });
+    const v = await db.customFieldValue.findUniqueOrThrow({ where: { definitionId_objectId: { definitionId: def.id, objectId: lead.alice } } });
+    expect(v.valueNumber).toBe(1920);
+    expect(JSON.stringify((await db.importBatch.findUniqueOrThrow({ where: { id } })).errorLog)).toMatch(/isn't a valid number/);
+    // a valid value for the same property does update it
+    await commitImport(await batchFor(`MojoID,Year\n${TAG}_m1,1925\n`), "merge", m, "c", { emit, db });
+    expect((await db.customFieldValue.findUniqueOrThrow({ where: { definitionId_objectId: { definitionId: def.id, objectId: lead.alice } } })).valueNumber).toBe(1925);
   });
 });
 

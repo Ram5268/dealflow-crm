@@ -5,6 +5,7 @@ import { getObject } from './storage'
 import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
+import { normalizeStreet, sameStreet } from './address'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,10 +16,12 @@ import type { MappingProposal, ColumnMapping } from './ai-mapping'
 // Lead.source = "import:" + importBatchId on every upsert (locked A-side
 // commitment for C's bulk-scrub). buildRowPlan is pure and unit-tested.
 //
-// Brief 41 (H4, M25): a merge writes only the fields the file has and never
-// blanks or replaces a Mojo ID; a different incoming Mojo ID is another
-// property (a new lead); rows that could be the same lead run one after
-// another; a failed commit is marked 'failed'; a completed batch never re-runs.
+// Brief 41 (H4, M25): a merge never blanks a value or replaces a Mojo ID;
+// only a confirmed same property (same Mojo ID, or same street) may change a
+// name, address, status or custom value, otherwise a merge only fills blanks; a
+// row that is another property becomes a new lead; rows that could be the same
+// lead run one after another; a failed or timed-out commit is marked 'failed';
+// a completed batch never re-runs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DuplicateStrategy = 'skip' | 'merge' | 'add-anyway'
@@ -56,7 +59,7 @@ export interface RowPlan {
   contact: { name?: string; title?: string }
   phones: Array<{ phoneE164: string; type: string; nonstandard: boolean }>
   emails: string[]
-  customValues: Array<{ definitionId: string; type: string; raw: string }>
+  customValues: Array<{ column: string; definitionId: string; type: string; raw: string }>
   dedup: ReturnType<typeof dedupKey>
 }
 
@@ -94,7 +97,7 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   }
   const customValues = m.customColumns
     .filter((c) => (row[c.column] ?? '').trim() !== '')
-    .map((c) => ({ definitionId: c.definitionId, type: c.type, raw: row[c.column] }))
+    .map((c) => ({ column: c.column, definitionId: c.definitionId, type: c.type, raw: row[c.column] }))
 
   // Lead.name comes from Mojo's "Full Name" (the primary owner). Contact.name is
   // mapped from Mojo's "Second Name" — the CO-OWNER. Letting contact.name win
@@ -120,9 +123,9 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
 }
 
 // Rows that could resolve to the same lead (same Mojo ID, any shared phone, or
-// the same name + address when there is no phone) are grouped so they import
-// one after another: two rows for one owner can no longer both miss each other
-// and both create. Groups keep file order; different owners run concurrently.
+// the same name + street) are grouped so they import one after another: two
+// rows for one owner can no longer both miss each other and both create. Groups
+// keep file order; different owners run concurrently.
 export function groupRowsByIdentity(plans: RowPlan[]): number[][] {
   const parent = plans.map((_, i) => i)
   const find = (i: number): number => {
@@ -134,10 +137,11 @@ export function groupRowsByIdentity(plans: RowPlan[]): number[][] {
   }
   const firstRowWithKey = new Map<string, number>()
   plans.forEach((plan, i) => {
+    const named = !!(plan.lead.name || plan.contact.name || plan.lead.primaryAddressFull)
     const keys = [
       plan.lead.mojoId ? `mojo:${plan.lead.mojoId}` : null,
       ...plan.phones.map((p) => `phone:${p.phoneE164}`),
-      plan.dedup.kind === 'name-address' ? plan.dedup.key : null,
+      named ? `na:${plan.displayName.toLowerCase()}|${normalizeStreet(plan.lead.primaryAddressFull?.split(',')[0]) ?? ''}` : null,
     ]
     for (const key of keys) {
       if (!key) continue
@@ -227,6 +231,9 @@ export interface CommitDeps {
   emit?: typeof defaultEmit
   // Defaults to the app's client; tests point it at the perf DB.
   db?: PrismaClient
+  // Tests inject a clock and a short limit for the time-limit path.
+  now?: () => number
+  timeLimitMs?: number
 }
 
 export interface CommitResult {
@@ -237,10 +244,17 @@ export interface CommitResult {
   errorRows: number
 }
 
+// The commit runs in after() under the route's maxDuration (300 s). It stops
+// starting rows well before that, so it can always mark the batch 'failed'
+// with a reason instead of being killed mid-way and left at 'importing'.
+export const COMMIT_TIME_LIMIT_MS = 240_000
+const PROGRESS_EVERY = 100
+
 // Full commit path. Reads the raw file, resolves the mapping, and upserts every
 // row. A completed batch is never imported twice: a retry or a second run
-// returns the counts the first run recorded. Any failure marks the batch
-// 'failed' (with the reason) before rethrowing, so it can't sit at 'importing'.
+// returns the counts the first run recorded. Any failure, including running
+// out of time, marks the batch 'failed' (with the reason) before rethrowing.
+// Running it again is safe: rows already imported are merged, not duplicated.
 export async function commitImport(
   importBatchId: string,
   duplicateStrategy: DuplicateStrategy,
@@ -250,9 +264,9 @@ export async function commitImport(
 ): Promise<CommitResult> {
   const emit = deps.emit ?? defaultEmit
   const db = deps.db ?? prisma
-  const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
-  if (batch.status === 'completed') return counts(batch)
-  const organizationId = batch.organizationId
+  const now = deps.now ?? Date.now
+  const startedAt = now()
+  const timeLimitMs = deps.timeLimitMs ?? COMMIT_TIME_LIMIT_MS
   const source = `import:${importBatchId}`
 
   const result: CommitResult = {
@@ -265,6 +279,10 @@ export async function commitImport(
   const errorLog: Array<{ row: number; message: string }> = []
 
   try {
+    const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
+    if (batch.status === 'completed') return counts(batch)
+    const organizationId = batch.organizationId
+
     const buffer = await getObject(batch.storageKey, db)
     const parsed = parseFile(buffer, batch.filename)
     const customColumns = await ensureCustomFieldDefinitions(db, organizationId, mapping.mapping)
@@ -284,28 +302,38 @@ export async function commitImport(
         .catch(() => {}) // progress is best-effort; the final write is authoritative
     }
 
+    let outOfTime = false
     const importRow = async (i: number) => {
-      const plan = plans[i]
-      try {
-        const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy)
-        if (outcome === 'skipped') {
-          result.skippedRows++
-        } else {
-          result.importedRows++
-          if (outcome.merged) result.duplicateRows++
-          await emit('crm_lead_sync', {
-            leadId: outcome.leadId,
-            sourceLabel: batch.sourceLabel,
-            importBatchId,
-            correlationId,
-          })
-        }
-      } catch (err) {
-        result.errorRows++
-        errorLog.push({ row: i + 2, message: err instanceof Error ? err.message : String(err) })
+      if (outOfTime || now() - startedAt > timeLimitMs) {
+        outOfTime = true
+        return
       }
-      if (plan.phones.some((p) => p.nonstandard)) {
-        errorLog.push({ row: i + 2, message: 'nonstandard phone type kept as-is' })
+      const plan = plans[i]
+      const rowErrors = (message: string) => errorLog.push({ row: i + 2, message })
+      if (!plan.lead.mojoId && plan.phones.length === 0 && !plan.lead.name && !plan.contact.name && !plan.lead.primaryAddressFull) {
+        // Nothing to match it on: it would merge into every other such row.
+        result.errorRows++
+        rowErrors('no Mojo ID, phone, name or address to identify this row; skipped')
+      } else {
+        try {
+          const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy, rowErrors)
+          if (outcome === 'skipped') {
+            result.skippedRows++
+          } else {
+            result.importedRows++
+            if (outcome.merged) result.duplicateRows++
+            await emit('crm_lead_sync', {
+              leadId: outcome.leadId,
+              sourceLabel: batch.sourceLabel,
+              importBatchId,
+              correlationId,
+            })
+          }
+        } catch (err) {
+          result.errorRows++
+          rowErrors(err instanceof Error ? err.message : String(err))
+        }
+        if (plan.phones.some((p) => p.nonstandard)) rowErrors('nonstandard phone type kept as-is')
       }
       processed++
       await reportProgress()
@@ -318,6 +346,12 @@ export async function commitImport(
     await mapWithConcurrency(groupRowsByIdentity(plans), CONCURRENCY, async (group) => {
       for (const i of group) await importRow(i)
     })
+    if (outOfTime) {
+      throw new Error(
+        `time limit reached after ${processed} of ${result.totalRows} rows. ` +
+          'Run it again to import the rest; rows already imported are merged, not duplicated'
+      )
+    }
 
     await db.importBatch.update({
       where: { id: importBatchId },
@@ -346,8 +380,6 @@ export async function commitImport(
   }
 }
 
-const PROGRESS_EVERY = 100
-
 function counts(r: CommitResult) {
   return {
     totalRows: r.totalRows,
@@ -363,6 +395,21 @@ interface UpsertOk {
   merged: boolean
 }
 
+// What a merge knows about the lead it matched.
+interface LeadMatch {
+  id: string
+  mojoId: string | null
+  name: string | null
+  primaryAddressFull: string | null
+  statusLabel: string | null
+  // true when the row is certainly this property (same Mojo ID, or same street):
+  // only then may it change a name, status or custom value.
+  sameProperty: boolean
+  // how it matched: only a Mojo ID match may rewrite an existing address (a
+  // same-street match already has it, often more completely).
+  by: 'mojo' | 'street' | 'other'
+}
+
 // Returns the affected leadId + whether it merged into an existing lead, or
 // 'skipped'. Kept as its own function so commitImport stays readable.
 async function upsertRow(
@@ -370,49 +417,27 @@ async function upsertRow(
   organizationId: string,
   source: string,
   plan: RowPlan,
-  strategy: DuplicateStrategy
+  strategy: DuplicateStrategy,
+  rowErrors: (message: string) => void
 ): Promise<'skipped' | UpsertOk> {
   const existing = await findExistingLead(db, organizationId, plan)
 
   if (existing && strategy === 'skip') return 'skipped'
+  if (!existing || strategy === 'add-anyway') return createLead(db, organizationId, source, plan, rowErrors)
 
-  // Fast path: a brand-new lead is created with its contact + phones + emails
-  // nested in a SINGLE query (no contact lookup — there is nothing to reuse yet).
-  if (!existing || strategy === 'add-anyway') {
-    const lead = await db.lead.create({
-      data: {
-        organizationId,
-        displayName: plan.displayName,
-        name: plan.lead.name ?? null,
-        primaryAddressFull: plan.lead.primaryAddressFull ?? null,
-        primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
-        statusLabel: plan.lead.statusLabel ?? null,
-        mojoId: plan.lead.mojoId ?? null,
-        source,
-        contacts: {
-          create: {
-            organizationId,
-            displayName: plan.contact.name ?? plan.displayName,
-            name: plan.contact.name ?? null,
-            title: plan.contact.title ?? null,
-            phones: {
-              create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
-            },
-            emails: {
-              create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
-            },
-          },
-        },
-      },
+  // Merge path. A Mojo ID only fills a blank, and atomically: if another row
+  // filled this lead first, the lead is another property, so this row is too.
+  if (plan.lead.mojoId && !existing.mojoId) {
+    const { count } = await db.lead.updateMany({
+      where: { id: existing.id, mojoId: null },
+      data: { mojoId: plan.lead.mojoId },
     })
-    await writeCustomValues(db, organizationId, lead.id, plan.customValues)
-    return { leadId: lead.id, merged: false }
+    if (count === 0) return createLead(db, organizationId, source, plan, rowErrors)
   }
-
-  // Merge path: update the existing lead with only what the file has, reuse its
-  // primary contact, dedup phones.
-  await db.lead.update({ where: { id: existing.id }, data: mergeUpdate(plan, source, existing.mojoId) })
+  await db.lead.update({ where: { id: existing.id }, data: mergeUpdate(plan, source, existing) })
   const leadId = existing.id
+
+  // Reuse its primary contact, dedup phones.
   let contact = await db.contact.findFirst({
     where: { leadId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -439,43 +464,100 @@ async function upsertRow(
       skipDuplicates: true,
     })
   }
-  await writeCustomValues(db, organizationId, leadId, plan.customValues)
+  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty ? 'overwrite' : 'fill', rowErrors)
   return { leadId, merged: true }
 }
 
-// Brief 41 (H4): a merge writes only the fields the file actually has. A blank
-// cell never wipes a value, the name only changes when the file has one (a
-// co-owner name never replaces it), and a Mojo ID only fills a blank —
-// findExistingLead never matches a lead with a different Mojo ID.
-function mergeUpdate(plan: RowPlan, source: string, existingMojoId: string | null): Prisma.LeadUpdateInput {
+// A brand-new lead is created with its contact + phones + emails nested in a
+// SINGLE query (no contact lookup — there is nothing to reuse yet).
+async function createLead(
+  db: PrismaClient,
+  organizationId: string,
+  source: string,
+  plan: RowPlan,
+  rowErrors: (message: string) => void
+): Promise<UpsertOk> {
+  const lead = await db.lead.create({
+    data: {
+      organizationId,
+      displayName: plan.displayName,
+      name: plan.lead.name ?? null,
+      primaryAddressFull: plan.lead.primaryAddressFull ?? null,
+      primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
+      statusLabel: plan.lead.statusLabel ?? null,
+      mojoId: plan.lead.mojoId ?? null,
+      source,
+      contacts: {
+        create: {
+          organizationId,
+          displayName: plan.contact.name ?? plan.displayName,
+          name: plan.contact.name ?? null,
+          title: plan.contact.title ?? null,
+          phones: {
+            create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
+          },
+          emails: {
+            create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
+          },
+        },
+      },
+    },
+  })
+  await writeCustomValues(db, organizationId, lead.id, plan.customValues, 'fill', rowErrors)
+  return { leadId: lead.id, merged: false }
+}
+
+// Brief 41 (H4): a merge writes only the fields the file actually has, and a
+// blank cell never wipes a value. Only a confirmed same property may change an
+// existing name or status, and only a Mojo ID match may rewrite an address;
+// otherwise the row only fills blanks. The name only changes from a Lead.name
+// column (a co-owner never replaces it). The Mojo ID is handled separately
+// (fill-only, atomically) in upsertRow.
+function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma.LeadUpdateInput {
   const data: Prisma.LeadUpdateInput = { source }
-  if (plan.lead.name) {
+  const may = (current: string | null) => existing.sameProperty || !current
+  if (plan.lead.name && may(existing.name)) {
     data.name = plan.lead.name
     data.displayName = plan.displayName
   }
-  if (plan.lead.primaryAddressFull) {
+  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || !existing.primaryAddressFull)) {
     data.primaryAddressFull = plan.lead.primaryAddressFull
     data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
   }
-  if (plan.lead.statusLabel) data.statusLabel = plan.lead.statusLabel
-  if (plan.lead.mojoId && !existingMojoId) data.mojoId = plan.lead.mojoId
+  if (plan.lead.statusLabel && may(existing.statusLabel)) data.statusLabel = plan.lead.statusLabel
   return data
 }
 
+// Custom values in one or two statements (not one upsert per column). A cell
+// that doesn't parse for its field type (e.g. "N/A" in a number field) is
+// skipped and logged, never written as a blank. 'overwrite' replaces the lead's
+// values for these fields; 'fill' only adds the ones it doesn't have yet.
 async function writeCustomValues(
   db: PrismaClient,
   organizationId: string,
   leadId: string,
-  values: RowPlan['customValues']
+  values: RowPlan['customValues'],
+  mode: 'overwrite' | 'fill',
+  rowErrors: (message: string) => void
 ): Promise<void> {
+  const data: Prisma.CustomFieldValueCreateManyInput[] = []
   for (const cv of values) {
     const cols = buildCustomValueColumns(cv.type, cv.raw)
-    await db.customFieldValue.upsert({
-      where: { definitionId_objectId: { definitionId: cv.definitionId, objectId: leadId } },
-      create: { organizationId, definitionId: cv.definitionId, objectType: 'lead', objectId: leadId, ...cols },
-      update: cols,
-    })
+    if (cols.valueText == null && cols.valueNumber == null && cols.valueDate == null && cols.valueJson === undefined) {
+      rowErrors(`column "${cv.column}": "${cv.raw}" isn't a valid ${cv.type}; kept the lead's existing value`)
+      continue
+    }
+    data.push({ organizationId, definitionId: cv.definitionId, objectType: 'lead', objectId: leadId, ...cols } as Prisma.CustomFieldValueCreateManyInput)
   }
+  if (data.length === 0) return
+  if (mode === 'fill') {
+    await db.customFieldValue.createMany({ data, skipDuplicates: true })
+    return
+  }
+  await db.$transaction([
+    db.customFieldValue.deleteMany({ where: { objectId: leadId, definitionId: { in: data.map((d) => d.definitionId) } } }),
+    db.customFieldValue.createMany({ data }),
+  ])
 }
 
 // Runs `fn` over items with at most `limit` concurrent in flight. Preserves the
@@ -496,39 +578,62 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers)
 }
 
-// Mojo ID first, then the first phone, then name + address. A lead found by
-// phone or name that already has a DIFFERENT Mojo ID is another property of the
-// same owner, so it is not a match (the row becomes a new lead).
+// Brief 41 (H4): matching a row to an existing lead.
+//  1. Same Mojo ID → that lead (the same property).
+//  2. Else the leads sharing the row's first phone, oldest first, skipping any
+//     with a different Mojo ID (another property of the same owner):
+//       - the row has an address: the lead at the same street (same property),
+//         else a lead with no address yet (the row fills it in); otherwise the
+//         row is another property and becomes a new lead;
+//       - the row has no address: the first such lead. A row with a Mojo ID
+//         never attaches it to a lead whose address it can't confirm.
+//  3. Else the exact name + address (a row with a Mojo ID needs an address
+//     for this; a name alone can't attach it).
+// No match → a new lead.
 async function findExistingLead(
   db: PrismaClient,
   organizationId: string,
   plan: RowPlan
-): Promise<{ id: string; mojoId: string | null } | null> {
+): Promise<LeadMatch | null> {
+  const select = { id: true, mojoId: true, name: true, primaryAddressFull: true, statusLabel: true } as const
+  const rowAddress = plan.lead.primaryAddressFull ?? null
   if (plan.lead.mojoId) {
-    const byMojo = await db.lead.findFirst({
-      where: { organizationId, mojoId: plan.lead.mojoId },
-      select: { id: true, mojoId: true },
-    })
-    if (byMojo) return byMojo
+    const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
+    if (byMojo) return { ...byMojo, sameProperty: true, by: 'mojo' }
   }
-  let match: { id: string; mojoId: string | null } | null = null
+  const otherProperty = (l: { mojoId: string | null }) => !!(plan.lead.mojoId && l.mojoId && l.mojoId !== plan.lead.mojoId)
+
   if (plan.phones[0]) {
-    const byPhone = await db.contactPhone.findFirst({
-      where: { phone: plan.phones[0].phoneE164, contact: { organizationId } },
-      select: { contact: { select: { lead: { select: { id: true, mojoId: true } } } } },
-    })
-    match = byPhone?.contact.lead ?? null
+    const candidates = (
+      await db.lead.findMany({
+        where: { organizationId, contacts: { some: { phones: { some: { phone: plan.phones[0].phoneE164 } } } } },
+        select,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: 25,
+      })
+    ).filter((l) => !otherProperty(l))
+    if (rowAddress) {
+      const same = candidates.find((l) => sameStreet(l.primaryAddressFull, rowAddress))
+      if (same) return { ...same, sameProperty: true, by: 'street' }
+      const blank = candidates.find((l) => !l.primaryAddressFull)
+      if (blank) return { ...blank, sameProperty: false, by: 'other' }
+    } else {
+      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && l.primaryAddressFull))
+      if (usable) return { ...usable, sameProperty: false, by: 'other' }
+    }
+    // Leads with this phone are other properties: try the exact name + address.
   }
-  if (!match && plan.dedup.kind === 'name-address') {
-    match = await db.lead.findFirst({
-      where: {
-        organizationId,
-        displayName: plan.displayName,
-        primaryAddressFull: plan.lead.primaryAddressFull ?? null,
-      },
-      select: { id: true, mojoId: true },
-    })
+
+  const byNameAddr = await db.lead.findFirst({
+    where: {
+      organizationId,
+      displayName: plan.displayName,
+      primaryAddressFull: rowAddress,
+    },
+    select,
+  })
+  if (byNameAddr && !otherProperty(byNameAddr) && !(plan.lead.mojoId && !byNameAddr.mojoId && !rowAddress)) {
+    return { ...byNameAddr, sameProperty: !!rowAddress, by: rowAddress ? 'street' : 'other' }
   }
-  if (match && plan.lead.mojoId && match.mojoId && match.mojoId !== plan.lead.mojoId) return null
-  return match
+  return null
 }

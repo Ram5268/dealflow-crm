@@ -57,10 +57,12 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
     )
   }
 
-  await prisma.importBatch.update({
-    where: { id: batch.id },
+  // Conditional: a commit may have started while the AI call ran (another tab).
+  const { count } = await prisma.importBatch.updateMany({
+    where: { id: batch.id, status: { notIn: ['importing', 'completed'] } },
     data: { mappingJson: proposal as object, status: 'mapping_review', totalRows: parsed.totalRowsDetected },
   })
+  if (count === 0) throw new HttpError(409, 'This import has already started.')
 
   return json(
     {

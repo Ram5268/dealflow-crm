@@ -22,7 +22,10 @@ function failureText(batch: Batch): string {
   if (/no stored bytes/.test(reason)) {
     return "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
   }
-  return `The import stopped: ${reason}. Rows imported before it stopped are kept. You can run it again from the mapping page.`
+  if (/^time limit reached/.test(reason)) {
+    return `The import ran out of time (${reason.replace(/\. Run it again.*$/, '')}). Rows imported so far are kept. Run it again to import the rest; nothing will be duplicated.`
+  }
+  return `The import stopped: ${reason}. Rows imported before it stopped are kept. You can run it again.`
 }
 
 export default function ProgressPage({ params }: { params: Promise<{ id: string }> }) {
@@ -31,9 +34,15 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
 
   useEffect(() => {
     let active = true
+    let misses = 0
     const poll = async () => {
-      const res = await fetch(`/api/imports/${id}`)
-      if (!res.ok) return
+      const res = await fetch(`/api/imports/${id}`).catch(() => null)
+      if (!res || !res.ok) {
+        // A blip shouldn't freeze the page; give up only after about a minute.
+        if (active && ++misses < 20) setTimeout(poll, 3000)
+        return
+      }
+      misses = 0
       const b = (await res.json()) as Batch
       if (!active) return
       setBatch(b)
@@ -77,6 +86,13 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
               <p className="mb-4 text-base text-danger" data-testid="import-failed">
                 {failureText(batch)}
               </p>
+            )}
+            {batch.status === 'failed' && (
+              <Button asChild variant="primary">
+                <Link href={`/imports/${id}/mapping-review`} data-testid="retry-import">
+                  Back to the import
+                </Link>
+              </Button>
             )}
             {batch.status === 'completed' && (
               <Button asChild variant="primary">

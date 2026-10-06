@@ -1,6 +1,7 @@
 'use client'
 
 import { use, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 
@@ -76,7 +77,19 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
             Check each proposed column target before committing the import.
           </p>
         </header>
-        {error && <div className="mb-3 rounded-md bg-danger-subtle p-3 text-base text-danger">{error}</div>}
+        {error && (
+          <div className="mb-3 rounded-md bg-danger-subtle p-3 text-base text-danger">
+            {error}
+            {/already (started|running|run)/.test(error) && (
+              <>
+                {' '}
+                <Link href={`/imports/${id}/progress`} className="underline">
+                  See its progress
+                </Link>
+              </>
+            )}
+          </div>
+        )}
         {!proposal && !error && <p className="text-base text-muted">Proposing column mapping…</p>}
         {proposal && (
           <>
