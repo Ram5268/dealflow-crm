@@ -330,6 +330,21 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     expect(JSON.stringify(b.errorLog)).toMatch(/stopped responding/);
   });
 
+  it("a stop while a row's event is still being sent doesn't count that row twice on the re-run", async () => {
+    const id = await batchFor("Phone\n212-555-0230\n212-555-0231\n");
+    let calls = 0;
+    const firstHangs = () => (++calls === 1 ? new Promise<EmitResult>(() => {}) : Promise.resolve({ overflow: false, bytes: 0 } as EmitResult));
+    void commitImport(id, "merge", PHONE_ONLY, "c", { emit: firstHangs, db, watchdogMs: 3_000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 6_000));
+    const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(stopped.status).toBe("failed");
+    expect(stopped.importedRows).toBe(2); // both rows were counted (one's event never went out)
+    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 0, errorRows: 0 });
+    for (const n of ["+12125550230", "+12125550231"]) expect(await leadsWithPhone(n)).toHaveLength(1);
+  });
+
   it("the watchdog also covers a hang before any row (reading the batch or the file)", async () => {
     const id = await batchFor("Phone\n212-555-0221\n");
     const stuck = new Proxy(db, {

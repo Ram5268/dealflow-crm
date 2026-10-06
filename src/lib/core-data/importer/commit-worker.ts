@@ -376,7 +376,9 @@ export async function commitImport(
     }
 
     let outOfTime = false
-    const importRow = async (i: number): Promise<boolean> => {
+    // `counted` marks the row done in its group the moment it is counted, so a
+    // stop while its event is still being sent never redoes (and recounts) it.
+    const importRow = async (i: number, counted: () => void): Promise<boolean> => {
       if (outOfTime || now() - startedAt > timeLimitMs) {
         outOfTime = true
         return false
@@ -386,15 +388,18 @@ export async function commitImport(
       if (!plan.lead.mojoId && plan.phones.length === 0 && !plan.lead.name && !plan.contact.name && !plan.lead.primaryAddressFull) {
         // Nothing to match it on: it would merge into every other such row.
         result.errorRows++
+        counted()
         rowErrors('no Mojo ID, phone, name or address to identify this row; skipped')
       } else {
         try {
           const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy, rowErrors)
           if (outcome === 'skipped') {
             result.skippedRows++
+            counted()
           } else {
             result.importedRows++
             if (outcome.merged) result.duplicateRows++
+            counted()
             await emit('crm_lead_sync', {
               leadId: outcome.leadId,
               sourceLabel: batch.sourceLabel,
@@ -404,6 +409,7 @@ export async function commitImport(
           }
         } catch (err) {
           result.errorRows++
+          counted()
           rowErrors(err instanceof Error ? err.message : String(err))
         }
         if (plan.phones.some((p) => p.nonstandard)) rowErrors('nonstandard phone type kept as-is')
@@ -419,8 +425,9 @@ export async function commitImport(
     const CONCURRENCY = 25
     await mapWithConcurrency(groups, CONCURRENCY, async (group, gi) => {
       for (let r = done[gi]; r < group.length; r++) {
-        if (!(await importRow(group[r]))) return
-        done[gi] = r + 1
+        const markDone = () => { done[gi] = r + 1 }
+        if (!(await importRow(group[r], markDone))) return
+        markDone()
       }
     })
     if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
