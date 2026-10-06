@@ -360,9 +360,12 @@ export function compile(sQuery: SQuery, ctx: CompileContext): CompiledQuery {
 
 // Build the ORDER BY clause from a sort spec. Only allow-listed lead columns are
 // sortable (identifier safety); everything is NULLS LAST so unranked leads sink.
+// lead.id always comes last: a unique tiebreaker, so rows that tie on the sort
+// (flat DealFlow ranking, NULL scores) keep one order, and LIMIT/OFFSET pages
+// and capped lists are the same on every run.
 export function compileOrderBy(sort: SortSpec): string {
   if (!sort || sort.length === 0) {
-    return 'ORDER BY lead."priorityScore" DESC NULLS LAST'
+    return 'ORDER BY lead."priorityScore" DESC NULLS LAST, lead.id ASC'
   }
   const parts = sort.map((s) => {
     const entry = LEAD_COLUMNS[s.field]
@@ -370,7 +373,7 @@ export function compileOrderBy(sort: SortSpec): string {
     const dir = s.direction === 'asc' ? 'ASC' : 'DESC'
     return `${entry.col} ${dir} NULLS LAST`
   })
-  return 'ORDER BY ' + parts.join(', ')
+  return 'ORDER BY ' + [...parts, 'lead.id ASC'].join(', ')
 }
 
 function escapeLike(value: string): string {
