@@ -199,10 +199,11 @@ async function down() {
 }
 
 // Brief 41: the command is read without --i-mean-live, so "--i-mean-live down"
-// cleans up instead of seeding; anything but up/down is refused.
-const cmd = scriptArgs()[0] ?? 'up'
+// cleans up instead of seeding. It must be given: anything but up/down
+// (including nothing) is refused, so a slip never seeds.
+const cmd = scriptArgs()[0]
 if (cmd !== 'up' && cmd !== 'down') {
-  console.error(`usage: _agentf-visual-seed.ts [up|down] [--i-mean-live] (got "${cmd}")`)
+  console.error(`usage: _agentf-visual-seed.ts up|down [--i-mean-live] (got ${cmd ? `"${cmd}"` : 'nothing'})`)
   process.exit(1)
 }
 void (cmd === 'down' ? down() : up())
