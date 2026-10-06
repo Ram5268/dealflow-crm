@@ -6,7 +6,7 @@ import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
 import { normalizeStreet, sameStreet } from './address'
-import { mappingKey, resumePoint } from './batch'
+import { mappingKey, resumePoint, type ResumeState } from './batch'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ const PROGRESS_EVERY = 100
 // stopped; otherwise rows already imported are merged, not duplicated.
 // A time-limit stop: carries where a re-run with the same mapping continues.
 class ImportTimeLimit extends Error {
-  constructor(doneRows: number, totalRows: number, readonly resumeFromGroup: number) {
+  constructor(doneRows: number, totalRows: number, readonly resume: ResumeState) {
     super(
       `time limit reached after ${doneRows} of ${totalRows} rows. ` +
         'Run it again to continue from there; rows already imported are not repeated or duplicated'
@@ -294,7 +294,7 @@ export async function commitImport(
     errorRows: 0,
   }
   const errorLog: Array<{ row: number; message: string }> = []
-  const markFailed = (message: string, resumeFromGroup?: number) =>
+  const markFailed = (message: string, resume?: ResumeState) =>
     db.importBatch
       .update({
         where: { id: importBatchId },
@@ -303,19 +303,43 @@ export async function commitImport(
           ...counts(result),
           errorLog: [
             ...errorLog.slice(0, 499),
-            { row: 0, message: `Import stopped: ${message}`, ...(resumeFromGroup != null ? { resumeFromGroup, mappingKey: key } : {}) },
+            { row: 0, message: `Import stopped: ${message}`, ...(resume ? { resume, mappingKey: key } : {}) },
           ],
           completedAt: new Date(),
         },
       })
       .catch(() => {}) // the original error is what the caller needs
-  let watchdog: ReturnType<typeof setTimeout> | undefined
   let settled = false
+  // Where a re-run would continue, as of now; the watchdog records it.
+  let resumeNow: () => ResumeState | undefined = () => undefined
+  // In case one query hangs (the file download, a row) past the time limit:
+  // mark the batch failed before the platform kills the function. Armed before
+  // any work. If the work does finish, its own 'completed' write comes later
+  // and wins.
+  const watchdog = setTimeout(() => {
+    if (!settled) void markFailed('the import stopped responding. Run it again to continue', resumeNow())
+  }, watchdogMs)
+  watchdog.unref?.()
 
   try {
     const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
     if (batch.status === 'completed') return counts(batch)
     const organizationId = batch.organizationId
+
+    // A re-run after a stop continues where that run stopped (the grouping is
+    // the same for the same file and mapping), keeping its counts and errors.
+    const prior = resumePoint(batch.errorLog, key)
+    if (prior) {
+      result.totalRows = batch.totalRows
+      result.importedRows = batch.importedRows
+      result.duplicateRows = batch.duplicateRows
+      result.skippedRows = batch.skippedRows
+      result.errorRows = batch.errorRows
+      for (const e of Array.isArray(batch.errorLog) ? batch.errorLog : []) {
+        if (e && typeof e === 'object' && (e as { row?: unknown }).row !== 0) errorLog.push(e as { row: number; message: string })
+      }
+      resumeNow = () => prior
+    }
 
     const buffer = await getObject(batch.storageKey, db)
     const parsed = parseFile(buffer, batch.filename)
@@ -325,22 +349,23 @@ export async function commitImport(
     const groups = groupRowsByIdentity(plans)
     result.totalRows = plans.length
 
-    // A re-run after a time-limit stop continues where that run stopped (the
-    // grouping is the same for the same file and mapping), keeping its counts.
-    const resumeFrom = resumePoint(batch.errorLog, key) ?? 0
-    if (resumeFrom > 0) {
-      result.importedRows = batch.importedRows
-      result.duplicateRows = batch.duplicateRows
-      result.skippedRows = batch.skippedRows
-      result.errorRows = batch.errorRows
-      for (const e of Array.isArray(batch.errorLog) ? batch.errorLog : []) {
-        if (e && typeof e === 'object' && (e as { row?: unknown }).row !== 0) errorLog.push(e as { row: number; message: string })
-      }
+    // Rows already done in each group: all of a group before prior.next, or
+    // the recorded part of a group that was cut off.
+    const done = groups.map((g, gi) => (prior && gi < prior.next ? g.length : 0))
+    for (const [gi, rows] of prior?.partial ?? []) if (gi < groups.length) done[gi] = Math.min(rows, groups[gi].length)
+    // Groups start in index order, so every group that has done any work comes
+    // before every group that hasn't. Those cut off mid-way are listed.
+    resumeNow = () => {
+      let next = groups.length
+      while (next > 0 && done[next - 1] === 0) next--
+      const partial: Array<[number, number]> = []
+      for (let gi = 0; gi < next; gi++) if (done[gi] < groups[gi].length) partial.push([gi, done[gi]])
+      return { next, partial }
     }
     await db.importBatch.update({ where: { id: importBatchId }, data: { totalRows: result.totalRows } })
 
     // Counts are written every PROGRESS_EVERY rows so the progress page moves.
-    let processed = groups.slice(0, resumeFrom).reduce((n, g) => n + g.length, 0)
+    let processed = done.reduce((n, d) => n + d, 0)
     let reported = processed
     const reportProgress = async () => {
       if (processed - reported < PROGRESS_EVERY) return
@@ -349,20 +374,6 @@ export async function commitImport(
         .update({ where: { id: importBatchId }, data: counts(result) })
         .catch(() => {}) // progress is best-effort; the final write is authoritative
     }
-
-    const doneGroups = new Set<number>()
-    const firstUnfinished = () => {
-      let g = resumeFrom
-      while (doneGroups.has(g)) g++
-      return g
-    }
-    // In case one query hangs past the time limit: mark the batch failed before
-    // the platform kills the function (if the work does finish, its own
-    // 'completed' write comes later and wins).
-    watchdog = setTimeout(() => {
-      if (!settled) void markFailed('the import stopped responding. Run it again to continue', firstUnfinished())
-    }, watchdogMs)
-    watchdog.unref?.()
 
     let outOfTime = false
     const importRow = async (i: number): Promise<boolean> => {
@@ -407,11 +418,12 @@ export async function commitImport(
     // Rows that could be the same lead share a group and run in file order.
     const CONCURRENCY = 25
     await mapWithConcurrency(groups, CONCURRENCY, async (group, gi) => {
-      if (gi < resumeFrom) return
-      for (const i of group) if (!(await importRow(i))) return
-      doneGroups.add(gi)
+      for (let r = done[gi]; r < group.length; r++) {
+        if (!(await importRow(group[r]))) return
+        done[gi] = r + 1
+      }
     })
-    if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, firstUnfinished())
+    if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
 
     settled = true
     await db.importBatch.update({
@@ -426,11 +438,11 @@ export async function commitImport(
     return result
   } catch (err) {
     settled = true
-    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportTimeLimit ? err.resumeFromGroup : undefined)
+    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportTimeLimit ? err.resume : resumeNow())
     throw err
   } finally {
     settled = true
-    if (watchdog) clearTimeout(watchdog)
+    clearTimeout(watchdog)
   }
 }
 

@@ -43,40 +43,46 @@ const COMMITTABLE = ['pending', 'mapping_review', 'failed']
 
 export type CommitClaim = { claimed: true } | { claimed: false; status: string | null }
 
-// JSON with sorted keys, so a mapping read back from Postgres jsonb (which
-// reorders keys) compares equal to the one posted.
-function stableJson(value: unknown): string {
-  const norm = (v: unknown): unknown =>
-    Array.isArray(v)
-      ? v.map(norm)
-      : v && typeof v === 'object'
-        ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, norm((v as Record<string, unknown>)[k])]))
-        : v
-  return JSON.stringify(norm(value))
-}
-
-// A short fingerprint of a column mapping (FNV-1a over its stable JSON). The
-// rows' grouping, and so a resume point, is only valid for the same mapping.
+// A short fingerprint (FNV-1a) of what decides how rows are grouped and
+// matched: which column feeds which standard field. Not the AI's reasoning,
+// confidence or samples, and not custom-field targets: "Back to the import"
+// asks the AI again, and those differ on every proposal (a custom field the
+// first run created comes back as an existing one).
 export function mappingKey(mapping: MappingProposal): string {
+  const fields = mapping.mapping
+    .flatMap((c) => (c.target.kind === 'standard_field' ? [`${c.column}\u0000${c.target.field}`] : []))
+    .sort()
   let h = 0x811c9dc5
-  for (const ch of stableJson(mapping.mapping)) {
+  for (const ch of JSON.stringify(fields)) {
     h ^= ch.charCodeAt(0)
     h = Math.imul(h, 0x01000193) >>> 0
   }
   return h.toString(16)
 }
 
-// Brief 41: an import stopped by the time limit records, in its row-0 errorLog
-// entry, the first group of rows it didn't finish and the mapping it used. A
-// re-run with the same mapping continues from there instead of row 1.
-export function resumePoint(errorLog: unknown, key: string): number | null {
+// Where a stopped import continues: every row group before `next` is finished
+// except those in `partial`, listed as [group index, rows of it already done].
+// Only groups still running when it stopped are partial, so at most the
+// commit's concurrency (25).
+export interface ResumeState {
+  next: number
+  partial: Array<[number, number]>
+}
+
+// Brief 41: an import stopped by the time limit (or the watchdog) records, in
+// its row-0 errorLog entry, how far it got and the mapping it used. A re-run
+// with the same mapping continues from there instead of row 1.
+export function resumePoint(errorLog: unknown, key: string): ResumeState | null {
   if (!Array.isArray(errorLog)) return null
   const stop = errorLog.find((e) => !!e && typeof e === 'object' && (e as { row?: unknown }).row === 0) as
-    | { resumeFromGroup?: unknown; mappingKey?: unknown }
+    | { resume?: unknown; mappingKey?: unknown }
     | undefined
-  return typeof stop?.resumeFromGroup === 'number' && stop.resumeFromGroup > 0 && stop.mappingKey === key
-    ? stop.resumeFromGroup
-    : null
+  if (!stop || stop.mappingKey !== key) return null
+  const r = stop.resume as Partial<ResumeState> | undefined
+  const pairs = (p: unknown): p is Array<[number, number]> =>
+    Array.isArray(p) && p.every((x) => Array.isArray(x) && x.length === 2 && x.every((n) => Number.isInteger(n) && n >= 0))
+  if (!r || !Number.isInteger(r.next) || (r.next as number) <= 0 || !pairs(r.partial)) return null
+  return { next: r.next as number, partial: r.partial }
 }
 
 // Atomically moves the batch to 'importing' (an UPDATE with the status it was

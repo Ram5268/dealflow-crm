@@ -254,6 +254,59 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     for (let k = 0; k < 6; k++) expect(await leadsWithPhone(`+121255502${String(k).padStart(2, "0")}`)).toHaveLength(1);
   });
 
+  it("a re-run whose mapping the AI proposed again (new wording, the custom field now existing) still continues", async () => {
+    const rows = Array.from({ length: 6 }, (_, k) => `212-555-04${String(k).padStart(2, "0")},note ${k}`).join("\n");
+    const id = await batchFor(`Phone,Notes\n${rows}\n`);
+    const notesName = `${TAG} Notes`;
+    const first = { mapping: [
+      { column: "Phone", sampleValues: ["212-555-0400"], target: { kind: "standard_field", field: "ContactPhone.phone" }, confidence: 0.98, reasoning: "Looks like a phone number." },
+      { column: "Notes", sampleValues: ["note 0"], target: { kind: "new_custom_field", name: notesName, type: "text" }, confidence: 0.7, reasoning: "Free text." },
+    ], likelyDuplicates: [] } as unknown as MappingProposal;
+    let t = 0;
+    await expect(commitImport(id, "merge", first, "c", { emit, db, now: () => (t += 1000), timeLimitMs: 2_500 })).rejects.toThrow(/time limit/);
+    const doneFirst = (await db.importBatch.findUniqueOrThrow({ where: { id } })).importedRows;
+    expect(doneFirst).toBe(2);
+    const def = await db.customFieldDefinition.findFirstOrThrow({ where: { organizationId: org, name: notesName } });
+    // "Back to the import" asks the AI again: other wording and samples, and the
+    // custom field the first run created now comes back as an existing one.
+    const again = { mapping: [
+      { column: "Notes", sampleValues: ["note 3"], target: { kind: "existing_custom_field", definitionId: def.id }, confidence: 0.9, reasoning: "Matches the existing Notes field." },
+      { column: "Phone", sampleValues: ["212-555-0401"], target: { kind: "standard_field", field: "ContactPhone.phone" }, confidence: 0.95, reasoning: "Phone numbers." },
+    ], likelyDuplicates: [] } as unknown as MappingProposal;
+    expect(await claimImportCommit(db, id, org, again)).toEqual({ claimed: true });
+    expect((await db.importBatch.findUniqueOrThrow({ where: { id } })).importedRows).toBe(doneFirst);
+    let emits = 0;
+    const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
+    const res = await commitImport(id, "merge", again, "c", { emit: counting, db });
+    expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 0, errorRows: 0 });
+    expect(emits).toBe(6 - doneFirst);
+    for (let k = 0; k < 6; k++) {
+      const [l] = await leadsWithPhone(`+121255504${String(k).padStart(2, "0")}`);
+      expect(l).toBeDefined();
+      const v = await db.customFieldValue.findUniqueOrThrow({ where: { definitionId_objectId: { definitionId: def.id, objectId: l.id } } });
+      expect(v.valueText).toBe(`note ${k}`);
+    }
+  });
+
+  it("a group of same-phone rows cut off mid-way resumes at its next row, so the counts stay exact", async () => {
+    // Rows 1-4 share a phone (one group, run in order); rows 5 and 6 are others.
+    const id = await batchFor(`Phone\n212-555-0310\n212-555-0310\n212-555-0310\n212-555-0310\n212-555-0311\n212-555-0312\n`);
+    let t = 0;
+    await expect(commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, now: () => (t += 1000), timeLimitMs: 2_500 })).rejects.toThrow(/time limit/);
+    const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    // The shared-phone group stopped after its first row; row 5 finished.
+    expect(stopped).toMatchObject({ importedRows: 2, duplicateRows: 0 });
+    expect(JSON.stringify(stopped.errorLog)).toContain('"resume":{"next":2,"partial":[[0,1]]}');
+    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    let emits = 0;
+    const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db });
+    // Exactly the 4 rows not yet done: 3 more of the group (merged) and row 6.
+    expect(emits).toBe(4);
+    expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 3, errorRows: 0 });
+    for (const n of ["+12125550310", "+12125550311", "+12125550312"]) expect(await leadsWithPhone(n)).toHaveLength(1);
+  });
+
   it("a different mapping after a time-limit stop starts again from row 1 (still without duplicates)", async () => {
     const id = await batchFor(`Phone\n212-555-0210\n212-555-0211\n212-555-0212\n`);
     let t = 0;
@@ -271,6 +324,22 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const id = await batchFor("Phone\n212-555-0220\n");
     const hang = () => new Promise<EmitResult>(() => {}); // never settles
     void commitImport(id, "merge", PHONE_ONLY, "c", { emit: hang, db, watchdogMs: 300 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 3_000));
+    const b = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(b.status).toBe("failed");
+    expect(JSON.stringify(b.errorLog)).toMatch(/stopped responding/);
+  });
+
+  it("the watchdog also covers a hang before any row (reading the batch or the file)", async () => {
+    const id = await batchFor("Phone\n212-555-0221\n");
+    const stuck = new Proxy(db, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop);
+        if (prop !== "importBatch") return typeof v === "function" ? v.bind(target) : v;
+        return new Proxy(v, { get: (d, p) => (p === "findUniqueOrThrow" ? () => new Promise(() => {}) : Reflect.get(d, p)) });
+      },
+    }) as PrismaClient;
+    void commitImport(id, "merge", PHONE_ONLY, "c", { emit, db: stuck, watchdogMs: 300 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 3_000));
     const b = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(b.status).toBe("failed");
