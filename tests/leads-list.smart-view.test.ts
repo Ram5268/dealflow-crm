@@ -18,6 +18,7 @@ let db: PrismaClient;
 let org: string;
 let viewId: string;
 let brokenViewId: string;
+let allViewId: string;
 
 const nameOf = (i: number) => `${TAG} lead ${String(i).padStart(4, "0")}`;
 
@@ -31,12 +32,16 @@ beforeAll(async () => {
       displayName: nameOf(i),
       // Three distinct scores, so nearly every row ties with hundreds of others.
       priorityScore: i < RANKED ? [60, 70, 80][i % 3] : null,
+      topMatchFit: i < RANKED ? [90, 50, null][Math.floor(i / 3) % 3] : null,
     })),
   });
   viewId = (
     await db.savedView.create({
       data: { organizationId: org, name: "priority", type: "lead", sQuery: DEFAULT_VIEW.sQuery, sort: DEFAULT_VIEW.sort },
     })
+  ).id;
+  allViewId = (
+    await db.savedView.create({ data: { organizationId: org, name: "everyone", type: "lead", sQuery: { type: "match_all" } } })
   ).id;
   brokenViewId = (
     await db.savedView.create({
@@ -80,6 +85,41 @@ describe("Leads page with a Smart View (Brief 41, H1)", () => {
     expect(r.rows).toHaveLength(50);
   });
 
+  it("with no column chosen, pages the whole view in its own saved order (priority, then top match fit)", async () => {
+    const first = await listLeads({ organizationId: org, viewId, pageSize: PAGE }, db);
+    expect(first.sort).toEqual({ key: "priorityScore", dir: "desc", fromView: true });
+    const { rows } = await everyPage({});
+    const expected = await db.lead.findMany({
+      where: { organizationId: org, priorityScore: { gte: 0 } },
+      orderBy: [{ priorityScore: { sort: "desc", nulls: "last" } }, { topMatchFit: { sort: "desc", nulls: "last" } }, { id: "asc" }],
+      select: { id: true },
+    });
+    expect(rows.map((r) => r.id)).toEqual(expected.map((e) => e.id));
+  });
+
+  it("a chosen column overrides the view's saved sort", async () => {
+    const r = await listLeads({ organizationId: org, viewId, sortKey: "displayName", sortDir: "asc", pageSize: 5 }, db);
+    expect(r.sort).toEqual({ key: "displayName", dir: "asc", fromView: false });
+    const names = r.rows.map((x) => x.displayName);
+    expect(names).toEqual([...names].sort());
+    expect(names[0]).toBe(nameOf(0));
+  });
+
+  it("a page past the end is empty but keeps the real total", async () => {
+    const r = await listLeads({ organizationId: org, viewId, page: 7, pageSize: PAGE }, db);
+    expect(r.rows).toEqual([]);
+    expect(r.total).toBe(RANKED);
+  });
+
+  it("the same column sort gives the same order with or without a view", async () => {
+    for (const [sortKey, sortDir] of [["priorityScore", "desc"], ["displayName", "asc"], ["statusLabel", "asc"]] as const) {
+      const withView = await listLeads({ organizationId: org, viewId: allViewId, sortKey, sortDir, pageSize: 500 }, db);
+      const without = await listLeads({ organizationId: org, sortKey, sortDir, pageSize: 500 }, db);
+      expect(withView.total).toBe(RANKED + UNRANKED);
+      expect(withView.rows.map((r) => r.id)).toEqual(without.rows.map((r) => r.id));
+    }
+  });
+
   it.each<[LeadSortKey, "asc" | "desc"]>([
     ["priorityScore", "desc"],
     ["updatedAt", "desc"],
@@ -114,9 +154,10 @@ describe("Leads page with a Smart View (Brief 41, H1)", () => {
     expect(r.rows.every((row) => row.displayName.includes(term) && row.priorityScore != null)).toBe(true);
   });
 
-  it("without a view, lists every lead in the organization", async () => {
+  it("without a view, lists every lead in the organization, most recently updated first", async () => {
     const r = await listLeads({ organizationId: org, pageSize: 50 }, db);
     expect(r.total).toBe(RANKED + UNRANKED);
+    expect(r.sort).toEqual({ key: "updatedAt", dir: "desc", fromView: false });
   });
 
   it("a view that cannot be applied falls back to all leads and says why", async () => {

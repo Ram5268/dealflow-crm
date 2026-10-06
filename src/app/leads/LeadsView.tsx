@@ -20,7 +20,7 @@ import {
   type Column,
   type SortState,
 } from '@/components/ui'
-import type { LeadRow, LeadSortKey } from '@/lib/leads/list'
+import type { AppliedSort, LeadRow } from '@/lib/leads/list'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -47,8 +47,7 @@ export function LeadsView({
   total,
   page,
   pageSize,
-  sortKey,
-  sortDir,
+  sort,
   q,
   viewId,
   views,
@@ -58,8 +57,7 @@ export function LeadsView({
   total: number
   page: number
   pageSize: number
-  sortKey: LeadSortKey
-  sortDir: 'asc' | 'desc'
+  sort: AppliedSort
   q: string
   viewId: string
   views: { id: string; name: string }[]
@@ -76,18 +74,20 @@ export function LeadsView({
   const push = useCallback(
     (patch: Record<string, string | undefined>) => {
       const params = new URLSearchParams()
+      // A Smart View's own saved sort stays implicit (no sort in the URL), so
+      // every page of the view is listed in that same order.
       const base: Record<string, string | undefined> = {
         q: term || undefined,
         viewId: viewId || undefined,
-        sort: sortKey,
-        dir: sortDir,
+        sort: sort.fromView ? undefined : (sort.key ?? undefined),
+        dir: sort.fromView ? undefined : sort.dir,
         page: String(page),
         ...patch,
       }
       for (const [k, v] of Object.entries(base)) if (v) params.set(k, v)
       startTransition(() => router.push(`/leads?${params.toString()}`))
     },
-    [router, term, viewId, sortKey, sortDir, page],
+    [router, term, viewId, sort, page],
   )
 
   // Debounce the search box so typing does not fire a query per keystroke.
@@ -189,7 +189,10 @@ export function LeadsView({
         <div className="w-52">
           <Select
             value={viewId || 'all'}
-            onValueChange={(v) => push({ viewId: v === 'all' ? undefined : v, page: '1' })}
+            onValueChange={(v) =>
+              // Picking a view drops any column sort, so the view's own sort applies.
+              push({ viewId: v === 'all' ? undefined : v, sort: undefined, dir: undefined, page: '1' })
+            }
             options={[
               { value: 'all', label: 'All leads' },
               ...views.map((v) => ({ value: v.id, label: v.name })),
@@ -247,7 +250,7 @@ export function LeadsView({
           columns={columns}
           rows={rows}
           getRowId={(r) => r.id}
-          sort={{ key: sortKey, dir: sortDir } as SortState}
+          sort={sort.key ? ({ key: sort.key, dir: sort.dir } as SortState) : undefined}
           onSortChange={(s) => push({ sort: s.key, dir: s.dir, page: '1' })}
           selectedIds={selected}
           onSelectedChange={setSelected}

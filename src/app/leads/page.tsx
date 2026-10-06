@@ -23,7 +23,9 @@ export default async function LeadsPage({
   const organizationId = await getCurrentOrgId()
   const sp = await searchParams
 
-  const sortKey = isLeadSortKey(sp.sort) ? sp.sort : 'updatedAt'
+  // A column only when the URL names one; otherwise listLeads picks the
+  // default (a Smart View's own saved sort, or most recently updated).
+  const sortKey = isLeadSortKey(sp.sort) ? sp.sort : undefined
   const sortDir = sp.dir === 'asc' ? 'asc' : 'desc'
   const page = Math.max(1, Number(sp.page) || 1)
 
@@ -48,8 +50,7 @@ export default async function LeadsPage({
         total={result.total}
         page={result.page}
         pageSize={result.pageSize}
-        sortKey={sortKey}
-        sortDir={sortDir}
+        sort={result.sort}
         q={sp.q ?? ''}
         viewId={sp.viewId ?? ''}
         views={views}
