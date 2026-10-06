@@ -6,6 +6,7 @@ import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
 import { normalizeStreet, sameStreet } from './address'
+import { mappingKey, resumePoint } from './batch'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,6 +235,7 @@ export interface CommitDeps {
   // Tests inject a clock and a short limit for the time-limit path.
   now?: () => number
   timeLimitMs?: number
+  watchdogMs?: number
 }
 
 export interface CommitResult {
@@ -248,13 +250,26 @@ export interface CommitResult {
 // starting rows well before that, so it can always mark the batch 'failed'
 // with a reason instead of being killed mid-way and left at 'importing'.
 export const COMMIT_TIME_LIMIT_MS = 240_000
+// Fires only if a single query hangs past the time limit.
+export const COMMIT_WATCHDOG_MS = 270_000
 const PROGRESS_EVERY = 100
 
 // Full commit path. Reads the raw file, resolves the mapping, and upserts every
 // row. A completed batch is never imported twice: a retry or a second run
 // returns the counts the first run recorded. Any failure, including running
 // out of time, marks the batch 'failed' (with the reason) before rethrowing.
-// Running it again is safe: rows already imported are merged, not duplicated.
+// Running it again is safe: after a time-limit stop it continues where it
+// stopped; otherwise rows already imported are merged, not duplicated.
+// A time-limit stop: carries where a re-run with the same mapping continues.
+class ImportTimeLimit extends Error {
+  constructor(doneRows: number, totalRows: number, readonly resumeFromGroup: number) {
+    super(
+      `time limit reached after ${doneRows} of ${totalRows} rows. ` +
+        'Run it again to continue from there; rows already imported are not repeated or duplicated'
+    )
+  }
+}
+
 export async function commitImport(
   importBatchId: string,
   duplicateStrategy: DuplicateStrategy,
@@ -267,7 +282,9 @@ export async function commitImport(
   const now = deps.now ?? Date.now
   const startedAt = now()
   const timeLimitMs = deps.timeLimitMs ?? COMMIT_TIME_LIMIT_MS
+  const watchdogMs = deps.watchdogMs ?? COMMIT_WATCHDOG_MS
   const source = `import:${importBatchId}`
+  const key = mappingKey(mapping)
 
   const result: CommitResult = {
     totalRows: 0,
@@ -277,6 +294,23 @@ export async function commitImport(
     errorRows: 0,
   }
   const errorLog: Array<{ row: number; message: string }> = []
+  const markFailed = (message: string, resumeFromGroup?: number) =>
+    db.importBatch
+      .update({
+        where: { id: importBatchId },
+        data: {
+          status: 'failed',
+          ...counts(result),
+          errorLog: [
+            ...errorLog.slice(0, 499),
+            { row: 0, message: `Import stopped: ${message}`, ...(resumeFromGroup != null ? { resumeFromGroup, mappingKey: key } : {}) },
+          ],
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => {}) // the original error is what the caller needs
+  let watchdog: ReturnType<typeof setTimeout> | undefined
+  let settled = false
 
   try {
     const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
@@ -288,12 +322,26 @@ export async function commitImport(
     const customColumns = await ensureCustomFieldDefinitions(db, organizationId, mapping.mapping)
     const resolved = resolveMapping(mapping.mapping, customColumns)
     const plans = parsed.allRows.map((row) => buildRowPlan(row, resolved))
+    const groups = groupRowsByIdentity(plans)
     result.totalRows = plans.length
+
+    // A re-run after a time-limit stop continues where that run stopped (the
+    // grouping is the same for the same file and mapping), keeping its counts.
+    const resumeFrom = resumePoint(batch.errorLog, key) ?? 0
+    if (resumeFrom > 0) {
+      result.importedRows = batch.importedRows
+      result.duplicateRows = batch.duplicateRows
+      result.skippedRows = batch.skippedRows
+      result.errorRows = batch.errorRows
+      for (const e of Array.isArray(batch.errorLog) ? batch.errorLog : []) {
+        if (e && typeof e === 'object' && (e as { row?: unknown }).row !== 0) errorLog.push(e as { row: number; message: string })
+      }
+    }
     await db.importBatch.update({ where: { id: importBatchId }, data: { totalRows: result.totalRows } })
 
     // Counts are written every PROGRESS_EVERY rows so the progress page moves.
-    let processed = 0
-    let reported = 0
+    let processed = groups.slice(0, resumeFrom).reduce((n, g) => n + g.length, 0)
+    let reported = processed
     const reportProgress = async () => {
       if (processed - reported < PROGRESS_EVERY) return
       reported = processed
@@ -302,11 +350,25 @@ export async function commitImport(
         .catch(() => {}) // progress is best-effort; the final write is authoritative
     }
 
+    const doneGroups = new Set<number>()
+    const firstUnfinished = () => {
+      let g = resumeFrom
+      while (doneGroups.has(g)) g++
+      return g
+    }
+    // In case one query hangs past the time limit: mark the batch failed before
+    // the platform kills the function (if the work does finish, its own
+    // 'completed' write comes later and wins).
+    watchdog = setTimeout(() => {
+      if (!settled) void markFailed('the import stopped responding. Run it again to continue', firstUnfinished())
+    }, watchdogMs)
+    watchdog.unref?.()
+
     let outOfTime = false
-    const importRow = async (i: number) => {
+    const importRow = async (i: number): Promise<boolean> => {
       if (outOfTime || now() - startedAt > timeLimitMs) {
         outOfTime = true
-        return
+        return false
       }
       const plan = plans[i]
       const rowErrors = (message: string) => errorLog.push({ row: i + 2, message })
@@ -337,22 +399,21 @@ export async function commitImport(
       }
       processed++
       await reportProgress()
+      return true
     }
 
     // Rows are processed with bounded concurrency: sequential .create over the
     // Railway network is ~90ms/row, so 1k rows serially blows past any budget.
     // Rows that could be the same lead share a group and run in file order.
     const CONCURRENCY = 25
-    await mapWithConcurrency(groupRowsByIdentity(plans), CONCURRENCY, async (group) => {
-      for (const i of group) await importRow(i)
+    await mapWithConcurrency(groups, CONCURRENCY, async (group, gi) => {
+      if (gi < resumeFrom) return
+      for (const i of group) if (!(await importRow(i))) return
+      doneGroups.add(gi)
     })
-    if (outOfTime) {
-      throw new Error(
-        `time limit reached after ${processed} of ${result.totalRows} rows. ` +
-          'Run it again to import the rest; rows already imported are merged, not duplicated'
-      )
-    }
+    if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, firstUnfinished())
 
+    settled = true
     await db.importBatch.update({
       where: { id: importBatchId },
       data: {
@@ -364,19 +425,12 @@ export async function commitImport(
     })
     return result
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    await db.importBatch
-      .update({
-        where: { id: importBatchId },
-        data: {
-          status: 'failed',
-          ...counts(result),
-          errorLog: [...errorLog.slice(0, 499), { row: 0, message: `Import stopped: ${message}` }],
-          completedAt: new Date(),
-        },
-      })
-      .catch(() => {}) // the original error is what the caller needs
+    settled = true
+    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportTimeLimit ? err.resumeFromGroup : undefined)
     throw err
+  } finally {
+    settled = true
+    if (watchdog) clearTimeout(watchdog)
   }
 }
 
@@ -400,6 +454,7 @@ interface LeadMatch {
   id: string
   mojoId: string | null
   name: string | null
+  displayName: string
   primaryAddressFull: string | null
   statusLabel: string | null
   // true when the row is certainly this property (same Mojo ID, or same street):
@@ -516,7 +571,14 @@ async function createLead(
 function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma.LeadUpdateInput {
   const data: Prisma.LeadUpdateInput = { source }
   const may = (current: string | null) => existing.sameProperty || !current
-  if (plan.lead.name && may(existing.name)) {
+  // A lead created by hand (or with the name in Contact.name) has a real
+  // displayName but no Lead.name: that counts as a name to keep.
+  const shownName =
+    existing.name ??
+    (existing.displayName !== 'Imported Lead' && existing.displayName !== existing.primaryAddressFull && existing.displayName !== existing.mojoId
+      ? existing.displayName
+      : null)
+  if (plan.lead.name && may(shownName)) {
     data.name = plan.lead.name
     data.displayName = plan.displayName
   }
@@ -587,15 +649,16 @@ async function mapWithConcurrency<T>(
 //         row is another property and becomes a new lead;
 //       - the row has no address: the first such lead. A row with a Mojo ID
 //         never attaches it to a lead whose address it can't confirm.
-//  3. Else the exact name + address (a row with a Mojo ID needs an address
-//     for this; a name alone can't attach it).
+//  3. Else the exact name + address. With no address that's the name alone,
+//     so only a phoneless row with a real name may use it, and a row with a
+//     Mojo ID never does.
 // No match → a new lead.
 async function findExistingLead(
   db: PrismaClient,
   organizationId: string,
   plan: RowPlan
 ): Promise<LeadMatch | null> {
-  const select = { id: true, mojoId: true, name: true, primaryAddressFull: true, statusLabel: true } as const
+  const select = { id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true } as const
   const rowAddress = plan.lead.primaryAddressFull ?? null
   if (plan.lead.mojoId) {
     const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
@@ -624,6 +687,12 @@ async function findExistingLead(
     // Leads with this phone are other properties: try the exact name + address.
   }
 
+  // Exact name + address. Without an address that is a match on the name alone,
+  // so only a phoneless row with a real name may use it: a row with a new phone
+  // number is a new lead, never "another lead with the same name" (and never
+  // the "Imported Lead" placeholder).
+  const realName = !!(plan.lead.name || plan.contact.name)
+  if (!rowAddress && (plan.phones[0] || !realName)) return null
   const byNameAddr = await db.lead.findFirst({
     where: {
       organizationId,

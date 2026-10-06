@@ -18,7 +18,7 @@ const emit = async (): Promise<EmitResult> => ({ overflow: false, bytes: 0 });
 let db: PrismaClient;
 let org: string;
 let userId: string;
-const lead: Record<"alice" | "bob" | "carol" | "ellaA" | "ellaB", string> = { alice: "", bob: "", carol: "", ellaA: "", ellaB: "" };
+const lead: Record<"alice" | "bob" | "carol" | "ellaA" | "ellaB" | "gina", string> = { alice: "", bob: "", carol: "", ellaA: "", ellaB: "", gina: "" };
 
 const col = (column: string, field: string) => ({
   column, sampleValues: [], target: { kind: "standard_field" as const, field }, confidence: 1, reasoning: "",
@@ -158,6 +158,39 @@ describe("rows that share an identity are imported one after another (Brief 41, 
     expect(await db.lead.count({ where: { organizationId: org, displayName: "Frank Owner" } })).toBe(1);
   });
 
+  it("phone-only rows with new numbers become new leads, never piled onto an 'Imported Lead' or a same-name lead", async () => {
+    await db.lead.create({ data: { organizationId: org, displayName: "Imported Lead" } }); // an addressless placeholder lead
+    await db.lead.create({ data: { organizationId: org, displayName: "Maria Lopez", name: "Maria Lopez" } }); // addressless, no phone
+    const nums = Array.from({ length: 5 }, (_, k) => `212-555-03${String(k).padStart(2, "0")}`);
+    const res = await commitImport(await batchFor(`Phone\n${nums.join("\n")}\n`), "merge", PHONE_ONLY, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 5, importedRows: 5, duplicateRows: 0 });
+    for (const n of nums) expect(await leadsWithPhone(`+1${n.replace(/-/g, "")}`)).toHaveLength(1);
+    const NAME_PHONE = mapping(col("Name", "Lead.name"), col("Phone", "ContactPhone.phone"));
+    const res2 = await commitImport(await batchFor("Name,Phone\nMaria Lopez,212-555-0390\n"), "merge", NAME_PHONE, "c", { emit, db });
+    expect(res2).toMatchObject({ importedRows: 1, duplicateRows: 0 }); // a new number is a new lead, not the other Maria
+    expect(await db.lead.count({ where: { organizationId: org, displayName: "Maria Lopez" } })).toBe(2);
+  });
+
+  it("a one-cell address with no comma matches the same street", async () => {
+    await seedLead("gina", { name: "Gina Owner", address: "4 Cedar St, Brooklyn, NY 11201", status: "Hot", mojoId: null, phone: "+12125550180" });
+    const before = await leadRow(lead.gina);
+    const res = await commitImport(await batchFor("Name,Address,Phone\nGina Owner,4 Cedar St Brooklyn NY 11201,212-555-0180\n"), "merge", NAME_ADDR_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(lead.gina)).toEqual(before);
+  });
+
+  it("a lead named by hand (displayName only) isn't renamed by a match it can't confirm", async () => {
+    const hand = await db.lead.create({
+      data: {
+        organizationId: org, displayName: "Paul Manual",
+        contacts: { create: { organizationId: org, displayName: "Paul Manual", phones: { create: { phone: "+12125550181", type: "mobile" } } } },
+      },
+    });
+    const NAME_PHONE = mapping(col("Name", "Lead.name"), col("Phone", "ContactPhone.phone"));
+    await commitImport(await batchFor("Name,Phone\nSomeone Else,212-555-0181\n"), "merge", NAME_PHONE, "c", { emit, db });
+    expect((await db.lead.findUniqueOrThrow({ where: { id: hand.id } })).displayName).toBe("Paul Manual");
+  });
+
   it("a row with nothing to identify it is an error row, not a mystery lead", async () => {
     const id = await batchFor("Phone\nnot a number\n");
     const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
@@ -197,7 +230,7 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     expect(await claimImportCommit(db, b.id, org, PHONE_ONLY)).toEqual({ claimed: true });
   });
 
-  it("an import that runs out of time stops, is marked failed with the reason, and a re-run finishes it", async () => {
+  it("an import that runs out of time stops, is marked failed, and a re-run continues where it stopped", async () => {
     const rows = Array.from({ length: 6 }, (_, k) => `212-555-02${String(k).padStart(2, "0")}`).join("\n");
     const id = await batchFor(`Phone\n${rows}\n`);
     let t = 0;
@@ -206,12 +239,42 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(stopped.status).toBe("failed");
     expect(JSON.stringify(stopped.errorLog)).toMatch(/Import stopped: time limit reached/);
-    expect(stopped.importedRows).toBeGreaterThan(0);
-    expect(stopped.importedRows).toBeLessThan(6);
+    const doneFirst = stopped.importedRows;
+    expect(doneFirst).toBeGreaterThan(0);
+    expect(doneFirst).toBeLessThan(6);
+    // Re-run with the same mapping: it keeps the counts and only does the rest.
     expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
-    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
-    expect(res).toMatchObject({ totalRows: 6, importedRows: 6, errorRows: 0 });
+    const claimed = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(claimed.importedRows).toBe(doneFirst);
+    let emits = 0;
+    const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db });
+    expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 0, errorRows: 0 });
+    expect(emits).toBe(6 - doneFirst);
     for (let k = 0; k < 6; k++) expect(await leadsWithPhone(`+121255502${String(k).padStart(2, "0")}`)).toHaveLength(1);
+  });
+
+  it("a different mapping after a time-limit stop starts again from row 1 (still without duplicates)", async () => {
+    const id = await batchFor(`Phone\n212-555-0210\n212-555-0211\n212-555-0212\n`);
+    let t = 0;
+    await expect(commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, now: () => (t += 1000), timeLimitMs: 1_500 })).rejects.toThrow(/time limit/);
+    const other = mapping(col("Phone", "ContactPhone.phone"), col("Name", "Contact.name"));
+    expect(await claimImportCommit(db, id, org, other)).toEqual({ claimed: true });
+    const fresh = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(fresh.importedRows).toBe(0);
+    const res = await commitImport(id, "merge", other, "c", { emit, db });
+    expect(res).toMatchObject({ totalRows: 3, importedRows: 3 });
+    for (const n of ["+12125550210", "+12125550211", "+12125550212"]) expect(await leadsWithPhone(n)).toHaveLength(1);
+  });
+
+  it("a query that hangs past the limit still leaves the batch marked failed (watchdog)", async () => {
+    const id = await batchFor("Phone\n212-555-0220\n");
+    const hang = () => new Promise<EmitResult>(() => {}); // never settles
+    void commitImport(id, "merge", PHONE_ONLY, "c", { emit: hang, db, watchdogMs: 300 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 3_000));
+    const b = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(b.status).toBe("failed");
+    expect(JSON.stringify(b.errorLog)).toMatch(/stopped responding/);
   });
 
   it("re-running a completed batch changes nothing", async () => {

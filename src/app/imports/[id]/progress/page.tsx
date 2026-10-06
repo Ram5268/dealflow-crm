@@ -23,7 +23,10 @@ function failureText(batch: Batch): string {
     return "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
   }
   if (/^time limit reached/.test(reason)) {
-    return `The import ran out of time (${reason.replace(/\. Run it again.*$/, '')}). Rows imported so far are kept. Run it again to import the rest; nothing will be duplicated.`
+    return `The import ran out of time (${reason.replace(/\. Run it again.*$/, '')}). Rows imported so far are kept. Run it again and it continues from there; nothing will be duplicated.`
+  }
+  if (/stopped responding/.test(reason)) {
+    return 'The import stopped responding. Rows imported so far are kept. Run it again and it continues from there.'
   }
   return `The import stopped: ${reason}. Rows imported before it stopped are kept. You can run it again.`
 }
@@ -89,9 +92,15 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
             )}
             {batch.status === 'failed' && (
               <Button asChild variant="primary">
-                <Link href={`/imports/${id}/mapping-review`} data-testid="retry-import">
-                  Back to the import
-                </Link>
+                {/no stored bytes/.test(JSON.stringify(batch.errorLog ?? [])) ? (
+                  <Link href="/imports" data-testid="retry-import">
+                    Upload the file again
+                  </Link>
+                ) : (
+                  <Link href={`/imports/${id}/mapping-review`} data-testid="retry-import">
+                    Back to the import
+                  </Link>
+                )}
               </Button>
             )}
             {batch.status === 'completed' && (

@@ -28,7 +28,11 @@ export function streetOf(address: string | null | undefined): string | null {
 }
 
 // Two addresses name the same property when their street lines normalize equal.
+// A one-cell address with no comma ("2 Pine St Brooklyn NY 11201") carries the
+// city after the street, so a street that starts with the other also counts.
 export function sameStreet(a: string | null | undefined, b: string | null | undefined): boolean {
   const x = streetOf(a)
-  return !!x && x === streetOf(b)
+  const y = streetOf(b)
+  if (!x || !y) return false
+  return x === y || x.startsWith(y + ' ') || y.startsWith(x + ' ')
 }
