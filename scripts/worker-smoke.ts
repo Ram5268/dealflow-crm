@@ -7,6 +7,12 @@ import { handleSendEmailJob } from '../src/lib/comms/jobs/outbound-email'
 import { prisma } from '../src/lib/prisma'
 import { installMockOAuthCredential } from './_mock-oauth-credential'
 import { runSequenceTick } from '../src/lib/comms/sequences/tick'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
+
+// Brief 41 (H11): this writes rows, creates the pg-boss schema and ticks every
+// active sequence enrollment in the database, so it refuses a live
+// DATABASE_URL_MAIN unless run with --i-mean-live.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'worker-smoke (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

@@ -1,6 +1,7 @@
 import 'dotenv/config' // MUST be first — else Prisma silently defaults to localhost
 import { PrismaClient } from '@prisma/client'
 import { runHolidayRefresh } from '../src/lib/compliance/holidays/refresh'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
 // Seeds the compliance isolation fixtures (Gate 1). Idempotent — upserts by
 // fixed IDs so re-running is safe. The Organization uses slug "dealflow-ryan"
@@ -15,6 +16,10 @@ import { runHolidayRefresh } from '../src/lib/compliance/holidays/refresh'
 //   cp_la_01 / cp_phx_01  -> policy_unconfirmed (no config row)
 //   cp_notz_01            -> timezone_unresolved
 //   cp_internal_dnc_01    -> internal_dnc
+
+// Brief 41 (H11): it writes fixtures (including a confirmed calling-window
+// policy), so it refuses a live DATABASE_URL_MAIN unless run with --i-mean-live.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'seed-compliance-fixtures (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const prisma = new PrismaClient()
 const ORG_ID = 'org_test'

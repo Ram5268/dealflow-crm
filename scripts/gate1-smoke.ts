@@ -19,7 +19,7 @@ import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
 // Brief 41 (H11): this smoke deletes Message rows and installs a mock OAuth
 // credential, so it refuses a live DATABASE_URL_MAIN unless run with --i-mean-live.
-assertTestDatabase(process.env.DATABASE_URL_MAIN, 'gate1-smoke (DATABASE_URL_MAIN)')
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'gate1-smoke (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

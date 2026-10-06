@@ -5,8 +5,9 @@
 #
 # Milestone 1 boots WITHOUT any vendor (the callable-now pipeline has no vendor
 # step yet — timezone/policy/internal-DNC/window/holiday only). DNC_VENDOR may
-# be unset. Requires DATABASE_URL_MAIN pointing at the Railway dev DB (or a
-# local docker Postgres — see README).
+# be unset. Requires DATABASE_URL_MAIN pointing at a test database (name ending
+# _perf or _test; see README). Brief 41: anything else is refused unless run as
+# `bash scripts/run-isolation-boot.sh --i-mean-live`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

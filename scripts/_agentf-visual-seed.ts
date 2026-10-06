@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
-import { assertTestDatabase } from '../src/lib/shared/db-guard'
+import { assertTestDatabase, scriptArgs } from '../src/lib/shared/db-guard'
 
 /**
  * Agent F — throwaway visual-parity fixtures.
@@ -19,7 +19,7 @@ import { assertTestDatabase } from '../src/lib/shared/db-guard'
  */
 // Brief 41 (H11): seeds and deletes fixture rows; refuses a live
 // DATABASE_URL_MAIN unless run with --i-mean-live.
-assertTestDatabase(process.env.DATABASE_URL_MAIN, '_agentf-visual-seed (DATABASE_URL_MAIN)')
+assertTestDatabase(process.env.DATABASE_URL_MAIN, '_agentf-visual-seed (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const prisma = new PrismaClient()
 const TAG = 'AGENT_F_VISUAL'
@@ -198,7 +198,13 @@ async function down() {
   )
 }
 
-const cmd = process.argv[2]
+// Brief 41: the command is read without --i-mean-live, so "--i-mean-live down"
+// cleans up instead of seeding; anything but up/down is refused.
+const cmd = scriptArgs()[0] ?? 'up'
+if (cmd !== 'up' && cmd !== 'down') {
+  console.error(`usage: _agentf-visual-seed.ts [up|down] [--i-mean-live] (got "${cmd}")`)
+  process.exit(1)
+}
 void (cmd === 'down' ? down() : up())
   .catch((e) => {
     console.error('agentf-visual-seed failed:', e)
