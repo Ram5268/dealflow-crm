@@ -1,16 +1,16 @@
-import { addInternalDnc, type DncResult } from '../clients/compliance'
+import { addInternalDnc, type AddInternalDncResult } from '@/lib/compliance/dnc/internal'
 
 /**
- * SMS STOP → internal DNC (brief §M4, B.1 HTTP path). The ONE cross-slice write:
- * POST to Agent C's `/api/compliance/dnc/internal`. A 2xx is the success signal.
- * On failure the caller enqueues a `sms-stop-relay` retry — this write is legally
- * required and must never be silently dropped.
+ * SMS STOP → internal DNC. Brief 41 (H12): written in-process. It used to be an
+ * HTTP self-call to the compliance route with no Basic-auth credentials, at a
+ * URL that didn't match the compliance base, so a STOP never reached the list.
+ * Throws on failure: the webhook then answers non-2xx instead of dropping a
+ * legally required opt-out.
  */
-export function handleStop(phone: string, correlationId?: string): Promise<DncResult> {
-  return addInternalDnc({
+export function handleStop(orgId: string, phone: string): Promise<AddInternalDncResult> {
+  return addInternalDnc(orgId, {
     phone,
     reason: 'sms_stop_received',
     addedBy: 'sms-inbound-handler',
-    correlationId,
   })
 }
