@@ -334,8 +334,15 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const id = await batchFor("Phone\n212-555-0230\n212-555-0231\n");
     let calls = 0;
     const firstHangs = () => (++calls === 1 ? new Promise<EmitResult>(() => {}) : Promise.resolve({ overflow: false, bytes: 0 } as EmitResult));
-    void commitImport(id, "merge", PHONE_ONLY, "c", { emit: firstHangs, db, watchdogMs: 3_000 }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 6_000));
+    void commitImport(id, "merge", PHONE_ONLY, "c", { emit: firstHangs, db, watchdogMs: 15_000 }).catch(() => {});
+    // Wait for both rows to be written (one then hangs sending its event), then
+    // for the watchdog, instead of guessing how long the perf DB takes.
+    const until = async (ok: () => Promise<boolean>, ms: number) => {
+      for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 250))) if (await ok()) return;
+      throw new Error("timed out");
+    };
+    await until(async () => (await leadsWithPhone("+12125550230")).length === 1 && (await leadsWithPhone("+12125550231")).length === 1, 14_000);
+    await until(async () => (await db.importBatch.findUniqueOrThrow({ where: { id } })).status === "failed", 20_000);
     const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(stopped.status).toBe("failed");
     expect(stopped.importedRows).toBe(2); // both rows were counted (one's event never went out)
@@ -343,7 +350,7 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
     expect(res).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 0, errorRows: 0 });
     for (const n of ["+12125550230", "+12125550231"]) expect(await leadsWithPhone(n)).toHaveLength(1);
-  });
+  }, 60_000);
 
   it("the watchdog also covers a hang before any row (reading the batch or the file)", async () => {
     const id = await batchFor("Phone\n212-555-0221\n");
