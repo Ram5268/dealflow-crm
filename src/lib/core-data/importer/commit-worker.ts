@@ -1,9 +1,12 @@
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { emit as defaultEmit } from '@/lib/core-data/events/emit'
 import { getObject } from './storage'
 import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
+import { normalizeStreet, sameStreet } from './address'
+import { mappingKey, resumePoint, type ResumeState } from './batch'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,6 +16,13 @@ import type { MappingProposal, ColumnMapping } from './ai-mapping'
 // `lead.upserted-from-import` (channel crm_lead_sync, NO eventName), and stamps
 // Lead.source = "import:" + importBatchId on every upsert (locked A-side
 // commitment for C's bulk-scrub). buildRowPlan is pure and unit-tested.
+//
+// Brief 41 (H4, M25): a merge never blanks a value or replaces a Mojo ID;
+// only a confirmed same property (same Mojo ID, or same street) may change a
+// name, address, status or custom value, otherwise a merge only fills blanks; a
+// row that is another property becomes a new lead; rows that could be the same
+// lead run one after another; a failed or timed-out commit is marked 'failed';
+// a completed batch never re-runs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DuplicateStrategy = 'skip' | 'merge' | 'add-anyway'
@@ -50,7 +60,7 @@ export interface RowPlan {
   contact: { name?: string; title?: string }
   phones: Array<{ phoneE164: string; type: string; nonstandard: boolean }>
   emails: string[]
-  customValues: Array<{ definitionId: string; type: string; raw: string }>
+  customValues: Array<{ column: string; definitionId: string; type: string; raw: string }>
   dedup: ReturnType<typeof dedupKey>
 }
 
@@ -88,7 +98,7 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   }
   const customValues = m.customColumns
     .filter((c) => (row[c.column] ?? '').trim() !== '')
-    .map((c) => ({ definitionId: c.definitionId, type: c.type, raw: row[c.column] }))
+    .map((c) => ({ column: c.column, definitionId: c.definitionId, type: c.type, raw: row[c.column] }))
 
   // Lead.name comes from Mojo's "Full Name" (the primary owner). Contact.name is
   // mapped from Mojo's "Second Name" — the CO-OWNER. Letting contact.name win
@@ -113,15 +123,59 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   }
 }
 
+// Rows that could resolve to the same lead (same Mojo ID, any shared phone, or
+// the same name + street) are grouped so they import one after another: two
+// rows for one owner can no longer both miss each other and both create. Groups
+// keep file order; different owners run concurrently.
+export function groupRowsByIdentity(plans: RowPlan[]): number[][] {
+  const parent = plans.map((_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  const firstRowWithKey = new Map<string, number>()
+  plans.forEach((plan, i) => {
+    const named = !!(plan.lead.name || plan.contact.name || plan.lead.primaryAddressFull)
+    const keys = [
+      plan.lead.mojoId ? `mojo:${plan.lead.mojoId}` : null,
+      ...plan.phones.map((p) => `phone:${p.phoneE164}`),
+      named ? `na:${plan.displayName.toLowerCase()}|${normalizeStreet(plan.lead.primaryAddressFull?.split(',')[0]) ?? ''}` : null,
+    ]
+    for (const key of keys) {
+      if (!key) continue
+      const j = firstRowWithKey.get(key)
+      if (j === undefined) {
+        firstRowWithKey.set(key, i)
+        continue
+      }
+      const a = find(i)
+      const b = find(j)
+      if (a !== b) parent[Math.max(a, b)] = Math.min(a, b)
+    }
+  })
+  const groups = new Map<number, number[]>()
+  plans.forEach((_, i) => {
+    const root = find(i)
+    const group = groups.get(root)
+    if (group) group.push(i)
+    else groups.set(root, [i])
+  })
+  return [...groups.values()]
+}
+
 // Ensure custom-field definitions exist for every new_custom_field / existing
 // column; returns columnName → { definitionId, type }.
 async function ensureCustomFieldDefinitions(
+  db: PrismaClient,
   organizationId: string,
   mapping: ColumnMapping[]
 ): Promise<Array<{ column: string; definitionId: string; type: string }>> {
   const out: Array<{ column: string; definitionId: string; type: string }> = []
   let order = 0
-  const maxOrder = await prisma.customFieldDefinition.aggregate({
+  const maxOrder = await db.customFieldDefinition.aggregate({
     where: { organizationId, objectType: 'lead' },
     _max: { displayOrder: true },
   })
@@ -129,7 +183,7 @@ async function ensureCustomFieldDefinitions(
 
   for (const col of mapping) {
     if (col.target.kind === 'new_custom_field') {
-      const def = await prisma.customFieldDefinition.upsert({
+      const def = await db.customFieldDefinition.upsert({
         where: {
           organizationId_objectType_name: {
             organizationId,
@@ -149,7 +203,7 @@ async function ensureCustomFieldDefinitions(
       })
       out.push({ column: col.column, definitionId: def.id, type: def.type })
     } else if (col.target.kind === 'existing_custom_field') {
-      const def = await prisma.customFieldDefinition.findFirst({
+      const def = await db.customFieldDefinition.findFirst({
         where: { id: col.target.definitionId, organizationId },
       })
       if (def) out.push({ column: col.column, definitionId: def.id, type: def.type })
@@ -176,6 +230,12 @@ export function resolveMapping(
 
 export interface CommitDeps {
   emit?: typeof defaultEmit
+  // Defaults to the app's client; tests point it at the perf DB.
+  db?: PrismaClient
+  // Tests inject a clock and a short limit for the time-limit path.
+  now?: () => number
+  timeLimitMs?: number
+  watchdogMs?: number
 }
 
 export interface CommitResult {
@@ -186,9 +246,30 @@ export interface CommitResult {
   errorRows: number
 }
 
+// The commit runs in after() under the route's maxDuration (300 s). It stops
+// starting rows well before that, so it can always mark the batch 'failed'
+// with a reason instead of being killed mid-way and left at 'importing'.
+export const COMMIT_TIME_LIMIT_MS = 240_000
+// Fires only if a single query hangs past the time limit.
+export const COMMIT_WATCHDOG_MS = 270_000
+const PROGRESS_EVERY = 100
+
 // Full commit path. Reads the raw file, resolves the mapping, and upserts every
-// row. Idempotent: re-running the same file with the same batch converges (mojoId
-// unique, phone dedup, custom-value upsert).
+// row. A completed batch is never imported twice: a retry or a second run
+// returns the counts the first run recorded. Any failure, including running
+// out of time, marks the batch 'failed' (with the reason) before rethrowing.
+// Running it again is safe: after a time-limit stop it continues where it
+// stopped; otherwise rows already imported are merged, not duplicated.
+// A time-limit stop: carries where a re-run with the same mapping continues.
+class ImportTimeLimit extends Error {
+  constructor(doneRows: number, totalRows: number, readonly resume: ResumeState) {
+    super(
+      `time limit reached after ${doneRows} of ${totalRows} rows. ` +
+        'Run it again to continue from there; rows already imported are not repeated or duplicated'
+    )
+  }
+}
+
 export async function commitImport(
   importBatchId: string,
   duplicateStrategy: DuplicateStrategy,
@@ -197,68 +278,189 @@ export async function commitImport(
   deps: CommitDeps = {}
 ): Promise<CommitResult> {
   const emit = deps.emit ?? defaultEmit
-  const batch = await prisma.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
-  const organizationId = batch.organizationId
+  const db = deps.db ?? prisma
+  const now = deps.now ?? Date.now
+  const startedAt = now()
+  const timeLimitMs = deps.timeLimitMs ?? COMMIT_TIME_LIMIT_MS
+  const watchdogMs = deps.watchdogMs ?? COMMIT_WATCHDOG_MS
   const source = `import:${importBatchId}`
-
-  const buffer = await getObject(batch.storageKey)
-  const parsed = parseFile(buffer, batch.filename)
-  const customColumns = await ensureCustomFieldDefinitions(organizationId, mapping.mapping)
-  const resolved = resolveMapping(mapping.mapping, customColumns)
+  const key = mappingKey(mapping)
 
   const result: CommitResult = {
-    totalRows: parsed.allRows.length,
+    totalRows: 0,
     importedRows: 0,
     duplicateRows: 0,
     skippedRows: 0,
     errorRows: 0,
   }
   const errorLog: Array<{ row: number; message: string }> = []
+  const markFailed = (message: string, resume?: ResumeState) =>
+    db.importBatch
+      .update({
+        where: { id: importBatchId },
+        data: {
+          status: 'failed',
+          ...counts(result),
+          errorLog: [
+            ...errorLog.slice(0, 499),
+            { row: 0, message: `Import stopped: ${message}`, ...(resume ? { resume, mappingKey: key } : {}) },
+          ],
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => {}) // the original error is what the caller needs
+  let settled = false
+  // Where a re-run would continue, as of now; the watchdog records it.
+  let resumeNow: () => ResumeState | undefined = () => undefined
+  // In case one query hangs (the file download, a row) past the time limit:
+  // mark the batch failed before the platform kills the function. Armed before
+  // any work. If the work does finish, its own 'completed' write comes later
+  // and wins.
+  const watchdog = setTimeout(() => {
+    if (!settled) void markFailed('the import stopped responding. Run it again to continue', resumeNow())
+  }, watchdogMs)
+  watchdog.unref?.()
 
-  // Rows are processed with bounded concurrency: sequential .create over the
-  // Railway network is ~90ms/row, so 1k rows serially blows past any budget.
-  // A modest pool keeps wall-clock in check while the unique constraints
-  // (Lead.mojoId, ContactPhone[contactId,phone]) still guard against races.
-  const CONCURRENCY = 25
-  await mapWithConcurrency(parsed.allRows, CONCURRENCY, async (row, i) => {
-    const plan = buildRowPlan(row, resolved)
-    try {
-      const outcome = await upsertRow(organizationId, source, plan, duplicateStrategy)
-      if (outcome === 'skipped') {
-        result.skippedRows++
-      } else {
-        result.importedRows++
-        if (outcome.merged) result.duplicateRows++
-        await emit('crm_lead_sync', {
-          leadId: outcome.leadId,
-          sourceLabel: batch.sourceLabel,
-          importBatchId,
-          correlationId,
-        })
+  try {
+    const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
+    if (batch.status === 'completed') return counts(batch)
+    const organizationId = batch.organizationId
+
+    // A re-run after a stop continues where that run stopped (the grouping is
+    // the same for the same file and mapping), keeping its counts and errors.
+    const prior = resumePoint(batch.errorLog, key)
+    if (prior) {
+      result.totalRows = batch.totalRows
+      result.importedRows = batch.importedRows
+      result.duplicateRows = batch.duplicateRows
+      result.skippedRows = batch.skippedRows
+      result.errorRows = batch.errorRows
+      for (const e of Array.isArray(batch.errorLog) ? batch.errorLog : []) {
+        if (e && typeof e === 'object' && (e as { row?: unknown }).row !== 0) errorLog.push(e as { row: number; message: string })
       }
-    } catch (err) {
-      result.errorRows++
-      errorLog.push({ row: i + 2, message: err instanceof Error ? err.message : String(err) })
+      resumeNow = () => prior
     }
-    if (plan.phones.some((p) => p.nonstandard)) {
-      errorLog.push({ row: i + 2, message: 'nonstandard phone type kept as-is' })
-    }
-  })
 
-  await prisma.importBatch.update({
-    where: { id: importBatchId },
-    data: {
-      status: 'completed',
-      totalRows: result.totalRows,
-      importedRows: result.importedRows,
-      duplicateRows: result.duplicateRows,
-      skippedRows: result.skippedRows,
-      errorRows: result.errorRows,
-      errorLog: errorLog.slice(0, 500),
-      completedAt: new Date(),
-    },
-  })
-  return result
+    const buffer = await getObject(batch.storageKey, db)
+    const parsed = parseFile(buffer, batch.filename)
+    const customColumns = await ensureCustomFieldDefinitions(db, organizationId, mapping.mapping)
+    const resolved = resolveMapping(mapping.mapping, customColumns)
+    const plans = parsed.allRows.map((row) => buildRowPlan(row, resolved))
+    const groups = groupRowsByIdentity(plans)
+    result.totalRows = plans.length
+
+    // Rows already done in each group: all of a group before prior.next, or
+    // the recorded part of a group that was cut off.
+    const done = groups.map((g, gi) => (prior && gi < prior.next ? g.length : 0))
+    for (const [gi, rows] of prior?.partial ?? []) if (gi < groups.length) done[gi] = Math.min(rows, groups[gi].length)
+    // Groups start in index order, so every group that has done any work comes
+    // before every group that hasn't. Those cut off mid-way are listed.
+    resumeNow = () => {
+      let next = groups.length
+      while (next > 0 && done[next - 1] === 0) next--
+      const partial: Array<[number, number]> = []
+      for (let gi = 0; gi < next; gi++) if (done[gi] < groups[gi].length) partial.push([gi, done[gi]])
+      return { next, partial }
+    }
+    await db.importBatch.update({ where: { id: importBatchId }, data: { totalRows: result.totalRows } })
+
+    // Counts are written every PROGRESS_EVERY rows so the progress page moves.
+    let processed = done.reduce((n, d) => n + d, 0)
+    let reported = processed
+    const reportProgress = async () => {
+      if (processed - reported < PROGRESS_EVERY) return
+      reported = processed
+      await db.importBatch
+        .update({ where: { id: importBatchId }, data: counts(result) })
+        .catch(() => {}) // progress is best-effort; the final write is authoritative
+    }
+
+    let outOfTime = false
+    // `counted` marks the row done in its group the moment it is counted, so a
+    // stop while its event is still being sent never redoes (and recounts) it.
+    const importRow = async (i: number, counted: () => void): Promise<boolean> => {
+      if (outOfTime || now() - startedAt > timeLimitMs) {
+        outOfTime = true
+        return false
+      }
+      const plan = plans[i]
+      const rowErrors = (message: string) => errorLog.push({ row: i + 2, message })
+      if (!plan.lead.mojoId && plan.phones.length === 0 && !plan.lead.name && !plan.contact.name && !plan.lead.primaryAddressFull) {
+        // Nothing to match it on: it would merge into every other such row.
+        result.errorRows++
+        counted()
+        rowErrors('no Mojo ID, phone, name or address to identify this row; skipped')
+      } else {
+        try {
+          const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy, rowErrors)
+          if (outcome === 'skipped') {
+            result.skippedRows++
+            counted()
+          } else {
+            result.importedRows++
+            if (outcome.merged) result.duplicateRows++
+            counted()
+            await emit('crm_lead_sync', {
+              leadId: outcome.leadId,
+              sourceLabel: batch.sourceLabel,
+              importBatchId,
+              correlationId,
+            })
+          }
+        } catch (err) {
+          result.errorRows++
+          counted()
+          rowErrors(err instanceof Error ? err.message : String(err))
+        }
+        if (plan.phones.some((p) => p.nonstandard)) rowErrors('nonstandard phone type kept as-is')
+      }
+      processed++
+      await reportProgress()
+      return true
+    }
+
+    // Rows are processed with bounded concurrency: sequential .create over the
+    // Railway network is ~90ms/row, so 1k rows serially blows past any budget.
+    // Rows that could be the same lead share a group and run in file order.
+    const CONCURRENCY = 25
+    await mapWithConcurrency(groups, CONCURRENCY, async (group, gi) => {
+      for (let r = done[gi]; r < group.length; r++) {
+        const markDone = () => { done[gi] = r + 1 }
+        if (!(await importRow(group[r], markDone))) return
+        markDone()
+      }
+    })
+    if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
+
+    settled = true
+    await db.importBatch.update({
+      where: { id: importBatchId },
+      data: {
+        status: 'completed',
+        ...counts(result),
+        errorLog: errorLog.slice(0, 500),
+        completedAt: new Date(),
+      },
+    })
+    return result
+  } catch (err) {
+    settled = true
+    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportTimeLimit ? err.resume : resumeNow())
+    throw err
+  } finally {
+    settled = true
+    clearTimeout(watchdog)
+  }
+}
+
+function counts(r: CommitResult) {
+  return {
+    totalRows: r.totalRows,
+    importedRows: r.importedRows,
+    duplicateRows: r.duplicateRows,
+    skippedRows: r.skippedRows,
+    errorRows: r.errorRows,
+  }
 }
 
 interface UpsertOk {
@@ -266,64 +468,56 @@ interface UpsertOk {
   merged: boolean
 }
 
+// What a merge knows about the lead it matched.
+interface LeadMatch {
+  id: string
+  mojoId: string | null
+  name: string | null
+  displayName: string
+  primaryAddressFull: string | null
+  statusLabel: string | null
+  // true when the row is certainly this property (same Mojo ID, or same street):
+  // only then may it change a name, status or custom value.
+  sameProperty: boolean
+  // how it matched: only a Mojo ID match may rewrite an existing address (a
+  // same-street match already has it, often more completely).
+  by: 'mojo' | 'street' | 'other'
+}
+
 // Returns the affected leadId + whether it merged into an existing lead, or
 // 'skipped'. Kept as its own function so commitImport stays readable.
 async function upsertRow(
+  db: PrismaClient,
   organizationId: string,
   source: string,
   plan: RowPlan,
-  strategy: DuplicateStrategy
+  strategy: DuplicateStrategy,
+  rowErrors: (message: string) => void
 ): Promise<'skipped' | UpsertOk> {
-  const existing = await findExistingLead(organizationId, plan)
+  const existing = await findExistingLead(db, organizationId, plan)
 
   if (existing && strategy === 'skip') return 'skipped'
+  if (!existing || strategy === 'add-anyway') return createLead(db, organizationId, source, plan, rowErrors)
 
-  const leadData = {
-    name: plan.lead.name ?? null,
-    primaryAddressFull: plan.lead.primaryAddressFull ?? null,
-    primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
-    statusLabel: plan.lead.statusLabel ?? null,
-    mojoId: plan.lead.mojoId ?? null,
-    source,
-  }
-
-  // Fast path: a brand-new lead is created with its contact + phones + emails
-  // nested in a SINGLE query (no contact lookup — there is nothing to reuse yet).
-  if (!existing || strategy === 'add-anyway') {
-    const lead = await prisma.lead.create({
-      data: {
-        organizationId,
-        displayName: plan.displayName,
-        ...leadData,
-        contacts: {
-          create: {
-            organizationId,
-            displayName: plan.contact.name ?? plan.displayName,
-            name: plan.contact.name ?? null,
-            title: plan.contact.title ?? null,
-            phones: {
-              create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
-            },
-            emails: {
-              create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
-            },
-          },
-        },
-      },
+  // Merge path. A Mojo ID only fills a blank, and atomically: if another row
+  // filled this lead first, the lead is another property, so this row is too.
+  if (plan.lead.mojoId && !existing.mojoId) {
+    const { count } = await db.lead.updateMany({
+      where: { id: existing.id, mojoId: null },
+      data: { mojoId: plan.lead.mojoId },
     })
-    await writeCustomValues(organizationId, lead.id, plan.customValues)
-    return { leadId: lead.id, merged: false }
+    if (count === 0) return createLead(db, organizationId, source, plan, rowErrors)
   }
+  await db.lead.update({ where: { id: existing.id }, data: mergeUpdate(plan, source, existing) })
+  const leadId = existing.id
 
-  // Merge path: update the existing lead, reuse its primary contact, dedup phones.
-  await prisma.lead.update({ where: { id: existing }, data: { ...leadData, displayName: plan.displayName } })
-  const leadId = existing
-  let contact = await prisma.contact.findFirst({
+  // Reuse its primary contact, dedup phones.
+  let contact = await db.contact.findFirst({
     where: { leadId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   })
   if (!contact) {
-    contact = await prisma.contact.create({
+    contact = await db.contact.create({
       data: {
         organizationId, leadId,
         displayName: plan.contact.name ?? plan.displayName,
@@ -333,34 +527,118 @@ async function upsertRow(
     })
   }
   if (plan.phones.length) {
-    await prisma.contactPhone.createMany({
+    await db.contactPhone.createMany({
       data: plan.phones.map((p, idx) => ({ contactId: contact!.id, phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
       skipDuplicates: true,
     })
   }
   if (plan.emails.length) {
-    await prisma.contactEmail.createMany({
+    await db.contactEmail.createMany({
       data: plan.emails.map((e, idx) => ({ contactId: contact!.id, email: e, type: 'work', isPrimary: idx === 0 })),
       skipDuplicates: true,
     })
   }
-  await writeCustomValues(organizationId, leadId, plan.customValues)
+  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty ? 'overwrite' : 'fill', rowErrors)
   return { leadId, merged: true }
 }
 
+// A brand-new lead is created with its contact + phones + emails nested in a
+// SINGLE query (no contact lookup — there is nothing to reuse yet).
+async function createLead(
+  db: PrismaClient,
+  organizationId: string,
+  source: string,
+  plan: RowPlan,
+  rowErrors: (message: string) => void
+): Promise<UpsertOk> {
+  const lead = await db.lead.create({
+    data: {
+      organizationId,
+      displayName: plan.displayName,
+      name: plan.lead.name ?? null,
+      primaryAddressFull: plan.lead.primaryAddressFull ?? null,
+      primaryAddressSummary: plan.lead.primaryAddressFull?.split(',')[0] ?? null,
+      statusLabel: plan.lead.statusLabel ?? null,
+      mojoId: plan.lead.mojoId ?? null,
+      source,
+      contacts: {
+        create: {
+          organizationId,
+          displayName: plan.contact.name ?? plan.displayName,
+          name: plan.contact.name ?? null,
+          title: plan.contact.title ?? null,
+          phones: {
+            create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
+          },
+          emails: {
+            create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
+          },
+        },
+      },
+    },
+  })
+  await writeCustomValues(db, organizationId, lead.id, plan.customValues, 'fill', rowErrors)
+  return { leadId: lead.id, merged: false }
+}
+
+// Brief 41 (H4): a merge writes only the fields the file actually has, and a
+// blank cell never wipes a value. Only a confirmed same property may change an
+// existing name or status, and only a Mojo ID match may rewrite an address;
+// otherwise the row only fills blanks. The name only changes from a Lead.name
+// column (a co-owner never replaces it). The Mojo ID is handled separately
+// (fill-only, atomically) in upsertRow.
+function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma.LeadUpdateInput {
+  const data: Prisma.LeadUpdateInput = { source }
+  const may = (current: string | null) => existing.sameProperty || !current
+  // A lead created by hand (or with the name in Contact.name) has a real
+  // displayName but no Lead.name: that counts as a name to keep.
+  const shownName =
+    existing.name ??
+    (existing.displayName !== 'Imported Lead' && existing.displayName !== existing.primaryAddressFull && existing.displayName !== existing.mojoId
+      ? existing.displayName
+      : null)
+  if (plan.lead.name && may(shownName)) {
+    data.name = plan.lead.name
+    data.displayName = plan.displayName
+  }
+  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || !existing.primaryAddressFull)) {
+    data.primaryAddressFull = plan.lead.primaryAddressFull
+    data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
+  }
+  if (plan.lead.statusLabel && may(existing.statusLabel)) data.statusLabel = plan.lead.statusLabel
+  return data
+}
+
+// Custom values in one or two statements (not one upsert per column). A cell
+// that doesn't parse for its field type (e.g. "N/A" in a number field) is
+// skipped and logged, never written as a blank. 'overwrite' replaces the lead's
+// values for these fields; 'fill' only adds the ones it doesn't have yet.
 async function writeCustomValues(
+  db: PrismaClient,
   organizationId: string,
   leadId: string,
-  values: RowPlan['customValues']
+  values: RowPlan['customValues'],
+  mode: 'overwrite' | 'fill',
+  rowErrors: (message: string) => void
 ): Promise<void> {
+  const data: Prisma.CustomFieldValueCreateManyInput[] = []
   for (const cv of values) {
     const cols = buildCustomValueColumns(cv.type, cv.raw)
-    await prisma.customFieldValue.upsert({
-      where: { definitionId_objectId: { definitionId: cv.definitionId, objectId: leadId } },
-      create: { organizationId, definitionId: cv.definitionId, objectType: 'lead', objectId: leadId, ...cols },
-      update: cols,
-    })
+    if (cols.valueText == null && cols.valueNumber == null && cols.valueDate == null && cols.valueJson === undefined) {
+      rowErrors(`column "${cv.column}": "${cv.raw}" isn't a valid ${cv.type}; kept the lead's existing value`)
+      continue
+    }
+    data.push({ organizationId, definitionId: cv.definitionId, objectType: 'lead', objectId: leadId, ...cols } as Prisma.CustomFieldValueCreateManyInput)
   }
+  if (data.length === 0) return
+  if (mode === 'fill') {
+    await db.customFieldValue.createMany({ data, skipDuplicates: true })
+    return
+  }
+  await db.$transaction([
+    db.customFieldValue.deleteMany({ where: { objectId: leadId, definitionId: { in: data.map((d) => d.definitionId) } } }),
+    db.customFieldValue.createMany({ data }),
+  ])
 }
 
 // Runs `fn` over items with at most `limit` concurrent in flight. Preserves the
@@ -381,31 +659,69 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers)
 }
 
-async function findExistingLead(organizationId: string, plan: RowPlan): Promise<string | null> {
+// Brief 41 (H4): matching a row to an existing lead.
+//  1. Same Mojo ID → that lead (the same property).
+//  2. Else the leads sharing the row's first phone, oldest first, skipping any
+//     with a different Mojo ID (another property of the same owner):
+//       - the row has an address: the lead at the same street (same property),
+//         else a lead with no address yet (the row fills it in); otherwise the
+//         row is another property and becomes a new lead;
+//       - the row has no address: the first such lead. A row with a Mojo ID
+//         never attaches it to a lead whose address it can't confirm.
+//  3. Else the exact name + address. With no address that's the name alone,
+//     so only a phoneless row with a real name may use it, and a row with a
+//     Mojo ID never does.
+// No match → a new lead.
+async function findExistingLead(
+  db: PrismaClient,
+  organizationId: string,
+  plan: RowPlan
+): Promise<LeadMatch | null> {
+  const select = { id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true } as const
+  const rowAddress = plan.lead.primaryAddressFull ?? null
   if (plan.lead.mojoId) {
-    const byMojo = await prisma.lead.findFirst({
-      where: { organizationId, mojoId: plan.lead.mojoId },
-      select: { id: true },
-    })
-    if (byMojo) return byMojo.id
+    const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
+    if (byMojo) return { ...byMojo, sameProperty: true, by: 'mojo' }
   }
+  const otherProperty = (l: { mojoId: string | null }) => !!(plan.lead.mojoId && l.mojoId && l.mojoId !== plan.lead.mojoId)
+
   if (plan.phones[0]) {
-    const byPhone = await prisma.contactPhone.findFirst({
-      where: { phone: plan.phones[0].phoneE164, contact: { organizationId } },
-      select: { contact: { select: { leadId: true } } },
-    })
-    if (byPhone) return byPhone.contact.leadId
+    const candidates = (
+      await db.lead.findMany({
+        where: { organizationId, contacts: { some: { phones: { some: { phone: plan.phones[0].phoneE164 } } } } },
+        select,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: 25,
+      })
+    ).filter((l) => !otherProperty(l))
+    if (rowAddress) {
+      const same = candidates.find((l) => sameStreet(l.primaryAddressFull, rowAddress))
+      if (same) return { ...same, sameProperty: true, by: 'street' }
+      const blank = candidates.find((l) => !l.primaryAddressFull)
+      if (blank) return { ...blank, sameProperty: false, by: 'other' }
+    } else {
+      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && l.primaryAddressFull))
+      if (usable) return { ...usable, sameProperty: false, by: 'other' }
+    }
+    // Leads with this phone are other properties: try the exact name + address.
   }
-  if (plan.dedup.kind === 'name-address') {
-    const byNameAddr = await prisma.lead.findFirst({
-      where: {
-        organizationId,
-        displayName: plan.displayName,
-        primaryAddressFull: plan.lead.primaryAddressFull ?? null,
-      },
-      select: { id: true },
-    })
-    if (byNameAddr) return byNameAddr.id
+
+  // Exact name + address. Without an address that is a match on the name alone,
+  // so only a phoneless row with a real name may use it: a row with a new phone
+  // number is a new lead, never "another lead with the same name" (and never
+  // the "Imported Lead" placeholder).
+  const realName = !!(plan.lead.name || plan.contact.name)
+  if (!rowAddress && (plan.phones[0] || !realName)) return null
+  const byNameAddr = await db.lead.findFirst({
+    where: {
+      organizationId,
+      displayName: plan.displayName,
+      primaryAddressFull: rowAddress,
+    },
+    select,
+  })
+  if (byNameAddr && !otherProperty(byNameAddr) && !(plan.lead.mojoId && !byNameAddr.mojoId && !rowAddress)) {
+    return { ...byNameAddr, sameProperty: !!rowAddress, by: rowAddress ? 'street' : 'other' }
   }
   return null
 }

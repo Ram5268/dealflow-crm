@@ -12,6 +12,23 @@ interface Batch {
   duplicateRows: number
   skippedRows: number
   errorRows: number
+  errorLog?: Array<{ row: number; message: string }>
+}
+
+// Plain words for a failed import (Brief 41: a failed commit now stops at
+// 'failed' instead of polling forever).
+function failureText(batch: Batch): string {
+  const reason = batch.errorLog?.find((e) => e.row === 0)?.message.replace(/^Import stopped: /, '') ?? 'unknown error'
+  if (/no stored bytes/.test(reason)) {
+    return "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
+  }
+  if (/^time limit reached/.test(reason)) {
+    return `The import ran out of time (${reason.replace(/\. Run it again.*$/, '')}). Rows imported so far are kept. Run it again and it continues from there; nothing will be duplicated.`
+  }
+  if (/stopped responding/.test(reason)) {
+    return 'The import stopped responding. Rows imported so far are kept. Run it again and it continues from there.'
+  }
+  return `The import stopped: ${reason}. Rows imported before it stopped are kept. You can run it again.`
 }
 
 export default function ProgressPage({ params }: { params: Promise<{ id: string }> }) {
@@ -20,13 +37,19 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
 
   useEffect(() => {
     let active = true
+    let misses = 0
     const poll = async () => {
-      const res = await fetch(`/api/imports/${id}`)
-      if (!res.ok) return
+      const res = await fetch(`/api/imports/${id}`).catch(() => null)
+      if (!res || !res.ok) {
+        // A blip shouldn't freeze the page; give up only after about a minute.
+        if (active && ++misses < 20) setTimeout(poll, 3000)
+        return
+      }
+      misses = 0
       const b = (await res.json()) as Batch
       if (!active) return
       setBatch(b)
-      if (b.status !== 'completed') setTimeout(poll, 1500)
+      if (b.status !== 'completed' && b.status !== 'failed') setTimeout(poll, 1500)
     }
     poll()
     return () => {
@@ -62,6 +85,24 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
               {batch.duplicateRows > 0 && ` · ${batch.duplicateRows} merged`}
               {batch.errorRows > 0 && ` · ${batch.errorRows} errors`}
             </p>
+            {batch.status === 'failed' && (
+              <p className="mb-4 text-base text-danger" data-testid="import-failed">
+                {failureText(batch)}
+              </p>
+            )}
+            {batch.status === 'failed' && (
+              <Button asChild variant="primary">
+                {/no stored bytes/.test(JSON.stringify(batch.errorLog ?? [])) ? (
+                  <Link href="/imports" data-testid="retry-import">
+                    Upload the file again
+                  </Link>
+                ) : (
+                  <Link href={`/imports/${id}/mapping-review`} data-testid="retry-import">
+                    Back to the import
+                  </Link>
+                )}
+              </Button>
+            )}
             {batch.status === 'completed' && (
               <Button asChild variant="primary">
                 <Link href="/leads" data-testid="view-leads">

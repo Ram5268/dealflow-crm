@@ -47,7 +47,7 @@ describe('buildRowPlan', () => {
     expect(plan.phones).toHaveLength(1)
     expect(plan.phones[0]).toEqual({ phoneE164: '+12125550134', type: 'mobile', nonstandard: false })
     expect(plan.emails).toEqual(['jane@x.com'])
-    expect(plan.customValues).toEqual([{ definitionId: 'cf_1', type: 'number', raw: '2500000' }])
+    expect(plan.customValues).toEqual([{ column: 'Score', definitionId: 'cf_1', type: 'number', raw: '2500000' }])
     expect(plan.dedup.kind).toBe('phone')
   })
 
