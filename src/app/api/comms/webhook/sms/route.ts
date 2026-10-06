@@ -12,8 +12,10 @@ const twiml = () =>
 
 // Twilio inbound SMS + delivery-status callbacks. Verify X-Twilio-Signature,
 // then dispatch by shape: MessageStatus (no Body) = delivery callback; otherwise
-// an inbound message (STOP handled inside handleInboundSms). Always 200 TwiML so
-// Twilio doesn't retry-duplicate.
+// an inbound message (STOP handled inside handleInboundSms). 200 TwiML when the
+// message is handled. Brief 41 (H12): if saving it or recording a STOP fails,
+// answer 500, never 200: a 200 told Twilio all was well and the opt-out was
+// lost. A redelivery is safe (the message is saved once per MessageSid).
 export async function POST(req: Request) {
   const rawBody = await req.text()
   const params = Object.fromEntries(new URLSearchParams(rawBody)) as Record<string, string>
@@ -47,6 +49,7 @@ export async function POST(req: Request) {
     })
   } catch (err) {
     logger.error({ err }, 'sms inbound handler failed')
+    return NextResponse.json({ error: 'inbound_sms_failed' }, { status: 500 })
   }
   return twiml()
 }

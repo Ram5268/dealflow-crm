@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { withRoute, json, parseBody, HttpError } from '@/lib/shared/http'
+import { canonicalPhones } from '@/lib/shared/phone'
 
 const phoneSchema = z.object({
   phone: z.string().min(1),
@@ -45,6 +46,10 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
     select: { id: true },
   })
   if (!lead) throw new HttpError(400, 'leadId does not reference an org lead')
+  // Brief 41 (H13): phones are stored in canonical E.164 like the importer's,
+  // so opt-out checks match them however they were typed.
+  const phones = canonicalPhones(body.phones)
+  if (!phones.ok) throw new HttpError(400, `"${phones.invalid}" is not a valid phone number`)
   const contact = await prisma.contact.create({
     data: {
       organizationId,
@@ -53,7 +58,7 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
       name: body.name,
       title: body.title,
       timezone: body.timezone,
-      phones: { create: body.phones },
+      phones: { create: phones.phones },
       emails: { create: body.emails },
     },
     include: { phones: true, emails: true },

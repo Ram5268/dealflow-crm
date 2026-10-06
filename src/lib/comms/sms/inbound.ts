@@ -1,4 +1,6 @@
 import { prisma } from '../../prisma'
+import { logger } from '../../logger'
+import { toE164 } from '../../shared/phone'
 import { notifyMessageReceived } from '../events'
 import { handleStop } from './stop-handler'
 
@@ -6,6 +8,11 @@ import { handleStop } from './stop-handler'
  * Inbound SMS handling (brief §M4). Records the message, emits `message.received`,
  * and — if the body is an opt-out keyword — fires the STOP → DNC path. STOP still
  * records the inbound message (audit) and still emits (it IS an inbound SMS).
+ *
+ * Brief 41 (H12): the message is saved first, exactly once per Twilio message
+ * (a redelivery finds it by providerMessageId instead of failing or
+ * duplicating), and the STOP write is in-process and throws on failure so the
+ * webhook answers non-2xx.
  */
 const STOP_RE = /^(stop|stopall|unsubscribe|cancel|end|quit)$/i
 
@@ -25,46 +32,67 @@ export interface InboundResult {
 
 export async function handleInboundSms(input: InboundSms): Promise<InboundResult> {
   const isStop = STOP_RE.test(input.body.trim())
+  const from = toE164(input.from) ?? input.from
+  const providerMessageId = `twilio:${input.messageSid}`
 
-  if (isStop) {
-    // Legally-required cross-slice write; failure surfaces to the caller so it can
-    // enqueue the sms-stop-relay retry.
-    await handleStop(input.from, input.correlationId)
+  // 1. Record the message (once). A redelivery of the same message reuses it.
+  const existing = await prisma.message.findUnique({ where: { providerMessageId }, select: { id: true } })
+  let messageId = existing?.id ?? null
+  if (!messageId) {
+    const phoneMatch = await prisma.contactPhone.findFirst({
+      where: { phone: from, contact: { organizationId: input.orgId } },
+      select: { contactId: true, contact: { select: { leadId: true } } },
+    })
+    const contactId = phoneMatch?.contactId ?? null
+    const leadId = phoneMatch?.contact?.leadId ?? null
+    let created = true
+    try {
+      messageId = (
+        await prisma.message.create({
+          data: {
+            organizationId: input.orgId,
+            contactId,
+            leadId,
+            channel: 'sms',
+            direction: 'incoming',
+            status: 'inbox',
+            fromAddress: from,
+            toAddresses: [input.to],
+            smsRemotePhone: from,
+            smsLocalPhone: input.to,
+            bodyText: input.body,
+            providerMessageId,
+          },
+        })
+      ).id
+    } catch (err) {
+      // A concurrent delivery of the same message saved it first.
+      const raced = await prisma.message.findUnique({ where: { providerMessageId }, select: { id: true } })
+      if (!raced) throw err
+      messageId = raced.id
+      created = false
+    }
+    if (created) {
+      try {
+        await notifyMessageReceived({
+          messageId,
+          channel: 'sms',
+          contactId: contactId ?? undefined,
+          leadId: leadId ?? undefined,
+          correlationId: input.correlationId ?? 'sms-inbound',
+        })
+      } catch (err) {
+        // The message is saved; a missed event must not fail (and redeliver) it.
+        logger.error({ err, messageId }, 'sms inbound: message.received emit failed')
+      }
+    }
   }
 
-  const phoneMatch = await prisma.contactPhone.findFirst({
-    where: { phone: input.from, contact: { organizationId: input.orgId } },
-    select: { contactId: true, contact: { select: { leadId: true } } },
-  })
-  const contactId = phoneMatch?.contactId ?? null
-  const leadId = phoneMatch?.contact?.leadId ?? null
+  // 2. STOP → internal DNC. Legally required: a failure throws, so the webhook
+  // answers non-2xx rather than losing the opt-out.
+  if (isStop) await handleStop(input.orgId, from)
 
-  const msg = await prisma.message.create({
-    data: {
-      organizationId: input.orgId,
-      contactId,
-      leadId,
-      channel: 'sms',
-      direction: 'incoming',
-      status: 'inbox',
-      fromAddress: input.from,
-      toAddresses: [input.to],
-      smsRemotePhone: input.from,
-      smsLocalPhone: input.to,
-      bodyText: input.body,
-      providerMessageId: `twilio:${input.messageSid}`,
-    },
-  })
-
-  await notifyMessageReceived({
-    messageId: msg.id,
-    channel: 'sms',
-    contactId: contactId ?? undefined,
-    leadId: leadId ?? undefined,
-    correlationId: input.correlationId ?? 'sms-inbound',
-  })
-
-  return { action: isStop ? 'stop' : 'message', messageId: msg.id }
+  return { action: isStop ? 'stop' : 'message', messageId }
 }
 
 /**

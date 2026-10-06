@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { correlationIdFrom, CORRELATION_HEADER } from '@/lib/compliance/correlation'
 import { logWith } from '@/lib/compliance/logger'
-import { addInternalDnc } from '@/lib/compliance/dnc/internal'
+import { addInternalDnc, InvalidPhoneError } from '@/lib/compliance/dnc/internal'
 
 export const dynamic = 'force-dynamic'
 
 // POST /api/compliance/dnc/internal — add a phone to the org's internal DNC.
-// Consumed by Agent D on SMS STOP. Idempotent: re-adding returns HTTP 201 with
-// added:false (D uses `added` to distinguish new opt-outs from re-observations).
+// Idempotent: re-adding returns HTTP 201 with added:false. Brief 41 (H13): the
+// number is stored in canonical E.164 however it was typed ("917-331-2047" →
+// "+19173312047"); a value that isn't a phone number is refused with 400. SMS
+// STOP now adds in-process (comms/sms/stop-handler.ts), not through here.
 export async function POST(req: Request) {
   const correlationId = correlationIdFrom(req)
   const log = logWith(correlationId)
@@ -32,6 +34,9 @@ export async function POST(req: Request) {
     })
     return NextResponse.json(result, { status: 201, headers: { [CORRELATION_HEADER]: correlationId } })
   } catch (err) {
+    if (err instanceof InvalidPhoneError) {
+      return NextResponse.json({ error: 'phone is not a valid phone number' }, { status: 400, headers: { [CORRELATION_HEADER]: correlationId } })
+    }
     log.error({ err: String(err) }, 'dnc/internal failed')
     return NextResponse.json({ error: 'internal_error' }, { status: 500 })
   }

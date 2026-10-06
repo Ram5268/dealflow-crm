@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeE164, addInternalDnc, internalDncHits } from '@/lib/compliance/dnc/internal'
+import { normalizeE164, addInternalDnc, internalDncHits, InvalidPhoneError } from '@/lib/compliance/dnc/internal'
 
 function makeStoreDb() {
   const store = new Map<string, { id: string; phone: string; addedAt: Date }>()
@@ -22,9 +22,16 @@ function makeStoreDb() {
 }
 
 describe('normalizeE164', () => {
-  it('strips spaces, parens, dashes, dots; keeps leading +', () => {
+  it('canonical E.164 however the number is typed (Brief 41, H13)', () => {
     expect(normalizeE164('+1 (212) 555-0101')).toBe('+12125550101')
     expect(normalizeE164(' +12125550101 ')).toBe('+12125550101')
+    for (const typed of ['917-331-2047', '(917) 331-2047', '9173312047', '1-917-331-2047', '917.331.2047', '+1 917 331 2047']) {
+      expect(normalizeE164(typed)).toBe('+19173312047')
+    }
+  })
+
+  it('a value that is not a phone number keeps the old punctuation-stripped form', () => {
+    expect(normalizeE164('not a phone')).toBe('notaphone')
   })
 })
 
@@ -56,6 +63,13 @@ describe('addInternalDnc', () => {
     const r = await addInternalDnc('o', { phone: '+15555550101' }, db as any)
     expect(r.added).toBe(false)
     expect(r.id).toBe('id_race')
+  })
+
+  it('refuses a value that is not a phone number (the route answers 400)', async () => {
+    const { db, store } = makeStoreDb()
+    await expect(addInternalDnc('o', { phone: 'call me maybe' }, db as any)).rejects.toBeInstanceOf(InvalidPhoneError)
+    await expect(addInternalDnc('o', { phone: '12345' }, db as any)).rejects.toBeInstanceOf(InvalidPhoneError)
+    expect(store.size).toBe(0)
   })
 
   it('re-throws when create fails and no row can be found', async () => {

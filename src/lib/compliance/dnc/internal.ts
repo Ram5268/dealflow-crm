@@ -1,14 +1,38 @@
 import { prisma as defaultPrisma } from '@/lib/compliance/db'
+import { toE164 } from '@/lib/shared/phone'
 
 // Internal DNC — the org's own suppression list. Survives DealFlow re-imports
 // (it's keyed on phone, not ContactPhone.id, so a re-imported contact with a
 // fresh ContactPhone row is still blocked). Agent D writes here on SMS STOP.
 // Cron NEVER removes internal rows (only federal/state:* rows).
 
-// Light E.164 normalization so a re-import that formats the same number
-// differently still matches the suppression row.
+// Brief 41 (H13): the form a phone is stored and matched in: canonical E.164
+// ("917-331-2047" → "+19173312047"). It used to only strip punctuation, so an
+// opt-out typed "917-331-2047" was stored as "9173312047" and never matched the
+// lead's "+19173312047". A value that isn't a phone number keeps the old
+// punctuation-stripped form.
 export function normalizeE164(raw: string): string {
-  return raw.trim().replace(/[\s()\-.]/g, '')
+  return toE164(raw) ?? raw.trim().replace(/[\s()\-.]/g, '')
+}
+
+// Every form the same number may be stored in from before Brief 41 (until the
+// backfill rewrites them): canonical, as typed without punctuation, and for a
+// US number its 10- and 11-digit forms.
+export function storedForms(raw: string): string[] {
+  const canonical = normalizeE164(raw)
+  const forms = new Set([canonical, raw.trim().replace(/[\s()\-.]/g, '')])
+  if (/^\+1\d{10}$/.test(canonical)) {
+    forms.add(canonical.slice(1))
+    forms.add(canonical.slice(2))
+  }
+  return [...forms].filter(Boolean)
+}
+
+// A phone that can't be read as a phone number: the add is refused (400).
+export class InvalidPhoneError extends Error {
+  constructor(readonly input: string) {
+    super('not a valid phone number')
+  }
 }
 
 export interface InternalDncRow {
@@ -38,7 +62,8 @@ export async function addInternalDnc(
   input: { phone: string; reason?: string; addedBy?: string },
   db: InternalDncDb = defaultPrisma as unknown as InternalDncDb
 ): Promise<AddInternalDncResult> {
-  const phone = normalizeE164(input.phone)
+  const phone = toE164(input.phone)
+  if (!phone) throw new InvalidPhoneError(input.phone)
 
   const existing = await db.dncSuppression.findUnique({
     where: { organizationId_phone_source: { organizationId: orgId, phone, source: 'internal' } },
@@ -71,18 +96,27 @@ export async function addInternalDnc(
   }
 }
 
-// Batch: which of these phones are on the internal DNC list. ONE query for the
-// whole callable-now batch, not N queries.
+// Batch: which of these phones are on the internal DNC list, as their
+// normalizeE164 form (what callers look up). ONE query for the whole
+// callable-now batch, not N queries. Rows stored in an older format still
+// match (storedForms).
 export async function internalDncHits(
   orgId: string,
   phones: string[],
   db: InternalDncDb = defaultPrisma as unknown as InternalDncDb
 ): Promise<Set<string>> {
   if (phones.length === 0) return new Set()
-  const normalized = phones.map(normalizeE164)
+  // Two phones in one batch can be the same number typed differently: keep
+  // every form of each (a Map entry would otherwise be overwritten).
+  const formsOf = new Map<string, string[]>()
+  for (const p of phones) {
+    const key = normalizeE164(p)
+    formsOf.set(key, [...new Set([...(formsOf.get(key) ?? []), ...storedForms(p)])])
+  }
   const rows = await db.dncSuppression.findMany({
-    where: { organizationId: orgId, source: 'internal', phone: { in: normalized } },
+    where: { organizationId: orgId, source: 'internal', phone: { in: [...new Set([...formsOf.values()].flat())] } },
     select: { phone: true },
   })
-  return new Set(rows.map((r) => r.phone))
+  const found = new Set(rows.map((r) => r.phone))
+  return new Set([...formsOf].filter(([, forms]) => forms.some((f) => found.has(f))).map(([key]) => key))
 }
