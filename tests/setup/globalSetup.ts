@@ -4,6 +4,7 @@
 // files each try to push.
 import "dotenv/config";
 import { execSync } from "node:child_process";
+import { assertTestDatabase } from "../../src/lib/shared/db-guard";
 
 export default function setup(): void {
   // The datasource is `env("DATABASE_URL_MAIN")`, but `.env` ships that var
@@ -15,6 +16,13 @@ export default function setup(): void {
     throw new Error(
       "DATABASE_URL_PERF missing or not a postgres URL — expected the Railway dealflow_crm_perf connection string in agent-b/.env.",
     );
+  }
+  // Brief 41 (H11): the suite writes (schema push, test rows), so it refuses any
+  // database that isn't *_perf / *_test, including a live DATABASE_URL_MAIN that
+  // a checkout's .env may carry (the integration-local suites use MAIN).
+  assertTestDatabase(url, "the test suite (DATABASE_URL_PERF)", { allowOverride: false });
+  if (process.env.DATABASE_URL_MAIN) {
+    assertTestDatabase(process.env.DATABASE_URL_MAIN, "the test suite (DATABASE_URL_MAIN)", { allowOverride: false });
   }
   // --accept-data-loss: additive index/default changes (§13 S1/S2) are flagged
   // as potentially destructive by `db push`; the perf DB is disposable test data.

@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { prisma } from '@/lib/prisma'
 import { putObject, getObject, storageBackend } from '@/lib/core-data/importer/storage'
+import { mainIsTestDb } from '../setup/live-guard'
 
 // Storage backend coverage for the Postgres BYTEA path that replaced the
 // local-filesystem fallback (which died on Vercel's read-only /var/task).
@@ -11,7 +12,7 @@ import { putObject, getObject, storageBackend } from '@/lib/core-data/importer/s
 // says per-file prisma mocks bleed across files there. A live round-trip also
 // proves what a mock cannot — that Prisma actually marshals Buffer -> BYTEA ->
 // Buffer without corrupting bytes.
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 
 let orgId: string
 let userId: string

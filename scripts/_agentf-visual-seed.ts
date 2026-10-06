@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
 /**
  * Agent F — throwaway visual-parity fixtures.
@@ -16,6 +17,10 @@ import { PrismaClient } from '@prisma/client'
  * Dev-only. Tear down before running any gate: the e2e suite asserts exact row
  * counts and carries a residue check.
  */
+// Brief 41 (H11): seeds and deletes fixture rows; refuses a live
+// DATABASE_URL_MAIN unless run with --i-mean-live.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, '_agentf-visual-seed (DATABASE_URL_MAIN)')
+
 const prisma = new PrismaClient()
 const TAG = 'AGENT_F_VISUAL'
 

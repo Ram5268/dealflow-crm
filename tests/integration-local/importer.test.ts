@@ -5,8 +5,9 @@ import { putObject } from '@/lib/core-data/importer/storage'
 import { commitImport } from '@/lib/core-data/importer/commit-worker'
 import type { MappingProposal } from '@/lib/core-data/importer/ai-mapping'
 import type { EmitResult } from '@/lib/core-data/events/emit'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 
 let orgId: string
 let userId: string

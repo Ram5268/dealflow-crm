@@ -4,8 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { runDealflowSync } from '@/lib/core-data/dealflow-sync/run'
 import { fetchDealflowBatch, buildSignals } from '@/lib/core-data/dealflow-sync/sync'
 import { closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 const roEnabled = !!process.env.DATABASE_URL_DEALFLOW_RO
 
 let orgId: string

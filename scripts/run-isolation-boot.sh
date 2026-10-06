@@ -21,6 +21,9 @@ if [ -z "${DATABASE_URL_MAIN:-}" ]; then
   echo "ABORT: DATABASE_URL_MAIN is unset. Add it to .env (or run under Doppler)." >&2
   exit 1
 fi
+# Brief 41 (H11): this runs `prisma migrate deploy` and seeds fixtures, so it
+# refuses a live database unless run as `bash scripts/run-isolation-boot.sh --i-mean-live`.
+pnpm exec tsx scripts/assert-test-db.ts DATABASE_URL_MAIN run-isolation-boot "$@"
 
 echo "==> 1/6 iCloud duplicate sweep"
 DUPES=$(find . -type f \( -name "* 2.ts" -o -name "* 2.tsx" -o -name "* 2.json" \) -not -path "./node_modules/*" -not -path "./.next/*" -print)

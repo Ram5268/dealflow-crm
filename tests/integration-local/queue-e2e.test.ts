@@ -4,8 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { getQueue } from '@/lib/core-data/smart-view/queue-service'
 import type { BatchCaller } from '@/lib/core-data/query-dsl/compliance-bridge'
 import type { SQuery } from '@/lib/core-data/query-dsl/schema'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 const MARK = 'TEST_QUEUE_E2E'
 
 // Caller mirroring the mock: DNC phones blocked; entries with no timezone
