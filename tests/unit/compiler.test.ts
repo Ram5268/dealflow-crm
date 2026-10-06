@@ -352,16 +352,32 @@ describe('compiler — identifier safety', () => {
 })
 
 describe('compileOrderBy', () => {
-  it('defaults to priorityScore DESC NULLS LAST', () => {
+  it('defaults to priorityScore DESC NULLS LAST, then lead.id', () => {
     expect(compileOrderBy([])).toBe(
-      'ORDER BY lead."priorityScore" DESC NULLS LAST'
+      'ORDER BY lead."priorityScore" DESC NULLS LAST, lead.id ASC'
     )
   })
 
   it('maps custom sort field + direction', () => {
     expect(
       compileOrderBy([{ field: 'updatedAt', direction: 'asc' }])
-    ).toBe('ORDER BY lead."updatedAt" ASC NULLS LAST')
+    ).toBe('ORDER BY lead."updatedAt" ASC NULLS LAST, lead.id ASC')
+  })
+
+  // Brief 41 (L15): without a unique last key, rows that tie on the sort come
+  // back in any order, so LIMIT/OFFSET pages repeat or skip leads.
+  it('always ends on the unique lead.id tiebreaker', () => {
+    for (const sort of [
+      [],
+      [{ field: 'priorityScore', direction: 'desc' as const }],
+      [
+        { field: 'priorityScore', direction: 'desc' as const },
+        { field: 'topMatchFit', direction: 'desc' as const },
+      ],
+      [{ field: 'displayName', direction: 'asc' as const }],
+    ]) {
+      expect(compileOrderBy(sort)).toMatch(/, lead\.id ASC$/)
+    }
   })
 
   it('unknown sort field throws', () => {

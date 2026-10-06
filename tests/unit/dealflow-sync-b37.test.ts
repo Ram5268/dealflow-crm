@@ -124,9 +124,9 @@ describe('"DealFlow priority" default view', () => {
     expect(compiled.whereSql).not.toMatch(/NULL|\bOR\b/i)
   })
 
-  it('sorts by priority, then top match fit, blanks last', () => {
+  it('sorts by priority, then top match fit, blanks last, then lead id', () => {
     expect(compileOrderBy(DEFAULT_VIEW.sort)).toBe(
-      'ORDER BY lead."priorityScore" DESC NULLS LAST, lead."topMatchFit" DESC NULLS LAST'
+      'ORDER BY lead."priorityScore" DESC NULLS LAST, lead."topMatchFit" DESC NULLS LAST, lead.id ASC'
     )
   })
 
