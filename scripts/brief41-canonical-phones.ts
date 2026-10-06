@@ -10,17 +10,21 @@
 // A production data step on the LIVE CRM: run it only with Ryan's OK. It never
 // prints a phone number, only counts and row ids.
 //
-//   npx tsx scripts/brief41-canonical-phones.ts            # dry run (default)
-//   npx tsx scripts/brief41-canonical-phones.ts --apply    # rewrite the rows
+//   npx tsx scripts/brief41-canonical-phones.ts                          # dry run (default; reads only)
+//   npx tsx scripts/brief41-canonical-phones.ts --apply --i-mean-live    # rewrite the rows in the live CRM
+// (--apply on a non-test database needs --i-mean-live; see src/lib/shared/db-guard.ts)
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import { planPhoneBackfill } from '../src/lib/compliance/dnc/phoneBackfill'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
 const prisma = new PrismaClient()
 const BATCH = 200
 
 async function main() {
   const apply = process.argv.includes('--apply')
+  // Brief 41 (H11): writing to a non-test database is a deliberate step.
+  if (apply) assertTestDatabase(process.env.DATABASE_URL_MAIN, 'brief41-canonical-phones --apply (DATABASE_URL_MAIN)', { allowOverride: true })
   const dncRows = await prisma.dncSuppression.findMany({ select: { id: true, organizationId: true, source: true, phone: true } })
   const phoneRows = await prisma.contactPhone.findMany({ select: { id: true, phone: true } })
   const plan = planPhoneBackfill(dncRows, phoneRows)
