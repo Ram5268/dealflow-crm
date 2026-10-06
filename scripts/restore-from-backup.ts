@@ -1,12 +1,18 @@
 import 'dotenv/config'
 import { promises as fs } from 'node:fs'
 import { PrismaClient } from '@prisma/client'
+import { assertTestDatabase, scriptArgs } from '../src/lib/shared/db-guard'
 
 // Restores a logical backup produced by scripts/backup.ts. Idempotent: upserts
 // by primary key so a restore can be re-run. Usage:
 //   pnpm tsx scripts/restore-from-backup.ts backups/backup-<stamp>.json
+//   (add --i-mean-live, anywhere, to restore into a non-test database)
 // REQUIRED for Gate 1 sign-off (tested once). Production physical restores use
 // `pg_restore` from the pg_dump artifact.
+
+// Brief 41 (H11): a restore overwrites rows, so it refuses a live
+// DATABASE_URL_MAIN unless run with --i-mean-live (a deliberate live restore).
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'restore-from-backup (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const prisma = new PrismaClient()
 
@@ -22,7 +28,7 @@ async function upsertAll(
 }
 
 async function main() {
-  const file = process.argv[2]
+  const file = scriptArgs()[0]
   if (!file) throw new Error('usage: restore-from-backup.ts <backup.json>')
   const data = JSON.parse(await fs.readFile(file, 'utf8'))
 

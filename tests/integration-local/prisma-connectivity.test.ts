@@ -1,9 +1,10 @@
 import 'dotenv/config'
 import { describe, it, expect, afterAll } from 'vitest'
 import { prisma } from '@/lib/prisma'
+import { mainIsTestDb } from '../setup/live-guard'
 
 // Connects to DATABASE_URL_MAIN and runs a trivial query. Skips if MAIN is unset.
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 
 describe.runIf(enabled)('prisma connectivity (MAIN)', () => {
   afterAll(async () => {

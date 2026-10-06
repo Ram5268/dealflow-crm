@@ -4,8 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { dispatch } from '@/lib/core-data/events/demux'
 import { HANDLERS } from '@/lib/core-data/events/handlers'
 import { resolvePayload } from '@/lib/core-data/events/listen'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 const CALL_ID = 'TEST_EVT_call_1'
 const MSG_ID = 'TEST_EVT_msg_1'
 

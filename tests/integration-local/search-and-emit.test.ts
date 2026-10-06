@@ -5,8 +5,9 @@ import { prisma } from '@/lib/prisma'
 import { POST as searchRoute } from '@/app/api/data/search/route'
 import { emit } from '@/lib/core-data/events/emit'
 import { NOTIFY_SAFE_BYTES } from '@/lib/core-data/events/emit'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 const MARK = 'TEST_SE'
 let orgId: string
 

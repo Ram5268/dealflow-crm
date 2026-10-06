@@ -15,6 +15,11 @@ import { createGmailSyncPorts } from '../src/lib/comms/email/gmail-adapter'
 import { createGraphSyncPorts } from '../src/lib/comms/email/graph-adapter'
 import { deltaSync } from '../src/lib/comms/email/gmail-sync'
 import { MessageReceivedEvent } from '../contracts/events/message.received'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
+
+// Brief 41 (H11): this smoke deletes Message rows and installs a mock OAuth
+// credential, so it refuses a live DATABASE_URL_MAIN unless run with --i-mean-live.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'gate1-smoke (DATABASE_URL_MAIN)', { allowOverride: true })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

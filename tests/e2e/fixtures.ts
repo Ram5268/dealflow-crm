@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
+import { assertTestDatabase } from '../../src/lib/shared/db-guard'
 
 /**
  * Fixtures for the E2E suite.
@@ -23,6 +24,9 @@ import { PrismaClient } from '@prisma/client'
 // Playwright does not load .env on its own and does not resolve the `@/` alias
 // in this (CommonJS) test context, hence the explicit dotenv import above and
 // the direct @prisma/client import.
+// Brief 41 (H11): the fixtures create and delete leads, messages, calls and
+// sequences, so they refuse anything but a *_perf / *_test database (no override).
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'tests/e2e fixtures (DATABASE_URL_MAIN)', { allowOverride: false })
 const prisma = new PrismaClient({
   datasources: { db: { url: process.env.DATABASE_URL_MAIN } },
 })

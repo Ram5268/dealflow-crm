@@ -7,8 +7,9 @@ import { GET as getLead, PUT as updateLead, DELETE as deleteLead } from '@/app/a
 import { POST as createDef } from '@/app/api/custom-fields/route'
 import { PUT as putValues } from '@/app/api/leads/[id]/custom-values/route'
 import { POST as postActivity } from '@/app/api/activities/route'
+import { mainIsTestDb } from '../setup/live-guard'
 
-const enabled = !!process.env.DATABASE_URL_MAIN
+const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 
 function req(url: string, init?: { method?: string; body?: unknown }): NextRequest {
   return new NextRequest(new URL(url, 'http://localhost'), {

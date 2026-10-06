@@ -10,6 +10,7 @@
 import "dotenv/config";
 import pg from "pg";
 import { PrismaClient } from "@prisma/client";
+import { assertTestDatabase } from "../../src/lib/shared/db-guard";
 
 export function perfConnectionString(): string {
   const url = process.env.DATABASE_URL_PERF;
@@ -18,6 +19,7 @@ export function perfConnectionString(): string {
       "DATABASE_URL_PERF is not set — expected in agent-b/.env (Railway dealflow_crm_perf).",
     );
   }
+  assertTestDatabase(url, "a perf-DB test client", { allowOverride: false }); // Brief 41 (H11)
   return url;
 }
 

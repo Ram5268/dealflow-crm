@@ -5,8 +5,10 @@
 #
 # Milestone 1 boots WITHOUT any vendor (the callable-now pipeline has no vendor
 # step yet — timezone/policy/internal-DNC/window/holiday only). DNC_VENDOR may
-# be unset. Requires DATABASE_URL_MAIN pointing at the Railway dev DB (or a
-# local docker Postgres — see README).
+# be unset. Requires DATABASE_URL_MAIN pointing at a test database (name ending
+# _perf or _test; see README). Brief 41: anything else is refused, with no
+# override: this migrates and seeds fake fixtures, which never belong in a live
+# database.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,6 +23,10 @@ if [ -z "${DATABASE_URL_MAIN:-}" ]; then
   echo "ABORT: DATABASE_URL_MAIN is unset. Add it to .env (or run under Doppler)." >&2
   exit 1
 fi
+# Brief 41 (H11): this runs `prisma migrate deploy` and seeds fake fixtures, so
+# it refuses anything but a test database. No override is passed on (the seed
+# step refuses a live database regardless).
+pnpm exec tsx scripts/assert-test-db.ts DATABASE_URL_MAIN run-isolation-boot
 
 echo "==> 1/6 iCloud duplicate sweep"
 DUPES=$(find . -type f \( -name "* 2.ts" -o -name "* 2.tsx" -o -name "* 2.json" \) -not -path "./node_modules/*" -not -path "./.next/*" -print)
