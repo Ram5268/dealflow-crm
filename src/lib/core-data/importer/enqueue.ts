@@ -9,6 +9,9 @@ export interface ImportCommitJob {
   duplicateStrategy: DuplicateStrategy
   mapping: MappingProposal
   correlationId: string
+  // The run claimImportCommit started; the commit only works while it holds
+  // the import (Brief 41.1). Absent on jobs queued before run ids existed.
+  runId?: string
 }
 
 // Enqueues the commit. With USE_PGBOSS=1 the job goes on the pg-boss queue for
@@ -29,7 +32,7 @@ export async function enqueueImportCommit(job: ImportCommitJob): Promise<void> {
     }
   }
   await runWithCorrelationId(job.correlationId, () =>
-    commitImport(job.importBatchId, job.duplicateStrategy, job.mapping, job.correlationId).catch(
+    commitImport(job.importBatchId, job.duplicateStrategy, job.mapping, job.correlationId, { runId: job.runId }).catch(
       (err) => captureException(err, { event: 'import-commit-inline' })
     )
   )

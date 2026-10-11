@@ -80,7 +80,7 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
         {error && (
           <div className="mb-3 rounded-md bg-danger-subtle p-3 text-base text-danger">
             {error}
-            {/already (started|running|run)/.test(error) && (
+            {/already (started|running|run)|still stopping/.test(error) && (
               <>
                 {' '}
                 <Link href={`/imports/${id}/progress`} className="underline">
