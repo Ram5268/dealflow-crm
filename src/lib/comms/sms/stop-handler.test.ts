@@ -21,6 +21,21 @@ describe('handleStop', () => {
     expect(r.added).toBe(true)
   })
 
+  // Brief 41.1 (F5): an opt-out phrase inside a longer message is recorded with
+  // its own reason, so the opt-out list (and later the inbox) can tell it apart
+  // from a plain STOP for review.
+  it('records a phrase match with its own reason', async () => {
+    dnc.addInternalDnc.mockResolvedValue({ id: 'd', phone: '+15551112222', source: 'internal', addedAt: 't', added: true })
+    await handleStop('org_1', '+15551112222', { kind: 'phrase', phrase: 'stop' })
+    expect(dnc.addInternalDnc).toHaveBeenCalledWith('org_1', {
+      phone: '+15551112222',
+      reason: 'sms_stop_phrase',
+      addedBy: 'sms-inbound-handler',
+    })
+    await handleStop('org_1', '+15551112222', { kind: 'keyword', phrase: 'stop' })
+    expect(dnc.addInternalDnc).toHaveBeenLastCalledWith('org_1', expect.objectContaining({ reason: 'sms_stop_received' }))
+  })
+
   it('a failed write throws (the opt-out is never dropped silently)', async () => {
     dnc.addInternalDnc.mockRejectedValue(new Error('db down'))
     await expect(handleStop('org_1', '+15551112222')).rejects.toThrow('db down')

@@ -52,15 +52,27 @@ export function computeTwilioSignature(
   return createHmac('sha1', authToken).update(Buffer.from(data, 'utf8')).digest('base64')
 }
 
+// Brief 41.1 (F3): an empty token never verifies. Anyone can compute the HMAC
+// with an empty key, so a forged STOP (which writes a permanent opt-out) would
+// pass.
 export function verifyTwilioSignature(
   authToken: string,
   url: string,
   params: Record<string, string>,
   signature: string | null | undefined,
 ): boolean {
-  if (!signature) return false
+  if (!authToken.trim() || !signature) return false
   const expected = computeTwilioSignature(authToken, url, params)
   const a = Buffer.from(signature)
   const b = Buffer.from(expected)
   return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/**
+ * Brief 41.1 (F3): TWILIO_MOCK_SKIP_SIGNATURE turns the signature check off for
+ * the local Twilio mock. It's ignored in production (VERCEL_ENV), so a stray
+ * setting there can't switch the check off.
+ */
+export function signatureCheckSkipped(env: Record<string, string | undefined> = process.env): boolean {
+  return env.TWILIO_MOCK_SKIP_SIGNATURE === 'true' && env.VERCEL_ENV !== 'production'
 }

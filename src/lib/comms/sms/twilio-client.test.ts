@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { computeTwilioSignature, verifyTwilioSignature, sendSms } from './twilio-client'
+import { computeTwilioSignature, verifyTwilioSignature, sendSms, signatureCheckSkipped } from './twilio-client'
 
 const token = 'auth-token'
 const url = 'https://crm.example.com/api/comms/webhook/sms'
@@ -19,6 +19,25 @@ describe('twilio signature', () => {
   it('rejects when params are tampered', () => {
     const sig = computeTwilioSignature(token, url, params)
     expect(verifyTwilioSignature(token, url, { ...params, Body: 'GO' }, sig)).toBe(false)
+  })
+
+  // Brief 41.1 (F3): anyone can compute the HMAC with an empty key, so with no
+  // token configured a forged STOP used to verify (and write a permanent
+  // opt-out). An empty token never verifies.
+  it('never verifies against an empty token', () => {
+    const forged = computeTwilioSignature('', url, params)
+    expect(verifyTwilioSignature('', url, params, forged)).toBe(false)
+    expect(verifyTwilioSignature('   ', url, params, computeTwilioSignature('   ', url, params))).toBe(false)
+  })
+})
+
+describe('signatureCheckSkipped (TWILIO_MOCK_SKIP_SIGNATURE)', () => {
+  it('skips only for the local mocks, never in production', () => {
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true' })).toBe(true)
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', VERCEL_ENV: 'preview' })).toBe(true)
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', VERCEL_ENV: 'production' })).toBe(false)
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: '1' })).toBe(false)
+    expect(signatureCheckSkipped({})).toBe(false)
   })
 })
 
