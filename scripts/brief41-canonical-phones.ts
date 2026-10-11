@@ -7,57 +7,48 @@
 // every check sees one form. Plan: src/lib/compliance/dnc/phoneBackfill.ts
 // (nothing is deleted; values that aren't phone numbers are only reported).
 //
-// A production data step on the LIVE CRM: run it only with Ryan's OK. It never
-// prints a phone number, only counts and row ids.
+// Brief 41.1: how it runs is src/lib/compliance/dnc/phoneBackfillRun.ts.
+// --apply needs --expect <n> (the count from the dry run Ryan approved), saves
+// a private before-image first (outside the repo; it holds phone numbers), and
+// writes each row only if it still holds the phone the dry run saw (a row
+// changed meanwhile is skipped and reported). --restore <file> undoes it.
 //
-//   npx tsx scripts/brief41-canonical-phones.ts                          # dry run (default; reads only)
-//   npx tsx scripts/brief41-canonical-phones.ts --apply --i-mean-live    # rewrite the rows in the live CRM
+// A production data step on the LIVE CRM: run it only with Ryan's OK, while no
+// import, sync or opt-out refresh is running. It never prints a phone number,
+// only counts and row ids.
+//
+//   npx tsx scripts/brief41-canonical-phones.ts                                      # dry run (default; reads only)
+//   npx tsx scripts/brief41-canonical-phones.ts --apply --expect <n> --i-mean-live   # rewrite the rows in the live CRM
+//   npx tsx scripts/brief41-canonical-phones.ts --restore <before-image.json>        # what an undo would do
+//   npx tsx scripts/brief41-canonical-phones.ts --restore <file> --apply --expect <n> --i-mean-live
+// --preimage-dir <dir> picks where the before-image goes (default ~/dev/brief41-1/private).
 // (--apply on a non-test database needs --i-mean-live; see src/lib/shared/db-guard.ts)
 import 'dotenv/config'
+import os from 'node:os'
+import path from 'node:path'
 import { PrismaClient } from '@prisma/client'
-import { planPhoneBackfill } from '../src/lib/compliance/dnc/phoneBackfill'
-import { assertTestDatabase } from '../src/lib/shared/db-guard'
+import { runPhoneBackfill, type BackfillDb } from '../src/lib/compliance/dnc/phoneBackfillRun'
+import { assertTestDatabase, databaseName, scriptArgs } from '../src/lib/shared/db-guard'
 
 const prisma = new PrismaClient()
-const BATCH = 200
 
 async function main() {
-  const apply = process.argv.includes('--apply')
+  const args = scriptArgs()
   // Brief 41 (H11): writing to a non-test database is a deliberate step.
-  if (apply) assertTestDatabase(process.env.DATABASE_URL_MAIN, 'brief41-canonical-phones --apply (DATABASE_URL_MAIN)', { allowOverride: true })
-  const dncRows = await prisma.dncSuppression.findMany({ select: { id: true, organizationId: true, source: true, phone: true } })
-  const phoneRows = await prisma.contactPhone.findMany({ select: { id: true, contactId: true, phone: true } })
-  const plan = planPhoneBackfill(dncRows, phoneRows)
-  console.log(JSON.stringify({
-    optOutRows: dncRows.length,
-    optOutsToRewrite: plan.dnc.rewrite.length,
-    optOutsAlreadyCoveredByACanonicalRow: plan.dnc.alreadyCovered.length,
-    optOutsNotAPhoneNumber: plan.dnc.unparseable,
-    contactPhoneRows: phoneRows.length,
-    contactPhonesToRewrite: plan.contactPhones.rewrite.length,
-    contactPhonesAlreadyCoveredOnTheirContact: plan.contactPhones.alreadyCovered.length,
-    contactPhonesNotAPhoneNumber: plan.contactPhones.unparseable,
-  }, null, 2))
-
-  if (!apply) {
-    console.log('Dry run: nothing changed. Re-run with --apply to rewrite them.')
-    return
-  }
-  let dnc = 0
-  let phones = 0
-  for (let i = 0; i < plan.dnc.rewrite.length; i += BATCH) {
-    const batch = plan.dnc.rewrite.slice(i, i + BATCH)
-    await prisma.$transaction(batch.map((r) => prisma.dncSuppression.update({ where: { id: r.id }, data: { phone: r.phone } })))
-    dnc += batch.length
-  }
-  for (let i = 0; i < plan.contactPhones.rewrite.length; i += BATCH) {
-    const batch = plan.contactPhones.rewrite.slice(i, i + BATCH)
-    await prisma.$transaction(batch.map((r) => prisma.contactPhone.update({ where: { id: r.id }, data: { phone: r.phone } })))
-    phones += batch.length
-  }
-  console.log(`Rewrote ${dnc} opt-out row(s) and ${phones} contact phone(s) to canonical E.164.`)
+  if (args.includes('--apply')) assertTestDatabase(process.env.DATABASE_URL_MAIN, 'brief41-canonical-phones --apply (DATABASE_URL_MAIN)', { allowOverride: true })
+  await runPhoneBackfill({
+    db: prisma as unknown as BackfillDb,
+    args,
+    log: (line) => console.log(line),
+    database: databaseName(process.env.DATABASE_URL_MAIN),
+    repoRoot: path.resolve(__dirname, '..'),
+    defaultPreImageDir: path.join(os.homedir(), 'dev', 'brief41-1', 'private'),
+  })
 }
 
 main()
-  .catch((e) => { console.error(e); process.exitCode = 1 })
+  .catch((e) => {
+    console.error(e instanceof Error && e.message.startsWith('REFUSING') ? e.message : e)
+    process.exitCode = 1
+  })
   .finally(() => prisma.$disconnect())
