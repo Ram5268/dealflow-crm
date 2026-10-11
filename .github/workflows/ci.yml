@@ -42,10 +42,68 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Test — comms suite
-        # `scripts/test-all.sh` runs two suites; only this one is runnable here.
-        # Suite 1 (vitest.config.ts) is DB-backed: its globalSetup requires
-        # DATABASE_URL_PERF and runs `prisma db push --accept-data-loss` against
-        # the shared Railway DB. Pointing CI at that on every push would add
-        # load to a DB that already saturates, so suite 1 stays a local gate.
-        # This suite is fully mocked (vi.mock on prisma, fetch stubs) — no DB.
+        # `scripts/test-all.sh` runs two suites. This one (suite 2) is fully
+        # mocked (vi.mock on prisma, fetch stubs) — no DB. Suite 1, the
+        # DB-backed one, runs in the `db-suite` job below.
         run: corepack pnpm@9 exec vitest run --config vitest.agent-d.config.ts
+
+  db-suite:
+    # Brief 41.1 (PR B): suite 1 (vitest.config.ts, the DB-backed tests) on a
+    # throwaway Postgres that exists only for this job, instead of the shared
+    # Railway perf DB (which drops connections and is shared with local runs).
+    # The job has no secrets, so it can't reach the live CRM, and the test
+    # guard (src/lib/shared/db-guard.ts) refuses any database whose name
+    # doesn't end in _perf / _test anyway.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: crm
+          POSTGRES_DB: dealflow_crm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Suite 1's own database: globalSetup pushes the schema here.
+      DATABASE_URL_PERF: postgresql://crm:crm@localhost:5432/dealflow_crm_test
+      # tests/integration-local/* run only when DATABASE_URL_MAIN is a test
+      # database, so they get a second one (they share no rows with suite 1).
+      DATABASE_URL_MAIN: postgresql://crm:crm@localhost:5432/dealflow_crm_main_test
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false # see the `ci` job
+
+      - name: Enable corepack (pnpm 9)
+        run: corepack enable
+
+      - name: Install
+        run: corepack pnpm@9 install --frozen-lockfile
+
+      - name: Prisma generate
+        run: corepack pnpm@9 exec prisma generate
+
+      - name: Create the integration-local database
+        run: psql "$DATABASE_URL_PERF" -c 'CREATE DATABASE dealflow_crm_main_test'
+
+      - name: Schema + singleton org for the integration-local suites
+        # The datasource is env("DATABASE_URL_MAIN"), so this pushes to the
+        # second test database. seed-main upserts the dealflow-ryan org and
+        # user those suites look up.
+        run: |
+          corepack pnpm@9 exec prisma db push --skip-generate
+          corepack pnpm@9 exec tsx scripts/seed-main.ts
+
+      - name: Test — DB-backed suite (suite 1)
+        # tests/perf/25k needs a 25k-lead seed, which this database doesn't have.
+        run: corepack pnpm@9 exec vitest run --exclude tests/perf/25k.test.ts
