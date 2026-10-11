@@ -51,9 +51,9 @@ jobs:
     # Brief 41.1 (PR B): suite 1 (vitest.config.ts, the DB-backed tests) on a
     # throwaway Postgres that exists only for this job, instead of the shared
     # Railway perf DB (which drops connections and is shared with local runs).
-    # The job has no secrets, so it can't reach the live CRM, and the test
-    # guard (src/lib/shared/db-guard.ts) refuses any database whose name
-    # doesn't end in _perf / _test anyway.
+    # The job has no secrets, so it can't reach the live CRM. The tests' guard
+    # (src/lib/shared/db-guard.ts) refuses any database whose name doesn't end
+    # in _perf / _test, and the setup step below runs the same check first.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -66,7 +66,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U crm -d dealflow_crm_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -74,7 +74,8 @@ jobs:
       # Suite 1's own database: globalSetup pushes the schema here.
       DATABASE_URL_PERF: postgresql://crm:crm@localhost:5432/dealflow_crm_test
       # tests/integration-local/* run only when DATABASE_URL_MAIN is a test
-      # database, so they get a second one (they share no rows with suite 1).
+      # database, so they get a second one (no rows shared with the rest of
+      # suite 1).
       DATABASE_URL_MAIN: postgresql://crm:crm@localhost:5432/dealflow_crm_main_test
     steps:
       - uses: actions/checkout@v5
@@ -99,8 +100,10 @@ jobs:
       - name: Schema + singleton org for the integration-local suites
         # The datasource is env("DATABASE_URL_MAIN"), so this pushes to the
         # second test database. seed-main upserts the dealflow-ryan org and
-        # user those suites look up.
+        # user those suites look up. Neither has a guard of its own, so the
+        # live-database check runs first.
         run: |
+          corepack pnpm@9 exec tsx scripts/assert-test-db.ts DATABASE_URL_MAIN db-suite-setup
           corepack pnpm@9 exec prisma db push --skip-generate
           corepack pnpm@9 exec tsx scripts/seed-main.ts
 
