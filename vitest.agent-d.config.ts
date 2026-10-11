@@ -5,6 +5,9 @@ import { defineConfig } from 'vitest/config'
 // stays slice-agnostic (mirrors vitest.agent-c.config.ts). The comms unit tests
 // are fully mocked (prisma via vi.mock, HTTP via fetch stubs), so this config
 // intentionally OMITS the shared globalSetup (perf-DB push) — no live DB needed.
+// Brief 41.1 (F11): its own globalSetup refuses to start when the database a
+// real Prisma client would use (DATABASE_URL_MAIN, or the checkout's .env) is
+// not a *_perf / *_test one, so an unmocked client can't reach the live CRM.
 //
 // Coverage floor: 85% lines + branches on every product-surface comms dir
 // (email/oauth/sequences/sms/templates/clients). `jobs/**` (pg-boss infra) is
@@ -14,6 +17,7 @@ export default defineConfig({
   test: {
     include: ['src/lib/comms/**/*.test.ts'],
     environment: 'node',
+    globalSetup: ['tests/setup/suite2-db-guard.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

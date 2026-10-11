@@ -17,9 +17,10 @@ import { assertTestDatabase } from '../src/lib/shared/db-guard'
 //   cp_notz_01            -> timezone_unresolved
 //   cp_internal_dnc_01    -> internal_dnc
 
-// Brief 41 (H11): it writes fixtures (including a confirmed calling-window
-// policy), so it refuses a live DATABASE_URL_MAIN unless run with --i-mean-live.
-assertTestDatabase(process.env.DATABASE_URL_MAIN, 'seed-compliance-fixtures (DATABASE_URL_MAIN)', { allowOverride: true })
+// Brief 41 (H11) + 41.1: it writes fake fixtures (including a confirmed
+// calling-window policy), which never belong in the live CRM, so it only ever
+// runs on a *_perf / *_test database. No --i-mean-live override.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'seed-compliance-fixtures (DATABASE_URL_MAIN)', { allowOverride: false })
 
 const prisma = new PrismaClient()
 const ORG_ID = 'org_test'
