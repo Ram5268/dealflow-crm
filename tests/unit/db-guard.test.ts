@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { assertTestDatabase, databaseName, isTestDatabase, scriptArgs, LIVE_OVERRIDE_FLAG } from '@/lib/shared/db-guard'
 import { mainIsTestDb } from '../setup/live-guard'
-import { assertSuite2Database, prismaMainUrl } from '../setup/suite2-db-guard'
+import { assertSuite2Database, assertSuite2Environment, prismaMainUrl } from '../setup/suite2-db-guard'
 
 // Brief 41 (H11): the shared live-database guard for tests and scripts.
 const LIVE = 'postgresql://u:p@db.invalid:5432/dealflow_crm?sslmode=require'
@@ -110,6 +110,7 @@ describe('smoke and seed scripts refuse a live database even with --i-mean-live'
     ['scripts/_agentf-visual-seed.ts', '_agentf-visual-seed', 'up'],
   ])('%s', (script, name, ...args) => {
     const r = run(script, ...args)
+    expect(r.error).toBeUndefined() // not killed by the timeout
     expect(r.status).toBe(1)
     expect(refusal(r.stderr)).toContain(`REFUSING: ${name} (DATABASE_URL_MAIN) would use database "dealflow_crm"`)
     expect(refusal(r.stderr)).not.toContain(LIVE_OVERRIDE_FLAG)
@@ -152,7 +153,20 @@ describe('suite 2 (vitest.agent-d.config.ts) refuses a live database', () => {
       message = (err as Error).message
     }
     expect(message).toMatch(/^REFUSING: suite 2/)
+    expect(message).toContain('DATABASE_URL_MAIN set empty')
     expect(message).not.toContain(LIVE_OVERRIDE_FLAG)
+  })
+
+  it("also checks what Prisma itself loads (the .env recorded at generate time, which may be another checkout's)", async () => {
+    // Stand-in for Prisma loading a live .env into the environment.
+    const env: Record<string, string | undefined> = {}
+    await expect(assertSuite2Environment(env, dir, async () => { env.DATABASE_URL_MAIN = LIVE })).rejects.toThrow(/REFUSING: suite 2/)
+    const ok: Record<string, string | undefined> = {}
+    await expect(assertSuite2Environment(ok, dir, async () => { ok.DATABASE_URL_MAIN = TEST })).resolves.toBeUndefined()
+    // A live value already in the environment is refused before Prisma is touched.
+    let loaded = false
+    await expect(assertSuite2Environment({ DATABASE_URL_MAIN: LIVE }, dir, async () => { loaded = true })).rejects.toThrow(/REFUSING/)
+    expect(loaded).toBe(false)
   })
 
   it('the suite-2 run itself refuses a live DATABASE_URL_MAIN, and runs with a test one', () => {
@@ -167,4 +181,16 @@ describe('suite 2 (vitest.agent-d.config.ts) refuses a live database', () => {
     expect(refusal(live.stdout + live.stderr)).toContain('REFUSING: suite 2')
     expect(run(TEST).status).toBe(0)
   }, 240_000)
+})
+
+describe('seed-dev refuses a database name with a "/" (the shared guard)', () => {
+  it('refuses .../dealflow_crm/x_perf, which its own *_perf check alone accepted', () => {
+    const r = spawnSync('node_modules/.bin/tsx', ['scripts/seed-dev.ts'], {
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', NODE_ENV: 'test', DATABASE_URL_PERF: 'postgresql://u:p@db.invalid:5432/dealflow_crm/x_perf' },
+      encoding: 'utf8',
+      timeout: 60_000,
+    })
+    expect(r.status).toBe(1)
+    expect(refusal(r.stderr)).toContain('REFUSING: seed-dev (DATABASE_URL_PERF) would use database "(unreadable URL)"')
+  }, 90_000)
 })

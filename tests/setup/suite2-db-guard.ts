@@ -1,9 +1,10 @@
 // Brief 41.1 (F11): suite 2 (vitest.agent-d.config.ts) relies on every file
 // mocking Prisma; nothing enforced that. A real PrismaClient uses
 // DATABASE_URL_MAIN, and when the environment doesn't set it, Prisma 6 loads it
-// from the checkout's .env (or prisma/.env) on its own. A checkout's .env may
-// point at the live CRM. So suite 2 refuses to start unless that database is
-// unset or a *_perf / *_test one: the same rule as suite 1, with no override.
+// on its own from the .env files recorded when `prisma generate` ran, which can
+// be another checkout's. Any of them may point at the live CRM. So suite 2
+// refuses to start unless that database is unset or a *_perf / *_test one: the
+// same rule as suite 1, with no override.
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,10 +34,32 @@ export function assertSuite2Database(env: Env = process.env, root: string = REPO
   const url = prismaMainUrl(env, envFiles)
   // No database at all: a stray real client couldn't connect anywhere.
   if (!url) return
-  assertTestDatabase(url, 'suite 2 (vitest.agent-d.config.ts, DATABASE_URL_MAIN)', { allowOverride: false })
+  try {
+    assertTestDatabase(url, 'suite 2 (vitest.agent-d.config.ts, DATABASE_URL_MAIN)', { allowOverride: false })
+  } catch (err) {
+    throw new Error(`${(err as Error).message} Suite 2 needs no database: run it with DATABASE_URL_MAIN set empty (DATABASE_URL_MAIN= ...).`)
+  }
+}
+
+// What a test's real client would see: constructing one (it doesn't connect)
+// makes Prisma load its recorded .env files into process.env, the same way.
+async function loadPrismaEnv(): Promise<void> {
+  const { PrismaClient } = await import('@prisma/client')
+  new PrismaClient()
+}
+
+// The check, before and after Prisma's own .env loading.
+export async function assertSuite2Environment(
+  env: Env = process.env,
+  root: string = REPO_ROOT,
+  loadEnv: () => Promise<void> = loadPrismaEnv,
+): Promise<void> {
+  assertSuite2Database(env, root)
+  await loadEnv()
+  assertSuite2Database(env, root)
 }
 
 // vitest globalSetup: runs once, before any suite-2 file.
-export default function setup(): void {
-  assertSuite2Database()
+export default async function setup(): Promise<void> {
+  await assertSuite2Environment()
 }
