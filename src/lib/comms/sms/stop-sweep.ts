@@ -31,7 +31,7 @@ export interface MissingOptOut {
   messageId: string // the earliest opt-out text from this number
   organizationId: string
   phone: string // canonical E.164 (never printed by the script)
-  match: OptOutMatch
+  match: OptOutMatch // a plain keyword if any of this number's texts was one (as the webhook would record it)
 }
 
 export interface StopSweepPlan {
@@ -78,7 +78,10 @@ export async function planStopSweep(db: StopSweepDb): Promise<StopSweepPlan> {
     const numbers = byOrg.get(row.organizationId) ?? new Map()
     byOrg.set(row.organizationId, numbers)
     const seen = numbers.get(phone)
-    if (!seen || row.dateCreated < seen.row.dateCreated) numbers.set(phone, { row, match })
+    const earliest = !seen || row.dateCreated < seen.row.dateCreated ? row : seen.row
+    // A plain keyword from this number wins over a phrase match, as a later
+    // STOP would upgrade the reason in the webhook.
+    numbers.set(phone, { row: earliest, match: seen?.match.kind === 'keyword' ? seen.match : match })
   }
   for (const [orgId, numbers] of byOrg) {
     plan.optOutNumbers += numbers.size

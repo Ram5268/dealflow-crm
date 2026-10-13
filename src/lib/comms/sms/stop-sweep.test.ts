@@ -56,7 +56,7 @@ describe('lost-STOP sweep', () => {
       [
         text('m1', 'is it still available?'),
         text('m2', 'STOP', '+19173312047', 'org_1', 20),
-        text('m3', 'stop texting me', '+19173312047', 'org_1', 10), // same number, earlier: the one reported
+        text('m3', 'stop texting me', '+19173312047', 'org_1', 10), // same number, earlier: the one reported (with m2's keyword reason)
         text('m4', 'Opt-Out', '(718) 555-0102'), // stored as typed: still read as a number
         text('m5', 'UNSUBSCRIBE', '+12125550199'), // already on the list in an old format
         text('m6', 'stop', 'not-a-phone'),
@@ -72,7 +72,7 @@ describe('lost-STOP sweep', () => {
       alreadyOnList: 1,
       missingOptOuts: 3,
       missing: [
-        { messageId: 'm3', match: 'phrase', phrase: 'stop' },
+        { messageId: 'm3', match: 'keyword', phrase: 'stop' },
         { messageId: 'm4', match: 'keyword', phrase: 'opt out' },
         { messageId: 'm7', match: 'keyword', phrase: 'stop' },
       ],
@@ -95,6 +95,14 @@ describe('lost-STOP sweep', () => {
     ])
     // Re-running finds nothing left.
     expect((await planStopSweep(db)).missing).toEqual([])
+  })
+
+  it('a number that also sent a plain keyword gets the keyword reason, reported by its earliest text', async () => {
+    const { db, dnc } = fakeDb([text('m1', 'can you stop by?', '+19173312047', 'org_1', 5), text('m2', 'STOP', '+19173312047', 'org_1', 9)], [])
+    const plan = await planStopSweep(db)
+    expect(describeStopSweep(plan).missing).toEqual([{ messageId: 'm1', match: 'keyword', phrase: 'stop' }])
+    await applyStopSweep(db, plan)
+    expect(dnc.map((r) => r.reason)).toEqual(['sms_stop_received'])
   })
 
   it('reads every page of texts', async () => {
