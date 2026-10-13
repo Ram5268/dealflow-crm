@@ -1,3 +1,4 @@
+import { prisma } from '@/lib/compliance/db'
 import { addInternalDnc, type AddInternalDncResult } from '@/lib/compliance/dnc/internal'
 import type { OptOutMatch } from './opt-out'
 
@@ -16,15 +17,23 @@ export const STOP_REASON: Record<OptOutMatch['kind'], string> = {
  * Throws on failure: the webhook then answers non-2xx instead of dropping a
  * legally required opt-out.
  */
-export function handleStop(
+export async function handleStop(
   orgId: string,
   phone: string,
   match: OptOutMatch = { kind: 'keyword', phrase: 'stop' },
-  addedBy = 'sms-inbound-handler',
 ): Promise<AddInternalDncResult> {
-  return addInternalDnc(orgId, {
+  const result = await addInternalDnc(orgId, {
     phone,
     reason: STOP_REASON[match.kind],
-    addedBy,
+    addedBy: 'sms-inbound-handler',
   })
+  // A clear keyword after an earlier phrase match: the number is no longer one
+  // to review, so its reason says so.
+  if (!result.added && match.kind === 'keyword') {
+    await prisma.dncSuppression.updateMany({
+      where: { organizationId: orgId, phone: result.phone, source: 'internal', reason: STOP_REASON.phrase },
+      data: { reason: STOP_REASON.keyword },
+    })
+  }
+  return result
 }

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import { addInternalDnc, internalDncHits, normalizeE164, type InternalDncDb } from '@/lib/compliance/dnc/internal'
 import { toE164 } from '@/lib/shared/phone'
 import { classifyOptOut, type OptOutMatch } from './opt-out'
@@ -23,7 +24,7 @@ export interface InboundSmsRow {
 }
 
 export interface StopSweepDb extends InternalDncDb {
-  message: { findMany: (args: any) => Promise<InboundSmsRow[]> }
+  message: { findMany: (args: Prisma.MessageFindManyArgs) => Promise<InboundSmsRow[]> }
 }
 
 export interface MissingOptOut {

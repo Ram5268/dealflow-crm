@@ -36,6 +36,8 @@ describe('signatureCheckSkipped (TWILIO_MOCK_SKIP_SIGNATURE)', () => {
     expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true' })).toBe(true)
     expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', VERCEL_ENV: 'preview' })).toBe(true)
     expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', VERCEL_ENV: 'production' })).toBe(false)
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', NODE_ENV: 'production' })).toBe(false)
+    expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: 'true', NODE_ENV: 'development' })).toBe(true)
     expect(signatureCheckSkipped({ TWILIO_MOCK_SKIP_SIGNATURE: '1' })).toBe(false)
     expect(signatureCheckSkipped({})).toBe(false)
   })

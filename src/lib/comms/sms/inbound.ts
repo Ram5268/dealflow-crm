@@ -93,6 +93,12 @@ export async function handleInboundSms(input: InboundSms): Promise<InboundResult
 
   // 2. STOP → internal DNC. Legally required: a failure throws, so the webhook
   // answers non-2xx rather than losing the opt-out.
+  // A sender that isn't a phone number (a short code or a name) can't be put
+  // on the opt-out list, and failing here would only make Twilio retry.
+  if (optOut && !toE164(input.from)) {
+    logger.warn({ messageId, kind: optOut.kind }, 'sms inbound: opt-out wording from a sender that is not a phone number; nothing to add')
+    return { action: 'message', messageId }
+  }
   if (optOut) {
     // An opt-out phrase inside a longer message is logged apart from a plain
     // keyword, so it can be found for review (never the body or the number).

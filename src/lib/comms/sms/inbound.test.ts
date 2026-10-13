@@ -111,8 +111,8 @@ describe('handleInboundSms', () => {
 
   it('recognizes UNSUBSCRIBE / CANCEL as opt-out', async () => {
     db.contactPhone.findFirst.mockResolvedValue(null)
-    expect((await handleInboundSms({ orgId: 'o', from: '+1', to: '+2', body: 'unsubscribe', messageSid: 'a' })).action).toBe('stop')
-    expect((await handleInboundSms({ orgId: 'o', from: '+1', to: '+2', body: 'CANCEL', messageSid: 'b' })).action).toBe('stop')
+    expect((await handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+2', body: 'unsubscribe', messageSid: 'a' })).action).toBe('stop')
+    expect((await handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+2', body: 'CANCEL', messageSid: 'b' })).action).toBe('stop')
   })
 
   // Brief 41.1 (F5): the text is lowercased, punctuation stripped and spaces
@@ -124,6 +124,7 @@ describe('handleInboundSms', () => {
     'STOPALL', 'stop all', 'Stop All', 'UNSUBSCRIBE', 'cancel', 'END', 'quit', 'Quit.',
     'REVOKE', 'opt out', 'Opt Out', 'OPTOUT', 'opt-out', 'Opt-Out!', 'OPT - OUT',
     'remove me', 'Remove me.', 'do not text', 'DO NOT TEXT!', "don't text", 'Don’t text', 'dont text',
+    'Donʼt text', 'Don＇t text', 'Don´t text', 'Don′t text', 'ＳＴＯＰ', 'Ｓｔｏｐ！',
   ])('the keyword %j opts the sender out', async (body) => {
     expect((await sms(body)).action).toBe('stop')
     expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'keyword', phrase: expect.any(String) })
@@ -139,6 +140,15 @@ describe('handleInboundSms', () => {
   ])('the longer message %j opts the sender out as a phrase match', async (body) => {
     expect((await sms(body)).action).toBe('stop')
     expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'phrase', phrase: expect.any(String) })
+  })
+
+  // A short code or a sender name can't be put on the opt-out list; failing
+  // would only make Twilio retry. The text is still saved.
+  it.each(['22395', 'DEALFLOW', ''])('opt-out wording from the non-phone sender %j is saved as a message, no opt-out', async (from) => {
+    const r = await handleInboundSms({ orgId: 'o', from, to: '+15550000000', body: 'STOP', messageSid: `SM-np-${from}` })
+    expect(r).toEqual({ action: 'message', messageId: 'm1' })
+    expect(db.message.create).toHaveBeenCalledOnce()
+    expect(stop.handleStop).not.toHaveBeenCalled()
   })
 
   it.each([

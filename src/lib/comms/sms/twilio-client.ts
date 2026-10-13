@@ -70,9 +70,10 @@ export function verifyTwilioSignature(
 
 /**
  * Brief 41.1 (F3): TWILIO_MOCK_SKIP_SIGNATURE turns the signature check off for
- * the local Twilio mock. It's ignored in production (VERCEL_ENV), so a stray
- * setting there can't switch the check off.
+ * the local Twilio mock (`next dev`). It's ignored in production, judged by
+ * VERCEL_ENV and by NODE_ENV (a production build), so a stray setting there
+ * can't switch the check off.
  */
 export function signatureCheckSkipped(env: Record<string, string | undefined> = process.env): boolean {
-  return env.TWILIO_MOCK_SKIP_SIGNATURE === 'true' && env.VERCEL_ENV !== 'production'
+  return env.TWILIO_MOCK_SKIP_SIGNATURE === 'true' && env.VERCEL_ENV !== 'production' && env.NODE_ENV !== 'production'
 }

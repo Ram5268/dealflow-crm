@@ -16,6 +16,8 @@
  */
 export function normalizeSmsText(body: string): string {
   return body
+    .replace(/['’‘`ʼ´′＇]/g, '') // apostrophe look-alikes, before NFKC splits some of them
+    .normalize('NFKC') // full-width "ＳＴＯＰ" → "STOP"
     .toLowerCase()
     .replace(/['’‘`]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
