@@ -54,7 +54,54 @@ Once filed, update the table above and the SID env vars in Doppler.
 - Add at least one 10DLC / long-code number under it.
 - Store the Messaging Service SID → Doppler `TWILIO_MESSAGING_SERVICE_SID`.
 - Point the Messaging Service **inbound + status-callback webhooks** at
-  `POST /api/comms/webhook/sms` (production HTTPS URL).
+  `POST /api/comms/webhook/sms` (production HTTPS URL), with the retry settings
+  below.
+
+### 4. Webhook go-live settings (Brief 41.1)
+- **Set `TWILIO_AUTH_TOKEN` in Vercel first, then redeploy production** before
+  pointing Twilio at the webhook. A new setting only reaches new deployments.
+  Without it the webhook answers **503** to every request, because it can't check
+  Twilio's signature. It used to check against an empty token, which anyone could
+  forge.
+  `TWILIO_MOCK_SKIP_SIGNATURE` is for the local mocks only and is ignored in
+  production.
+- **Ask Twilio to retry failures.** By default Twilio retries only when it can't
+  connect, not when the webhook answers 500. The webhook answers 500 when it saved
+  a text but couldn't record its opt-out. Add Twilio's connection overrides to the
+  end of the webhook URL:
+
+  `https://dealflow-crm-rho.vercel.app/api/comms/webhook/sms#rc=3&rp=5xx,ct,rt&rt=6000`
+
+  - `rc=3`: up to 3 retries (Twilio allows at most 5).
+  - `rp=5xx,ct,rt`: retry on a 5xx answer, a failed connection, or a read timeout.
+    Don't retry 4xx: a 401 is a bad signature.
+  - `rt=6000`: wait up to 6 seconds for an answer. All attempts must fit in
+    Twilio's 15-second total (`tt`), so with the default 15-second read timeout a
+    timed-out first attempt would leave no room for a retry.
+  - Twilio doesn't sign the `#…` part, so signature checks are unaffected.
+  - A retried text is saved once (keyed by its MessageSid), and re-adding an
+    opt-out does nothing.
+  - Reference: https://www.twilio.com/docs/usage/webhooks/webhooks-connection-overrides
+- **Opt-out words.** STOP, STOPALL, STOP ALL, UNSUBSCRIBE, CANCEL, END, QUIT,
+  REVOKE, OPT OUT / OPTOUT / OPT-OUT, REMOVE ME, DO NOT TEXT and DON'T TEXT count
+  as opt-outs, in any capitals and with any punctuation
+  (`src/lib/comms/sms/opt-out.ts`).
+  - A longer text that contains one of them ("please stop texting me") is an
+    opt-out too. On the opt-out list it gets the reason `sms_stop_phrase`
+    (`sms_stop_received` for a plain keyword), so these can be reviewed.
+  - This includes innocent texts like "can you stop by Tuesday?", "I'll send it
+    by the end of the week", "can we cancel the showing?" or "I quit my job so I
+    need to sell". That's the brief's choice: when in doubt, treat it as an
+    opt-out. **There is no undo screen**: an opt-out stays until it's removed in
+    the database. **Decide before go-live** whether single words like end,
+    cancel, quit and stop inside a longer text should opt out, or only be flagged
+    for review.
+  - A later plain STOP from the same number changes the reason to
+    `sms_stop_received`, so it drops out of the review.
+- **Lost STOPs.** After any webhook outage, run the sweep. It adds the opt-out for
+  any saved STOP text that has none, and the dry run is the default:
+  `npx tsx scripts/brief41-1-stop-sweep.ts` (then `--apply --i-mean-live`, only
+  with Ryan's OK).
 
 ## Sample messages filed (draft — compliant: identity + opt-out)
 

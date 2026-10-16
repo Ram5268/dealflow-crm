@@ -1,9 +1,12 @@
 // Brief 41 (H11): tests and maintenance scripts may only touch a test database.
 //
 // A database whose name ends in `_perf` or `_test` is a test database. Anything
-// else (the live CRM is `dealflow_crm`) is refused. A maintenance script may
-// opt in to `--i-mean-live` on its command line (a deliberate run against this
-// database); tests never do. Pure: no I/O, so it is safe to import anywhere.
+// else (the live CRM is `dealflow_crm`) is refused. Only a maintenance script
+// with a real live use (restore-from-backup, brief41-canonical-phones) opts in
+// to `--i-mean-live` on its command line, for a deliberate run against this
+// database. Tests, smoke scripts and fixture seeds never do (Brief 41.1), and
+// their refusal doesn't mention the flag. Pure: no I/O, so it is safe to
+// import anywhere.
 
 export const LIVE_OVERRIDE_FLAG = '--i-mean-live'
 

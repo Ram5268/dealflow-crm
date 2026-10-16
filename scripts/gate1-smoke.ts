@@ -17,9 +17,10 @@ import { deltaSync } from '../src/lib/comms/email/gmail-sync'
 import { MessageReceivedEvent } from '../contracts/events/message.received'
 import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
-// Brief 41 (H11): this smoke deletes Message rows and installs a mock OAuth
-// credential, so it refuses a live DATABASE_URL_MAIN unless run with --i-mean-live.
-assertTestDatabase(process.env.DATABASE_URL_MAIN, 'gate1-smoke (DATABASE_URL_MAIN)', { allowOverride: true })
+// Brief 41 (H11) + 41.1: this smoke deletes every `gmail:<crm-…` Message (the
+// real sent-email log, not backed up) and installs a mock OAuth credential, so
+// it only ever runs on a *_perf / *_test database. No --i-mean-live override.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, 'gate1-smoke (DATABASE_URL_MAIN)', { allowOverride: false })
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
