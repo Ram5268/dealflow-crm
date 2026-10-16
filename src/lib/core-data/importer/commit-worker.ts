@@ -560,8 +560,9 @@ interface LeadMatch {
   // same street with no name conflict): only then may it change a name,
   // status or custom value.
   sameProperty: boolean
-  // how it matched: only a Mojo ID match may rewrite an existing address (a
-  // same-street match already has it, often more completely).
+  // how it matched: only a Mojo ID match with no name conflict may rewrite an
+  // existing address (a same-street match already has it, often more
+  // completely).
   by: 'mojo' | 'street' | 'other'
 }
 
@@ -690,7 +691,7 @@ function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma
   // A stored line with no street name ("12, Brooklyn, NY") counts as blank:
   // a row with a street fills it (Brief 41.1 review).
   const blankAddress = !existing.primaryAddressFull || (!hasStreet(existing.primaryAddressFull) && hasStreet(plan.lead.primaryAddressFull))
-  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || blankAddress)) {
+  if (plan.lead.primaryAddressFull && ((existing.by === 'mojo' && existing.sameProperty) || blankAddress)) {
     data.primaryAddressFull = plan.lead.primaryAddressFull
     data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
   }
@@ -775,27 +776,37 @@ async function findExistingLead(
   organizationId: string,
   plan: RowPlan
 ): Promise<LeadMatch | null> {
-  const select = { id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true } as const
+  const select = {
+    id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true,
+    contacts: { select: { name: true, displayName: true } },
+  } as const
   const rowAddress = plan.lead.primaryAddressFull ?? null
+  const rowNames = [plan.lead.name, plan.contact.name].filter(
+    (n): n is string => !!n && isRealName(n, { address: rowAddress, mojoId: plan.lead.mojoId })
+  )
+  // Both sides have real names and none agree.
+  const otherPerson = (l: Parameters<typeof leadRealNames>[0]) => namesConflict(rowNames, leadRealNames(l))
   if (plan.lead.mojoId) {
     const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
-    if (byMojo) return { ...byMojo, sameProperty: true, by: 'mojo' }
+    // Brief 41.1 (Ryan: "keep my name for good"): a fill-only merge links the
+    // row's Mojo ID to a lead that kept its own name. When the names conflict,
+    // a Mojo ID match only fills blanks too, so a later pass (a re-import, the
+    // same row again in the file, a re-run) never renames the lead or changes
+    // its status, address or custom values. Names that agree, or a side with
+    // no real name, update as before.
+    if (byMojo) return { ...byMojo, sameProperty: !otherPerson(byMojo), by: 'mojo' }
   }
   const otherProperty = (l: { mojoId: string | null }) => !!(plan.lead.mojoId && l.mojoId && l.mojoId !== plan.lead.mojoId)
 
   if (plan.phones[0]) {
-    const rowNames = [plan.lead.name, plan.contact.name].filter(
-      (n): n is string => !!n && isRealName(n, { address: rowAddress, mojoId: plan.lead.mojoId })
-    )
     const candidates = (
       await db.lead.findMany({
         where: { organizationId, contacts: { some: { phones: { some: { phone: plan.phones[0].phoneE164 } } } } },
-        select: { ...select, contacts: { select: { name: true, displayName: true } } },
+        select,
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: 25,
       })
     ).filter((l) => !otherProperty(l))
-    const otherPerson = (l: (typeof candidates)[number]) => namesConflict(rowNames, leadRealNames(l))
     if (rowAddress) {
       // The same street and phone is one household even when the names differ
       // (co-owners on separate rows, "Bob" vs "ROBERT", a trust or LLC): one

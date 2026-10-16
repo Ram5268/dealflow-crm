@@ -16,6 +16,14 @@ const seed = (w: World, l: Partial<FakeLead> & { id: string; phones: string[] })
     ...l,
   } as FakeLead)
 const run = (w: World, mapping = NAME_ADDR_PHONE_STATUS) => commitImport(BATCH, 'merge', mapping, 'c', { db: w.db('run'), emit: emitOk })
+// A later import of a file into the same CRM (a fresh batch, the same leads).
+const importAgain = (w: World, csv: string, mapping = NAME_ADDR_PHONE_STATUS) => {
+  Object.assign(w.batch, {
+    status: 'mapping_review', sourceBlob: Buffer.from(csv), errorLog: [], completedAt: null, mappingJson: null,
+    totalRows: 0, importedRows: 0, duplicateRows: 0, skippedRows: 0, errorRows: 0,
+  })
+  return commitImport(BATCH, 'merge', mapping, 'c2', { db: w.db('run2'), emit: emitOk })
+}
 const lead = (w: World, id: string) => w.leads.find((l) => l.id === id)!
 
 describe('another unit is another property (review item 1)', () => {
@@ -155,5 +163,44 @@ describe("other names on the same street and phone: one lead, blanks filled only
     seed(w, { id: 'Lalice', name: 'Alice Owner', displayName: 'Alice Owner', primaryAddressFull: '5 Oak St, Brooklyn', phones: ['+12125550711'] })
     expect(await run(w, NAME_PHONE)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
     expect(w.leads).toHaveLength(2)
+  })
+})
+
+describe('a name you kept is kept for good: later Mojo imports never replace it (re-review item 2, Ryan\'s decision)', () => {
+  const LEE = 'Mojo,Name,Address,Phone,Status\nM_LEE,Lee Other,8 Birch Street,212-555-0505,Cold\n'
+  const kim = (w: World) =>
+    seed(w, { id: 'Lkim', name: 'Kim Owner', displayName: 'Kim Owner', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', statusLabel: 'Hot', phones: ['+12125550505'] })
+
+  it('the same Mojo file imported twice: still "Kim Owner", Hot, her address; the Mojo ID linked', async () => {
+    const w = importWorld(LEE)
+    kim(w)
+    expect(await run(w, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Kim Owner', statusLabel: 'Hot', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', mojoId: 'M_LEE' })
+    // The second time it matches by Mojo ID; the names still conflict, so it only fills blanks.
+    expect(await importAgain(w, LEE, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Kim Owner', displayName: 'Kim Owner', statusLabel: 'Hot', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', mojoId: 'M_LEE' })
+    expect(w.leads).toHaveLength(1)
+  })
+
+  it('the same Mojo row twice in one file: the second never renames her either', async () => {
+    const w = importWorld(LEE + 'M_LEE,Lee Other,8 Birch Street,212-555-0505,Cold\n')
+    kim(w)
+    expect(await run(w, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 2 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Kim Owner', statusLabel: 'Hot', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', mojoId: 'M_LEE' })
+    expect(w.leads).toHaveLength(1)
+  })
+
+  it('a Mojo ID match whose name agrees still updates the status and address', async () => {
+    const w = importWorld('Mojo,Name,Address,Phone,Status\nM_KIM,KIM OWNER,"8 Birch St Apt 2, Brooklyn, NY 11201",212-555-0506,Cold\n')
+    seed(w, { id: 'Lkim', name: 'Kim Owner', displayName: 'Kim Owner', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', statusLabel: 'Hot', mojoId: 'M_KIM', phones: ['+12125550506'] })
+    expect(await run(w, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'KIM OWNER', statusLabel: 'Cold', primaryAddressFull: '8 Birch St Apt 2, Brooklyn, NY 11201' })
+  })
+
+  it('a Mojo ID match on a lead with no real name updates it as before', async () => {
+    const w = importWorld('Mojo,Name,Address,Phone,Status\nM_NEW,Nia Owner,"3 Ash St, Brooklyn",212-555-0507,Cold\n')
+    seed(w, { id: 'Lph', displayName: 'Imported Lead', mojoId: 'M_NEW', statusLabel: 'Hot', phones: ['+12125550507'] })
+    await run(w, MOJO_NAME_ADDR_PHONE_STATUS)
+    expect(lead(w, 'Lph')).toMatchObject({ name: 'Nia Owner', displayName: 'Nia Owner', statusLabel: 'Cold', primaryAddressFull: '3 Ash St, Brooklyn' })
   })
 })

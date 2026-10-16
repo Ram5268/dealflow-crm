@@ -514,10 +514,15 @@ describe("a phone match whose names disagree is another person (Brief 41.1, F10)
     await seedLead("gina", { name: "Kim Owner", address: "8 Birch St, Brooklyn, NY 11201", status: "Hot", mojoId: null, phone: "+12125550505" });
     const before = await leadRow(lead.gina);
     const m = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"), col("Status", "Lead.statusLabel"));
-    const res = await commitImport(await batchFor(`MojoID,Name,Address,Phone,Status\n${TAG}_lee,Lee Other,8 Birch Street,212-555-0505,Cold\n`), "merge", m, "c", { emit, db });
+    const csv = `MojoID,Name,Address,Phone,Status\n${TAG}_lee,Lee Other,8 Birch Street,212-555-0505,Cold\n`;
+    const res = await commitImport(await batchFor(csv), "merge", m, "c", { emit, db });
     expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
     expect(await leadsWithPhone("+12125550505")).toHaveLength(1);
     // Never renamed, its status and address kept; the blank Mojo ID filled.
+    expect(await leadRow(lead.gina)).toEqual({ ...before, mojoId: `${TAG}_lee` });
+    // "Keep my name for good": the same file again now matches by Mojo ID and
+    // still only fills blanks.
+    expect(await commitImport(await batchFor(csv), "merge", m, "c", { emit, db })).toMatchObject({ importedRows: 1, duplicateRows: 1 });
     expect(await leadRow(lead.gina)).toEqual({ ...before, mojoId: `${TAG}_lee` });
   });
 });
