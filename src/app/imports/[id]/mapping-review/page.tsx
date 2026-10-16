@@ -88,6 +88,14 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
                 </Link>
               </>
             )}
+            {/no longer stored/.test(error) && (
+              <>
+                {' '}
+                <Link href="/imports" className="underline" data-testid="upload-again">
+                  Upload the file again
+                </Link>
+              </>
+            )}
           </div>
         )}
         {!proposal && !error && <p className="text-base text-muted">Proposing column mapping…</p>}

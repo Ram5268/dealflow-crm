@@ -32,13 +32,16 @@ export interface ProgressView {
   pollMs: number | null
 }
 
+// The message shown when the uploaded file is no longer stored (also used by
+// the mapping page's route, so both say the same thing).
+export const FILE_GONE_MESSAGE =
+  "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
+
 // Plain words for a failed import (Brief 41: a failed commit stops at 'failed'
 // instead of polling forever).
 export function failureText(batch: Pick<ImportStatusView, 'errorLog'>): string {
   const reason = batch.errorLog?.find((e) => e.row === 0)?.message.replace(/^Import stopped: /, '') ?? 'unknown error'
-  if (/no stored bytes/.test(reason)) {
-    return "The uploaded file is no longer stored (uploads older than a day are cleared), so this import can't run. Please upload the file again."
-  }
+  if (/no stored bytes/.test(reason)) return FILE_GONE_MESSAGE
   if (/^time limit reached/.test(reason)) {
     return `The import ran out of time (${reason.replace(/\. Run it again.*$/, '')}). Rows imported so far are kept. Run it again and it continues from there; nothing will be duplicated.`
   }
@@ -76,6 +79,27 @@ export function progressView(b: ImportStatusView): ProgressView {
       action: 'back',
       pollMs: 5000,
     }
+  }
+  // Not started yet, e.g. "Back to the import" reopened it but it wasn't
+  // committed again (Brief 41.1 review): say so, and offer the way back, after
+  // the minute's wait if the last run stopped responding.
+  if (b.status === 'mapping_review' || b.status === 'pending') {
+    const wait = b.retryInSeconds ?? 0
+    return wait > 0
+      ? {
+          label: 'not started',
+          percent,
+          message: `The last run is still stopping. You can commit this import again in about ${wait} seconds.`,
+          action: 'wait',
+          pollMs: 3000,
+        }
+      : {
+          label: 'not started',
+          percent,
+          message: "This import hasn't been committed. Go back to the import to check the columns and commit it.",
+          action: 'back',
+          pollMs: 5000,
+        }
   }
   return { label: b.status, percent, message: null, action: 'none', pollMs: 1500 }
 }

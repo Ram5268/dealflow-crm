@@ -38,6 +38,19 @@ describe('progressView', () => {
     expect(progressView({ ...base, status: 'failed', ...stop('storage: no stored bytes for key "x"') })).toMatchObject({ action: 'upload' })
   })
 
+  it('reopened but not committed again (mapping_review): a plain label and the way back (Brief 41.1 review)', () => {
+    const v = progressView({ ...base, status: 'mapping_review' })
+    expect(v).toMatchObject({ label: 'not started', action: 'back', pollMs: 5000 })
+    expect(v.message).toMatch(/hasn't been committed/)
+    expect(progressView({ ...base, status: 'pending', progress: 0 })).toMatchObject({ label: 'not started', action: 'back' })
+  })
+
+  it('reopened within the minute after a "stopped responding" stop: the countdown, then the way back', () => {
+    const v = progressView({ ...base, status: 'mapping_review', retryInSeconds: 20, ...stop('the import stopped responding', { watchdog: true }) })
+    expect(v).toMatchObject({ label: 'not started', action: 'wait', pollMs: 3000 })
+    expect(v.message).toMatch(/still stopping.*about 20 seconds/)
+  })
+
   it('completed: view leads, stop polling; never more than 100%', () => {
     expect(progressView({ ...base, status: 'completed', progress: 100 })).toMatchObject({ action: 'leads', pollMs: null, percent: 100 })
     expect(progressView({ ...base, progress: 120 }).percent).toBe(100)

@@ -6,6 +6,7 @@ import { getObject } from '@/lib/core-data/importer/storage'
 import { parseFile } from '@/lib/core-data/importer/parser'
 import { proposeMapping, defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
 import { isStalled, sameMappingJson } from '@/lib/core-data/importer/batch'
+import { FILE_GONE_MESSAGE } from '@/lib/core-data/importer/progress-view'
 import { captureException } from '@/lib/shared/sentry'
 import { logger } from '@/lib/logger'
 import { ZodError } from 'zod'
@@ -26,7 +27,11 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
     throw new HttpError(409, batch.status === 'completed' ? 'This import has already run.' : 'This import is already running.')
   }
 
-  const buffer = await getObject(batch.storageKey)
+  // A file cleared by the 24 h sweep: say to upload it again (not a 500).
+  const buffer = await getObject(batch.storageKey).catch((err: unknown) => {
+    if (err instanceof Error && /no stored bytes/.test(err.message)) throw new HttpError(410, FILE_GONE_MESSAGE)
+    throw err
+  })
   const parsed = parseFile(buffer, batch.filename)
   const existingDefs = await prisma.customFieldDefinition.findMany({
     where: { organizationId, objectType: 'lead' },
