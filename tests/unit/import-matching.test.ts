@@ -33,3 +33,12 @@ describe('another unit is another property (review item 1)', () => {
     expect(lead(w, 'L4B').statusLabel).toBe('Cold') // a confirmed same property may update its status
   })
 })
+
+describe('a one-cell address with a direction-word town is the same street (review item 4)', () => {
+  it('"100 Main St East Elmhurst NY 11369" lands on the lead at "100 Main St, East Elmhurst, NY 11369"', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nAnn Lee,100 Main St East Elmhurst NY 11369,212-555-0703,Cold\n')
+    seed(w, { id: 'Lann', name: 'Ann Lee', displayName: 'Ann Lee', primaryAddressFull: '100 Main St, East Elmhurst, NY 11369', statusLabel: 'Hot', phones: ['+12125550703'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(w.leads).toHaveLength(1)
+  })
+})

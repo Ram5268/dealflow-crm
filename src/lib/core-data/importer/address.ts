@@ -52,7 +52,20 @@ const MORE_WORDS: Record<string, string> = {
 // the city.
 const AFTER_TYPE = new Set(['extension', 'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest'])
 // City, state and ZIP at the end of a one-cell address ("2 Pine St Brooklyn NY 11201").
-const LOCALITY = new Set(['brooklyn', 'queens', 'bronx', 'manhattan', 'staten', 'island', 'new', 'york', 'nyc', 'ny', 'nj', 'ct', 'usa'])
+const LOCALITY = new Set(['brooklyn', 'bklyn', 'queens', 'bronx', 'manhattan', 'staten', 'island', 'new', 'york', 'nyc', 'ny', 'nj', 'ct', 'usa'])
+const DIRECTIONS = new Set(['north', 'south', 'east', 'west'])
+// The word after N/S/E/W in a place name ("East Elmhurst", "East New York",
+// "South Ozone Park", "West Brighton"): in a one-cell address, such a pair
+// after the street is the town, not a suffix of the street.
+const TOWN_AFTER_DIRECTION = new Set([
+  'elmhurst', 'new', 'flatbush', 'williamsburg', 'harlem', 'village', 'tremont', 'rockaway', 'meadow', 'islip',
+  'hampton', 'hamptons', 'northport', 'hills', 'setauket', 'norwich', 'quogue', 'moriches', 'patchogue',
+  'massapequa', 'atlantic', 'side', 'end', 'brighton', 'farms', 'hempstead', 'babylon', 'sayville', 'nyack',
+  'point', 'orange', 'ozone', 'richmond', 'jamaica', 'slope', 'beach', 'bronx', 'floral', 'huntington', 'river',
+  'amboy', 'plainfield', 'riverdale', 'corona', 'baldwin', 'bellmore', 'merrick', 'woodmere', 'valley', 'bergen',
+  'shore', 'brunswick', 'white', 'haven', 'rutherford', 'hanover', 'caldwell', 'harrison', 'haverstraw',
+  'tarrytown', 'castle', 'salem', 'arlington', 'bay', 'neck',
+])
 // A unit written without a marker ("123 Main St Rear", "361 Degraw St PH").
 const UNIT_WORDS: Record<string, string> = {
   ph: 'ph', penthouse: 'ph', rear: 'rear', front: 'front', bsmt: 'bsmt', basement: 'bsmt',
@@ -105,8 +118,9 @@ function zipOf(address: string): string | null {
   return found.length ? found[found.length - 1][1] : null
 }
 
-// null when the address has no house number and street name: such a line
-// ("12", "Brooklyn, NY 11201") names no property, so it never matches.
+// null when the address has no street name: such a line ("12", "Brooklyn, NY
+// 11201") names no property, so it never matches. A street with no house
+// number ("Main St") has house '' and matches only the same street with none.
 export function streetIdentity(address: string | null | undefined): StreetIdentity | null {
   const raw = (address ?? '').toLowerCase().trim()
   const parts = raw.split(',').map((p) => p.trim())
@@ -124,23 +138,29 @@ export function streetIdentity(address: string | null | undefined): StreetIdenti
     .replace(/[^a-z0-9]+/g, ' ')
     .trim().split(' ').filter(Boolean)
     .map((t) => t.replace(/^(\d+)(st|nd|rd|th)$/, '$1')) // 54th → 54
-  const house = tokens[0]
-  if (!house || !/^\d+[a-z]?$/.test(house)) return null
-  let words = tokens.slice(1).map((t, i) => (t === 'st' && i === 0 ? 'saint' : WORDS[t] ?? MORE_WORDS[t] ?? t))
-  // A one-cell address carries the city, state and ZIP after the street.
-  while (words.length > 1 && (LOCALITY.has(words[words.length - 1]) || ZIP.test(words[words.length - 1]))) {
-    words = words.slice(0, -1)
-  }
+  const house = /^\d+[a-z]?$/.test(tokens[0] ?? '') ? tokens[0] : ''
+  let words = (house ? tokens.slice(1) : tokens).map((t, i) => (t === 'st' && i === 0 ? 'saint' : WORDS[t] ?? MORE_WORDS[t] ?? t))
+  // A one-cell address carries the city, state and ZIP after the street
+  // ("… Brooklyn NY 11201", "… East New York NY 11207").
+  let cut = words.length
+  while (cut > 1 && (LOCALITY.has(words[cut - 1]) || ZIP.test(words[cut - 1]))) cut--
+  if (cut > 1 && cut < words.length && DIRECTIONS.has(words[cut - 1]) && TOWN_AFTER_DIRECTION.has(words[cut])) cut--
+  words = words.slice(0, cut)
   if (words.length === 0 || words.every((w) => LOCALITY.has(w))) return null
   const zip = zipOf(raw)
   // The type is the first type word after at least one name word, so "Court
   // St" is Court + street and "Avenue J" (type first) is all name.
   const t = words.findIndex((w, i) => i > 0 && STREET_TYPES.has(w))
-  if (t === -1) return { house, name: words.join(' '), type: null, after: '', unit, zip }
+  if (t === -1) return house ? { house, name: words.join(' '), type: null, after: '', unit, zip } : null
   const rest = words.slice(t + 1)
   let k = 0
   const after: string[] = []
-  for (; k < rest.length && AFTER_TYPE.has(rest[k]); k++) after.push(rest[k])
+  // A direction word followed by a town word starts the town ("100 Main St
+  // East Elmhurst NY"), it isn't the street's suffix ("1 Plaza St East").
+  for (; k < rest.length && AFTER_TYPE.has(rest[k]); k++) {
+    if (DIRECTIONS.has(rest[k]) && TOWN_AFTER_DIRECTION.has(rest[k + 1] ?? '')) break
+    after.push(rest[k])
+  }
   // A unit with no marker right after the street ("123 Main St 4B", "… PH 1").
   if (!unit) {
     unit = bareUnit(rest[k])

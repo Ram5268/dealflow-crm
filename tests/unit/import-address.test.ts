@@ -38,6 +38,12 @@ describe('sameStreet: different properties never match', () => {
     ['1 W 2nd St', '1 E 2nd St', 'another direction'],
     ['200 Sterling Pl', '200 Sterling St', 'another street type'],
     ['5 Main St', '5 Maine St', 'another street'],
+    ['Main St', '12 Main St', 'no house number vs one'],
+    ['Broadway', 'Broadway', 'a street with no number and no type'],
+    ['Bay Ridge', 'Bay Ridge', 'a neighbourhood only'],
+    ['1 Plaza St East', '1 Plaza St', 'a suffix word (one-cell)'],
+    ['10 Ocean Pkwy N, Brooklyn', '10 Ocean Pkwy, Brooklyn', 'a suffix word'],
+    ['12 Main St Extension Brooklyn NY', '12 Main St, Brooklyn', 'a suffix word (one cell)'],
     [null, '5 Main St', 'no address'],
     ['', '', 'no address'],
   ]
@@ -75,6 +81,22 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St Apt 3-R', '361 Degraw St #3R'],
     ['4 Cedar St, Brooklyn, NY 11201', '4 Cedar St Brooklyn NY 11201-1234'], // the same ZIP (ZIP+4)
     ['21410 Northern Blvd, Bayside, NY 11361', '214-10 Northern Blvd Bayside NY 11361'], // a 5-digit house number isn't a ZIP
+    // Brief 41.1 review: a one-cell address whose town starts with a direction word.
+    ['100 Main St, East Elmhurst, NY 11369', '100 Main St East Elmhurst NY 11369'],
+    ['100 Main St, Brooklyn, NY', '100 Main St East New York NY 11207'],
+    ['100 Main St', '100 Main St South Ozone Park NY 11420'],
+    ['100 Main St', '100 Main St South Richmond Hill NY'],
+    ['100 Main St', '100 Main St West Brighton NY'],
+    ['100 Main St', '100 Main St West New Brighton NY 10310'],
+    ['123 Main St 4B East Elmhurst NY', '123 Main St Apt 4B, East Elmhurst'],
+    ['1 Plaza St East', '1 Plaza St E Brooklyn NY 11238'], // a real suffix before the city still counts
+    ['10 Ocean Pkwy N Brooklyn NY', '10 Ocean Parkway North'],
+    ['100 Main St, Brooklyn', '100 Main St Bklyn NY 11201'],
+    ['2 Pine, Brooklyn', '2 Pine Bklyn NY'],
+    // A street with no house number matches the same street with none.
+    ['Main Street', 'Main St'],
+    ['Main St, Brooklyn', 'Main St, Brooklyn'],
+    ['St Marks Pl', 'Saint Marks Place'],
     ['2 Pine St, Brooklyn', '2 Pine, Brooklyn'], // a type on one side only
     ['100 Flatbush Ave Ext', '100 Flatbush Avenue Extension, Brooklyn'],
     ['10 Ocean Pkwy N', '10 Ocean Parkway North, Brooklyn'],

@@ -47,8 +47,10 @@ export function isRealName(
   const address = context.address ?? null
   if (address && (sameWords(name, address) || sameWords(name, address.split(',')[0]))) return false
   // An address used as the name (a lead whose address was later rewritten
-  // keeps the old one as its displayName).
-  if (streetIdentity(name)) return false
+  // keeps the old one as its displayName): a house number and a street type.
+  // "1st Choice Realty" and "Park Place Realty" are names.
+  const asAddress = streetIdentity(name)
+  if (asAddress?.house && asAddress.type) return false
   if (context.mojoId && sameWords(name, context.mojoId)) return false
   return true
 }
