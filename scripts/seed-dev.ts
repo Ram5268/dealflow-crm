@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
+import { assertTestDatabase } from '../src/lib/shared/db-guard'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Perf seed — 25k Lead + ~28k Contact + ~40k ContactPhone + 10 custom field
@@ -14,6 +15,9 @@ import { PrismaClient } from '@prisma/client'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERF_URL = process.env.DATABASE_URL_PERF
+// Brief 41.1: the shared guard first (it also refuses a database name with a
+// "/" in it; no override), then this seed's own stricter *_perf rule.
+assertTestDatabase(PERF_URL, 'seed-dev (DATABASE_URL_PERF)', { allowOverride: false })
 const PERF_DB_NAME = PERF_URL
   ? new URL(PERF_URL).pathname.replace(/^\//, '').split('?')[0]
   : '(unset)'
