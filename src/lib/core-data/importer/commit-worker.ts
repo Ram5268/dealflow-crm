@@ -5,7 +5,7 @@ import { getObject } from './storage'
 import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
-import { normalizeStreet, sameStreet } from './address'
+import { normalizeStreet, sameStreet, streetIdentity } from './address'
 import {
   heldBy,
   importRunOf,
@@ -667,6 +667,10 @@ async function createLead(
 // otherwise the row only fills blanks. The name only changes from a Lead.name
 // column (a co-owner never replaces it). The Mojo ID is handled separately
 // (fill-only, atomically) in upsertRow.
+// An address that names a street ("12 Main St", "Main St"); not "12, Brooklyn"
+// or a city only, which can neither confirm nor contradict a property.
+const hasStreet = (address: string | null | undefined) => !!streetIdentity(address)
+
 function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma.LeadUpdateInput {
   const data: Prisma.LeadUpdateInput = { source }
   const may = (current: string | null) => existing.sameProperty || !current
@@ -682,7 +686,10 @@ function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma
     data.name = plan.lead.name
     data.displayName = plan.displayName
   }
-  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || !existing.primaryAddressFull)) {
+  // A stored line with no street name ("12, Brooklyn, NY") counts as blank:
+  // a row with a street fills it (Brief 41.1 review).
+  const blankAddress = !existing.primaryAddressFull || (!hasStreet(existing.primaryAddressFull) && hasStreet(plan.lead.primaryAddressFull))
+  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || blankAddress)) {
     data.primaryAddressFull = plan.lead.primaryAddressFull
     data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
   }
@@ -745,8 +752,9 @@ async function mapWithConcurrency<T>(
 //  2. Else the leads sharing the row's first phone, oldest first, skipping any
 //     with a different Mojo ID (another property of the same owner):
 //       - the row has an address: the lead at the same street (same property),
-//         else a lead with no address yet (the row fills it in); otherwise the
-//         row is another property and becomes a new lead;
+//         else a lead with no address yet, or one whose address names no
+//         street ("12, Brooklyn"; the row fills it in); otherwise the row is
+//         another property and becomes a new lead;
 //       - the row has no address: the first such lead. A row with a Mojo ID
 //         never attaches it to a lead whose address it can't confirm.
 //  3. Else the exact name + address. With no address that's the name alone,
@@ -787,10 +795,11 @@ async function findExistingLead(
     if (rowAddress) {
       const same = candidates.find((l) => sameStreet(l.primaryAddressFull, rowAddress))
       if (same) return { ...same, sameProperty: true, by: 'street' }
-      const blank = candidates.find((l) => !l.primaryAddressFull)
+      // A lead with no address, or one with no street name (Brief 41.1 review).
+      const blank = candidates.find((l) => !hasStreet(l.primaryAddressFull))
       if (blank) return { ...blank, sameProperty: false, by: 'other' }
     } else {
-      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && l.primaryAddressFull))
+      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && hasStreet(l.primaryAddressFull)))
       if (usable) return { ...usable, sameProperty: false, by: 'other' }
     }
     // Leads with this phone are other properties: try the exact name + address.

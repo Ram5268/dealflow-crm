@@ -520,11 +520,11 @@ describe("a phone match whose names disagree is another person (Brief 41.1, F10)
   });
 });
 
-describe("another unit, a suffix word or a street-less address is another property (Brief 41.1, F10)", () => {
+describe("another unit or a suffix word is another property (Brief 41.1, F10)", () => {
   const cases: Array<[string, string, string]> = [
     ["unit #3 vs Apt 4", "361 Degraw St # 3, Brooklyn, NY 11217", "361 Degraw St Apt 4, Brooklyn"],
     ["a street vs its Extension", "12 Main St Extension, Brooklyn, NY", "12 Main St"],
-    ["a stored line with only a house number", "12, Brooklyn, NY", "12 Main St"],
+    ["bare unit 4B vs 5A", "123 Main St 4B, Brooklyn, NY", "123 Main St 5A, Brooklyn, NY"],
   ];
   cases.forEach(([why, stored, incoming], k) => {
     it(`${why}: a new lead; the stored one is untouched`, async () => {
@@ -537,5 +537,15 @@ describe("another unit, a suffix word or a street-less address is another proper
       expect(await leadRow(lead.gina)).toEqual(before);
       expect(await leadsWithPhone(phone)).toHaveLength(2);
     });
+  });
+
+  it("a stored line with no street name (\"12, Brooklyn, NY\") counts as blank: the same owner fills it in", async () => {
+    const phone = "+12125550519";
+    await seedLead("gina", { name: "Nora Owner", address: "12, Brooklyn, NY", status: "Hot", mojoId: null, phone });
+    const res = await commitImport(await batchFor(`Name,Address,Phone,Status\nNora Owner,12 Main St,${phone.slice(2)},Cold\n`), "merge", mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"), col("Status", "Lead.statusLabel")), "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadsWithPhone(phone)).toHaveLength(1);
+    // A fill-only merge: the address is filled in; the status isn't changed.
+    expect(await leadRow(lead.gina)).toMatchObject({ name: "Nora Owner", primaryAddressFull: "12 Main St", statusLabel: "Hot" });
   });
 });

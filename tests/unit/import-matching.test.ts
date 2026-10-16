@@ -67,3 +67,28 @@ describe('a list placeholder is not a name (review item 2)', () => {
     expect(lead(w, 'Lph')).toMatchObject({ name: 'Ivy Owner', displayName: 'Ivy Owner' })
   })
 })
+
+describe('a stored address with no street name counts as blank (review item 5)', () => {
+  it('the same owner on the same phone fills it in (fill only: the status stays)', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nNora Owner,12 Main St,212-555-0719,Cold\n')
+    seed(w, { id: 'Lnora', name: 'Nora Owner', displayName: 'Nora Owner', primaryAddressFull: '12, Brooklyn, NY', statusLabel: 'Hot', phones: ['+12125550719'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(w.leads).toHaveLength(1)
+    expect(lead(w, 'Lnora')).toMatchObject({ primaryAddressFull: '12 Main St', statusLabel: 'Hot' })
+  })
+
+  it('a city-only address on the lead and another person on the row: still a new lead', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nOtto Other,12 Main St,212-555-0720,Cold\n')
+    seed(w, { id: 'Lnora', name: 'Nora Owner', displayName: 'Nora Owner', primaryAddressFull: 'Brooklyn, NY 11201', statusLabel: 'Hot', phones: ['+12125550720'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
+    expect(lead(w, 'Lnora')).toMatchObject({ primaryAddressFull: 'Brooklyn, NY 11201', statusLabel: 'Hot' })
+    expect(w.leads).toHaveLength(2)
+  })
+
+  it('a row whose address has no street name merges but never replaces the stored one', async () => {
+    const w = importWorld('Name,Address,Phone\nNora Owner,"Brooklyn, NY 11201",212-555-0721\n')
+    seed(w, { id: 'Lnora', name: 'Nora Owner', displayName: 'Nora Owner', primaryAddressFull: '12, Brooklyn, NY', phones: ['+12125550721'] })
+    expect(await run(w, mappingOf(col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone')))).toMatchObject({ duplicateRows: 1 })
+    expect(lead(w, 'Lnora').primaryAddressFull).toBe('12, Brooklyn, NY')
+  })
+})
