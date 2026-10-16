@@ -27,6 +27,14 @@ describe('another unit is another property (review item 1)', () => {
     expect(w.leads).toHaveLength(2)
   })
 
+  it("a B row on the A lead's phone becomes its own lead; A keeps its status", async () => {
+    const w = importWorld('Name,Address,Phone,Status\nDan Sample,"123 Main St B, Brooklyn, NY",212-555-0614,Cold\n')
+    seed(w, { id: 'LA', name: 'Dan Sample', displayName: 'Dan Sample', primaryAddressFull: '123 Main St A, Brooklyn, NY', statusLabel: 'Hot', phones: ['+12125550614'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
+    expect(lead(w, 'LA')).toMatchObject({ primaryAddressFull: '123 Main St A, Brooklyn, NY', statusLabel: 'Hot' })
+    expect(w.leads).toHaveLength(2)
+  })
+
   it('the same unit written with a marker is the same property: it merges', async () => {
     const w = importWorld('Name,Address,Phone,Status\nDan Sample,"123 Main St Apt 4B, Brooklyn",212-555-0604,Cold\n')
     seed(w, { id: 'L4B', name: 'Dan Sample', displayName: 'Dan Sample', primaryAddressFull: '123 Main St 4B, Brooklyn, NY', statusLabel: 'Hot', phones: ['+12125550604'] })

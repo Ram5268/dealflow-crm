@@ -92,10 +92,13 @@ function unitKey(raw: string): string {
   return UNIT_WORDS[v] ?? v.replace(/^penthouse/, 'ph')
 }
 
-// A unit standing alone: "4B", "2F", "PH1", "Rear". Not a ZIP.
+// A unit standing alone: "4B", "2F", "PH1", "Rear", or a single letter ("A").
+// Not a ZIP. After a street type, N/S/E/W have already become direction
+// words; as a comma part ("123 Main St, N") they aren't taken as a unit.
 function bareUnit(token: string | undefined): string | null {
   if (!token) return null
   if (UNIT_WORDS[token]) return UNIT_WORDS[token]
+  if (/^[a-z]$/.test(token) && !'nsew'.includes(token)) return token
   if (/\d/.test(token) && !ZIP.test(token) && token.length <= 6) return unitKey(token)
   return null
 }

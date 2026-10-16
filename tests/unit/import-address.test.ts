@@ -17,6 +17,9 @@ describe('sameStreet: different properties never match', () => {
     ['361 Degraw St 2F', '361 Degraw St Apt 3F', 'another unit, one bare'],
     ['123 Main St 4', '123 Main St 5', 'another bare unit number'],
     ['123 Main St, 4B', '123 Main St, 5A', 'another bare unit (in its own part)'],
+    ['123 Main St A', '123 Main St B', 'another letter unit'],
+    ['123 Main St A, Brooklyn', '123 Main St B, Brooklyn', 'another letter unit'],
+    ['123 Main St, A', '123 Main St, B', 'another letter unit (in its own part)'],
     ['123 Main St PH1', '123 Main St PH2', 'another penthouse'],
     ['361 Degraw St Apt PH', '361 Degraw St Apt 4', 'the penthouse vs a unit'],
     ['361 Degraw St Rear', '361 Degraw St Front', 'rear vs front'],
@@ -70,6 +73,13 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St #03', '361 Degraw St Unit 3'],
     ['361 Degraw St, Brooklyn', '361 Degraw St Apt 3, Brooklyn'], // a unit on one side only
     ['123 Main St 4B', '123 Main St Apt 4B'], // a bare unit = the same unit with a marker
+    ['123 Main St A', '123 Main St Apt A'], // a letter unit = the same with a marker
+    ['123 Main St A, Brooklyn', '123 Main St, Brooklyn'], // a letter unit on one side only
+    ['123 Main St, A', '123 Main St #A'],
+    ['1 Plaza St E', '1 Plaza St East'], // N/S/E/W after the type are still directions
+    ['10 Ocean Pkwy N', '10 Ocean Parkway North'],
+    ['1 Avenue J', '1 Avenue J Brooklyn NY 11230'], // a letter street name isn't a unit
+    ['5 Ave J', '5 Avenue J'],
     ['123 Main St, 4B, Brooklyn', '123 Main St #4B'],
     ['361 Degraw St Apt 2F', '361 Degraw St 2F'],
     ['123 Main St 4B, Brooklyn', '123 Main St, Brooklyn'], // a bare unit on one side only
