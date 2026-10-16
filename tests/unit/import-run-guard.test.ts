@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { commitImport } from '@/lib/core-data/importer/commit-worker'
 import { claimImportCommit, getImportStatus, mappingKey, type CommitClaim } from '@/lib/core-data/importer/batch'
 import {
-  BATCH, ORG, PHONE_ONLY, col, emitOk, gate, importWorld, mappingOf, phoneCsv, phoneOf, settle, until,
+  BATCH, ORG, PHONE_ONLY, col, emitOk, gate, importWorld, mappingOf, phoneCsv, phoneOf, settle, sleep, until,
 } from './helpers/fake-import-db'
 
 // Brief 41.1 (F1): an import run only writes its batch while it holds the
@@ -296,5 +296,103 @@ describe('progress never passes 100% (Brief 41.1)', () => {
   it('the status read caps progress at 100%', async () => {
     const w = importWorld(phoneCsv(1), { status: 'importing', totalRows: 10, importedRows: 9, errorRows: 3 })
     expect((await getImportStatus(w.db('read'), BATCH, ORG))?.progress).toBe(100)
+  })
+})
+
+describe('each run-guard check is load-bearing (Brief 41.1 review, item 6)', () => {
+  it('a run that finds the import taken over stops starting rows; the new run imports each homeowner once', async () => {
+    const N = 600
+    const w = importWorld(phoneCsv(N))
+    const claim1 = await claimImportCommit(w.db('claim1'), BATCH, ORG, PHONE_ONLY)
+    const run1 = settle(commitImport(BATCH, 'merge', PHONE_ONLY, 'c1', { db: w.db('run1', { latency: 2 }), emit: emitOk, runId: runIdOf(claim1) }))
+    await until(() => w.leads.length >= 20)
+    // No heartbeat for 11 minutes (only possible off Vercel): a re-run takes over.
+    const claim2 = await claimImportCommit(w.db('claim2'), BATCH, ORG, PHONE_ONLY, { now: () => Date.now() + 11 * 60_000 })
+    expect(claim2.claimed).toBe(true)
+    const r1 = await run1
+    // Run 1 notices at its next progress write (every 100 rows) and starts no
+    // more rows; only those already started finish. Without the check it
+    // went on to all 600 beside the new run.
+    expect(r1.ok).toBe(false)
+    expect(r1.ok ? '' : r1.e.message).toMatch(/taken over by a newer run/)
+    expect(w.leads.filter((l) => l.by === 'run1').length).toBeLessThan(250)
+    expect(runOf(w.batch.mappingJson)?.id).toBe(runIdOf(claim2)) // none of its writes landed after
+    const res = await commitImport(BATCH, 'merge', PHONE_ONLY, 'c2', { db: w.db('run2'), emit: emitOk, runId: runIdOf(claim2) })
+    expect(res).toMatchObject({ totalRows: N, importedRows: N })
+    expect(w.duplicatePhones()).toEqual([])
+    expect(w.leads).toHaveLength(N)
+  }, 20_000)
+
+  it('after its watchdog fired, a run that still finishes every row completes the import', async () => {
+    const w = importWorld(phoneCsv(3))
+    const claim1 = await claimImportCommit(w.db('claim'), BATCH, ORG, PHONE_ONLY)
+    const hung = gate()
+    const run1 = settle(
+      commitImport(BATCH, 'merge', PHONE_ONLY, 'c1', {
+        db: w.db('run1', { before: (op, arg) => (op === 'lead.findMany' && (arg as { phone: string }).phone === phoneOf(1) ? hung.hold() : undefined) }),
+        emit: emitOk, runId: runIdOf(claim1), watchdogMs: 30,
+      })
+    )
+    await until(() => w.batch.status === 'failed') // the watchdog; every row had already started
+    expect(JSON.stringify(w.batch.errorLog)).toContain('"watchdog":true')
+    hung.release()
+    expect(await run1).toMatchObject({ ok: true, v: { totalRows: 3, importedRows: 3 } })
+    // Its 'completed' replaces its own watchdog failure.
+    expect(w.batch).toMatchObject({ status: 'completed', totalRows: 3, importedRows: 3 })
+    expect(JSON.stringify(w.batch.errorLog)).not.toContain('watchdog')
+  })
+
+  it("a watchdog write that arrives after the run's own exact stop doesn't overwrite it", async () => {
+    const w = importWorld(phoneCsv(3))
+    const claim1 = await claimImportCommit(w.db('claim'), BATCH, ORG, PHONE_ONLY)
+    const hung = gate()
+    const watchdogWrite = gate()
+    const byWatchdog = (arg: unknown) => JSON.stringify((arg as { data?: unknown }).data ?? null).includes('"watchdog":true')
+    let clock = 0
+    const run1 = settle(
+      commitImport(BATCH, 'merge', PHONE_ONLY, 'c1', {
+        db: w.db('run1', {
+          before: (op, arg) => {
+            if (op === 'lead.findMany' && (arg as { phone: string }).phone === phoneOf(0)) return hung.hold()
+            if (op === 'importBatch.updateMany' && byWatchdog(arg)) return watchdogWrite.hold()
+          },
+        }),
+        // Rows 1 and 2 start (row 1 hangs); the time limit refuses row 3.
+        emit: emitOk, runId: runIdOf(claim1), now: () => (++clock > 3 ? 1e9 : 0), timeLimitMs: 1_000, watchdogMs: 30,
+      })
+    )
+    await watchdogWrite.arrived // the watchdog fired; its write is on its way
+    hung.release() // the hung row returns; the run records its own, exact stop first
+    await run1
+    expect(w.batch).toMatchObject({ status: 'failed', importedRows: 2 })
+    watchdogWrite.release() // the watchdog's older write arrives last
+    await sleep(10)
+    expect(w.writes.filter((x) => x.by === 'run1' && byWatchdog(x) && x.landed)).toEqual([])
+    expect(w.batch).toMatchObject({ status: 'failed', importedRows: 2 })
+    expect(JSON.stringify(w.batch.errorLog)).not.toContain('"watchdog":true') // so a re-run needn't wait
+  })
+
+  it('a claim that read an old failure is refused if a run started and stopped responding before its write', async () => {
+    const w = importWorld(phoneCsv(3), {
+      status: 'failed',
+      completedAt: new Date(Date.now() - 3_600_000),
+      errorLog: [{ row: 0, message: 'Import stopped: time limit reached after 1 of 3 rows' }],
+    })
+    // Claim A reads the old failure, then its write is held up.
+    const held = gate()
+    const claimA = claimImportCommit(w.db('claimA', { before: (op) => (op === 'importBatch.updateMany' ? held.hold() : undefined) }), BATCH, ORG, PHONE_ONLY)
+    await held.arrived
+    // Meanwhile claim B starts a run, which stops responding (a row hangs).
+    const claimB = await claimImportCommit(w.db('claimB'), BATCH, ORG, PHONE_ONLY)
+    expect(claimB.claimed).toBe(true)
+    const hang = gate()
+    void settle(commitImport(BATCH, 'merge', PHONE_ONLY, 'cB', { db: w.db('runB', { before: (op) => (op === 'lead.findMany' ? hang.hold() : undefined) }), emit: emitOk, runId: runIdOf(claimB), watchdogMs: 20 }))
+    await until(() => w.batch.status === 'failed' && JSON.stringify(w.batch.errorLog).includes('"watchdog":true'))
+    // A's write lands now: 'failed' again, but not the failure A read (its
+    // stop time differs), so A must not start a run beside run B.
+    held.release()
+    expect(await claimA).toEqual({ claimed: false, status: 'failed' })
+    expect(runOf(w.batch.mappingJson)?.id).toBe(runIdOf(claimB))
+    hang.release()
   })
 })
