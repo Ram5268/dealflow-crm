@@ -672,11 +672,13 @@ function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma
   const may = (current: string | null) => existing.sameProperty || !current
   // A lead created by hand (or with the name in Contact.name) has a real
   // displayName but no Lead.name: that counts as a name to keep. "Imported
-  // Lead", the address or the Mojo ID standing in for a name don't.
-  const shownName =
-    existing.name ??
-    (isRealName(existing.displayName, { address: existing.primaryAddressFull, mojoId: existing.mojoId }) ? existing.displayName : null)
-  if (plan.lead.name && may(shownName)) {
+  // Lead", the address, the Mojo ID or a list placeholder ("Current
+  // Resident") standing in for a name don't, and a placeholder in the file
+  // never replaces a name.
+  const leadContext = { address: existing.primaryAddressFull, mojoId: existing.mojoId }
+  const shownName = [existing.name, existing.displayName].find((n) => !!n && isRealName(n, leadContext)) ?? null
+  const rowName = plan.lead.name && isRealName(plan.lead.name, { address: plan.lead.primaryAddressFull, mojoId: plan.lead.mojoId }) ? plan.lead.name : null
+  if (rowName && may(shownName)) {
     data.name = plan.lead.name
     data.displayName = plan.displayName
   }

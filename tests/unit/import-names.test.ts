@@ -23,6 +23,15 @@ describe('isRealName', () => {
     expect(isRealName('')).toBe(false)
     expect(isRealName(null)).toBe(false)
   })
+  it('list placeholders, a city, a unit or an email are not names (Brief 41.1 review)', () => {
+    for (const n of ['Unknown', 'Current Resident', 'Or Current Resident', 'Occupant', 'Homeowner', 'Owner', 'NA', 'N/A', 'None', 'Seller', 'Test', 'Test Lead', 'Unknown Unknown', 'Brooklyn, NY', 'Apt 3', 'john@x.com']) {
+      expect(isRealName(n), n).toBe(false)
+    }
+    // ...while a real name may contain such a word.
+    for (const n of ['Alice Owner', 'Jane Doe or Current Resident', 'Brooklyn Decker', '1st Choice Realty', '3 Brothers LLC', 'Park Place Realty']) {
+      expect(isRealName(n), n).toBe(true)
+    }
+  })
 })
 
 describe('sameName', () => {
@@ -36,6 +45,16 @@ describe('sameName', () => {
       ['Estate of John Smith', 'John Smith'],
       ['Jose Nunez', 'José Núñez'],
       ['Smith', 'Jane Smith'],
+      // Brief 41.1 review: an apostrophe or a space in a particle.
+      ["Patrick O'Brien", 'Patrick OBrien'],
+      ['Patrick OBrien', 'Patrick O Brien'],
+      ['Mary McDonald', 'Mary Mc Donald'],
+      ['Ann DeLuca', 'Ann De Luca'],
+      ['Mohammed Al-Rashid', 'Mohammed AlRashid'],
+      ['Mohammed AlRashid', 'Mohammed Al Rashid'],
+      ['Hans Van Der Berg', 'Hans Vanderberg'],
+      ['D’Angelo Rossi', 'DAngelo Rossi'],
+      ['Nguyen Van Minh', 'Minh Nguyen'],
     ]) {
       expect(sameName(a, b)).toBe(true)
       expect(sameName(b, a)).toBe(true)

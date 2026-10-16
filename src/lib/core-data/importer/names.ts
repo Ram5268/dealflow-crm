@@ -17,17 +17,54 @@ export const PLACEHOLDER_NAME = 'Imported Lead'
 // Titles, suffixes and joining words that never tell two people apart.
 const IGNORED = new Set(['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'jr', 'sr', 'ii', 'iii', 'iv', 'esq', 'and', 'the'])
 
-// "SMITH, Robert J." → ['smith', 'robert']: lowercase, no accents or
-// punctuation, no initials, titles or suffixes.
-export function nameWords(raw: string | null | undefined): string[] {
+// Brief 41.1 review: words that stand in for a name in lists ("Current
+// Resident", "Unknown", "Homeowner", "N/A", "Test"). A name made only of these
+// (and of city or unit words) is not a real name.
+const PLACEHOLDER_WORDS = new Set([
+  'unknown', 'unk', 'current', 'resident', 'residents', 'occupant', 'occupants', 'homeowner', 'homeowners',
+  'owner', 'owners', 'na', 'none', 'null', 'nil', 'seller', 'sellers', 'buyer', 'buyers', 'test', 'testing',
+  'lead', 'leads', 'imported', 'import', 'contact', 'customer', 'client', 'tenant', 'tenants', 'landlord',
+  'property', 'household', 'name', 'noname', 'tbd', 'xxx', 'sample', 'example', 'dummy', 'user', 'or', 'to', 'of',
+  'apt', 'apartment', 'unit', 'suite', 'floor', 'fl', 'rm', 'room',
+  'brooklyn', 'bklyn', 'queens', 'bronx', 'manhattan', 'staten', 'island', 'new', 'york', 'nyc', 'ny', 'usa',
+])
+
+// Name particles written with or without a space: "Mc Donald", "De Luca",
+// "O Brien", "Al Rashid", "Van Der Berg".
+const PARTICLES = new Set(['o', 'mc', 'mac', 'de', 'da', 'di', 'del', 'della', 'la', 'le', 'van', 'von', 'der', 'den', 'al', 'el', 'du', 'des', 'dos', 'das'])
+
+function rawWords(raw: string | null | undefined): string[] {
   return (raw ?? '')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
+    .replace(/['’‘`´]/g, '') // O'Brien = OBrien, D’Angelo = DAngelo
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .split(' ')
-    .filter((w) => w.length > 1 && !IGNORED.has(w))
+    .filter(Boolean)
+}
+
+const keep = (w: string) => w.length > 1 && !IGNORED.has(w)
+
+// "SMITH, Robert J." → ['smith', 'robert']: lowercase, no accents or
+// punctuation, no initials, titles or suffixes.
+export function nameWords(raw: string | null | undefined): string[] {
+  return rawWords(raw).filter(keep)
+}
+
+// The same words with each particle joined to the next word ("mc donald" →
+// "mcdonald"), so the spaced and unspaced spellings compare equal.
+function joinedWords(raw: string | null | undefined): string[] {
+  const words = rawWords(raw)
+  const out: string[] = []
+  for (let i = 0; i < words.length; i++) {
+    let w = words[i]
+    // "van der berg" → "vanderberg"
+    while (PARTICLES.has(words[i]) && i + 1 < words.length) w += words[++i]
+    out.push(w)
+  }
+  return out.filter(keep)
 }
 
 const sameWords = (a: string | null | undefined, b: string | null | undefined) => {
@@ -43,7 +80,8 @@ export function isRealName(
 ): boolean {
   const words = nameWords(name)
   if (words.length === 0 || words.every((w) => /^\d+$/.test(w))) return false
-  if (sameWords(name, PLACEHOLDER_NAME)) return false
+  if (sameWords(name, PLACEHOLDER_NAME) || words.every((w) => PLACEHOLDER_WORDS.has(w))) return false
+  if ((name ?? '').includes('@')) return false // an email address
   const address = context.address ?? null
   if (address && (sameWords(name, address) || sameWords(name, address.split(',')[0]))) return false
   // An address used as the name (a lead whose address was later rewritten
@@ -55,16 +93,23 @@ export function isRealName(
   return true
 }
 
-// Two spellings of one name: one's words all appear in the other's, so a
-// middle initial, word order, "Estate of" or a co-owner's "&" never splits a
-// person ("Alice Owner" = "OWNER, Alice Q." = "Alice & Bob Owner").
-export function sameName(a: string, b: string): boolean {
-  const x = new Set(nameWords(a))
-  const y = new Set(nameWords(b))
+const subsetEither = (a: string[], b: string[]) => {
+  const x = new Set(a)
+  const y = new Set(b)
   if (x.size === 0 || y.size === 0) return false
   const [small, big] = x.size <= y.size ? [x, y] : [y, x]
   for (const w of small) if (!big.has(w)) return false
   return true
+}
+
+// Two spellings of one name: one's words all appear in the other's, so a
+// middle initial, word order, "Estate of" or a co-owner's "&" never splits a
+// person ("Alice Owner" = "OWNER, Alice Q." = "Alice & Bob Owner"), nor do an
+// apostrophe or a space in a particle ("O'Brien" = "OBrien" = "O Brien",
+// "McDonald" = "Mc Donald", "DeLuca" = "De Luca", "Al-Rashid" = "AlRashid").
+export function sameName(a: string, b: string): boolean {
+  const forms = (n: string) => [nameWords(n), joinedWords(n)]
+  return forms(a).some((x) => forms(b).some((y) => subsetEither(x, y)))
 }
 
 // Both sides have real names and none of them agree: a different person.

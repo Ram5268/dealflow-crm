@@ -4,6 +4,7 @@ import { BATCH, col, emitOk, importWorld, mappingOf, type FakeLead } from './hel
 
 // Brief 41.1 (F10) review: which existing lead a row lands on, end to end on
 // the fake DB (no database). The perf-DB file tests the same rules on Postgres.
+const NAME_PHONE = mappingOf(col('Name', 'Lead.name'), col('Phone', 'ContactPhone.phone'))
 const NAME_ADDR_PHONE_STATUS = mappingOf(col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone'), col('Status', 'Lead.statusLabel'))
 
 type World = ReturnType<typeof importWorld>
@@ -40,5 +41,29 @@ describe('a one-cell address with a direction-word town is the same street (revi
     seed(w, { id: 'Lann', name: 'Ann Lee', displayName: 'Ann Lee', primaryAddressFull: '100 Main St, East Elmhurst, NY 11369', statusLabel: 'Hot', phones: ['+12125550703'] })
     expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
     expect(w.leads).toHaveLength(1)
+  })
+})
+
+describe('a list placeholder is not a name (review item 2)', () => {
+  it('a "Current Resident" row on Alice Owner\'s phone merges into her lead and doesn\'t rename it', async () => {
+    const w = importWorld('Name,Phone\nCurrent Resident,212-555-0702\n')
+    seed(w, { id: 'Lalice', name: 'Alice Owner', displayName: 'Alice Owner', phones: ['+12125550702'] })
+    expect(await run(w, NAME_PHONE)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(w.leads).toHaveLength(1)
+    expect(lead(w, 'Lalice')).toMatchObject({ name: 'Alice Owner', displayName: 'Alice Owner' })
+  })
+
+  it('even on a confirmed same property (same street), "Unknown" never replaces the name', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nUnknown,"5 Oak St, Brooklyn",212-555-0705,Cold\n')
+    seed(w, { id: 'Lkim', name: 'Kim Owner', displayName: 'Kim Owner', primaryAddressFull: '5 Oak St, Brooklyn, NY 11201', statusLabel: 'Hot', phones: ['+12125550705'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Kim Owner', displayName: 'Kim Owner', statusLabel: 'Cold' })
+  })
+
+  it('a lead whose name is a placeholder takes the real name from the file', async () => {
+    const w = importWorld('Name,Phone\nIvy Owner,212-555-0706\n')
+    seed(w, { id: 'Lph', name: 'Current Resident', displayName: 'Current Resident', phones: ['+12125550706'] })
+    expect(await run(w, NAME_PHONE)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lph')).toMatchObject({ name: 'Ivy Owner', displayName: 'Ivy Owner' })
   })
 })
