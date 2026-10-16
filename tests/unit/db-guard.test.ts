@@ -163,6 +163,14 @@ describe('suite 2 (vitest.agent-d.config.ts) refuses a live database', () => {
     await expect(assertSuite2Environment(env, dir, async () => { env.DATABASE_URL_MAIN = LIVE })).rejects.toThrow(/REFUSING: suite 2/)
     const ok: Record<string, string | undefined> = {}
     await expect(assertSuite2Environment(ok, dir, async () => { ok.DATABASE_URL_MAIN = TEST })).resolves.toBeUndefined()
+    // Nothing Prisma loaded is left behind for the suite-2 workers (keys,
+    // credentials, send switches), whether the check passes or refuses.
+    const clean: Record<string, string | undefined> = { KEEP: 'me' }
+    await assertSuite2Environment(clean, dir, async () => { clean.EXTRA = '1'; clean.KEEP = 'changed' })
+    expect(clean).toEqual({ KEEP: 'me' })
+    const refused: Record<string, string | undefined> = {}
+    await expect(assertSuite2Environment(refused, dir, async () => { refused.DATABASE_URL_MAIN = LIVE; refused.TWILIO_AUTH_TOKEN = 'x' })).rejects.toThrow(/REFUSING/)
+    expect(refused).toEqual({})
     // A live value already in the environment is refused before Prisma is touched.
     let loaded = false
     await expect(assertSuite2Environment({ DATABASE_URL_MAIN: LIVE }, dir, async () => { loaded = true })).rejects.toThrow(/REFUSING/)

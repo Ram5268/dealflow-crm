@@ -48,15 +48,23 @@ async function loadPrismaEnv(): Promise<void> {
   new PrismaClient()
 }
 
-// The check, before and after Prisma's own .env loading.
+// The check, before and after Prisma's own .env loading. Whatever that loading
+// added is then removed again, so no value from that file (credentials, send
+// switches, keys) reaches the suite-2 workers: the check only needs to look.
 export async function assertSuite2Environment(
   env: Env = process.env,
   root: string = REPO_ROOT,
   loadEnv: () => Promise<void> = loadPrismaEnv,
 ): Promise<void> {
   assertSuite2Database(env, root)
-  await loadEnv()
-  assertSuite2Database(env, root)
+  const before = { ...env }
+  try {
+    await loadEnv()
+    assertSuite2Database(env, root)
+  } finally {
+    for (const key of Object.keys(env)) if (!(key in before)) delete env[key]
+    Object.assign(env, before)
+  }
 }
 
 // vitest globalSetup: runs once, before any suite-2 file.
