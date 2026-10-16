@@ -556,8 +556,9 @@ interface LeadMatch {
   displayName: string
   primaryAddressFull: string | null
   statusLabel: string | null
-  // true when the row is certainly this property (same Mojo ID, or same street):
-  // only then may it change a name, status or custom value.
+  // true when the row is certainly this property and person (same Mojo ID, or
+  // same street with no name conflict): only then may it change a name,
+  // status or custom value.
   sameProperty: boolean
   // how it matched: only a Mojo ID match may rewrite an existing address (a
   // same-street match already has it, often more completely).
@@ -764,9 +765,11 @@ async function mapWithConcurrency<T>(
 //
 // Brief 41.1 (F10): in step 2, a lead whose real names (owner, hand-typed
 // name, contacts) all differ from the row's real names is another person who
-// shares the phone, so it is skipped like another property. Names are compared
-// forgivingly ("OWNER, Alice Q." is "Alice Owner"); a row or lead with no real
-// name (a phone-only list, "Imported Lead") never conflicts.
+// shares the phone, so away from the same street it is skipped like another
+// property. At the same street it is the same household: the row merges but
+// only fills blanks. Names are compared forgivingly ("OWNER, Alice Q." is
+// "Alice Owner", "O'Brien" is "OBrien"); a row or lead with no real name (a
+// phone-only list, "Imported Lead", "Current Resident") never conflicts.
 async function findExistingLead(
   db: PrismaClient,
   organizationId: string,
@@ -791,15 +794,21 @@ async function findExistingLead(
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: 25,
       })
-    ).filter((l) => !otherProperty(l) && !namesConflict(rowNames, leadRealNames(l)))
+    ).filter((l) => !otherProperty(l))
+    const otherPerson = (l: (typeof candidates)[number]) => namesConflict(rowNames, leadRealNames(l))
     if (rowAddress) {
-      const same = candidates.find((l) => sameStreet(l.primaryAddressFull, rowAddress))
-      if (same) return { ...same, sameProperty: true, by: 'street' }
+      // The same street and phone is one household even when the names differ
+      // (co-owners on separate rows, "Bob" vs "ROBERT", a trust or LLC): one
+      // lead, but such a row only fills its blanks; it never renames the lead
+      // or changes its status (Ryan's decision, Brief 41.1 review).
+      const atStreet = candidates.filter((l) => sameStreet(l.primaryAddressFull, rowAddress))
+      const same = atStreet.find((l) => !otherPerson(l)) ?? atStreet[0]
+      if (same) return { ...same, sameProperty: !otherPerson(same), by: 'street' }
       // A lead with no address, or one with no street name (Brief 41.1 review).
-      const blank = candidates.find((l) => !hasStreet(l.primaryAddressFull))
+      const blank = candidates.find((l) => !hasStreet(l.primaryAddressFull) && !otherPerson(l))
       if (blank) return { ...blank, sameProperty: false, by: 'other' }
     } else {
-      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && hasStreet(l.primaryAddressFull)))
+      const usable = candidates.find((l) => !otherPerson(l) && !(plan.lead.mojoId && !l.mojoId && hasStreet(l.primaryAddressFull)))
       if (usable) return { ...usable, sameProperty: false, by: 'other' }
     }
     // Leads with this phone are other properties: try the exact name + address.

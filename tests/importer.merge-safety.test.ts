@@ -510,13 +510,15 @@ describe("a phone match whose names disagree is another person (Brief 41.1, F10)
     expect(await leadsWithPhone("+12125550504")).toEqual([expect.objectContaining({ id: jack.id })]);
   });
 
-  it("the same street but another person's name on the phone: a new lead, the old one untouched", async () => {
-    const kim = await seedNamed("Kim Owner", "+12125550505", { address: "8 Birch St, Brooklyn, NY 11201" });
-    const before = await leadRow(kim.id);
-    const res = await commitImport(await batchFor("Name,Address,Phone\nLee Other,8 Birch Street,212-555-0505\n"), "merge", NAME_ADDR_PHONE, "c", { emit, db });
-    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 0 });
-    expect(await leadRow(kim.id)).toEqual(before);
-    expect(await leadsWithPhone("+12125550505")).toHaveLength(2);
+  it("the same street with another person's name on the phone: one lead, which only gets its blanks filled (Ryan's decision)", async () => {
+    await seedLead("gina", { name: "Kim Owner", address: "8 Birch St, Brooklyn, NY 11201", status: "Hot", mojoId: null, phone: "+12125550505" });
+    const before = await leadRow(lead.gina);
+    const m = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"), col("Status", "Lead.statusLabel"));
+    const res = await commitImport(await batchFor(`MojoID,Name,Address,Phone,Status\n${TAG}_lee,Lee Other,8 Birch Street,212-555-0505,Cold\n`), "merge", m, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadsWithPhone("+12125550505")).toHaveLength(1);
+    // Never renamed, its status and address kept; the blank Mojo ID filled.
+    expect(await leadRow(lead.gina)).toEqual({ ...before, mojoId: `${TAG}_lee` });
   });
 });
 

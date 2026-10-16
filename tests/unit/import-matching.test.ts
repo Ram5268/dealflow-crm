@@ -5,6 +5,7 @@ import { BATCH, col, emitOk, importWorld, mappingOf, type FakeLead } from './hel
 // Brief 41.1 (F10) review: which existing lead a row lands on, end to end on
 // the fake DB (no database). The perf-DB file tests the same rules on Postgres.
 const NAME_PHONE = mappingOf(col('Name', 'Lead.name'), col('Phone', 'ContactPhone.phone'))
+const MOJO_NAME_ADDR_PHONE_STATUS = mappingOf(col('Mojo', 'Lead.mojoId'), col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone'), col('Status', 'Lead.statusLabel'))
 const NAME_ADDR_PHONE_STATUS = mappingOf(col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone'), col('Status', 'Lead.statusLabel'))
 
 type World = ReturnType<typeof importWorld>
@@ -90,5 +91,61 @@ describe('a stored address with no street name counts as blank (review item 5)',
     seed(w, { id: 'Lnora', name: 'Nora Owner', displayName: 'Nora Owner', primaryAddressFull: '12, Brooklyn, NY', phones: ['+12125550721'] })
     expect(await run(w, mappingOf(col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone')))).toMatchObject({ duplicateRows: 1 })
     expect(lead(w, 'Lnora').primaryAddressFull).toBe('12, Brooklyn, NY')
+  })
+})
+
+describe("other names on the same street and phone: one lead, blanks filled only (review item 3, Ryan's decision)", () => {
+  it('co-owners on separate rows make one lead; the second never renames it or changes its status', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nJohn Smith,"5 Oak St, Brooklyn, NY",212-555-0700,Hot\nMary Smith,"5 Oak St, Brooklyn, NY",212-555-0700,Cold\n')
+    expect(await run(w)).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 1 })
+    expect(w.leads).toHaveLength(1)
+    expect(w.leads[0]).toMatchObject({ name: 'John Smith', displayName: 'John Smith', statusLabel: 'Hot' })
+  })
+
+  it('"ROBERT SMITH" from a list lands on the hand-typed "Bob Smith" at the same street; name and status stay', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nROBERT SMITH,"5 Oak St, Brooklyn, NY",212-555-0701,Cold\n')
+    seed(w, { id: 'Lbob', displayName: 'Bob Smith', primaryAddressFull: '5 Oak St, Brooklyn, NY', statusLabel: 'Hot', phones: ['+12125550701'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(w.leads).toHaveLength(1)
+    expect(lead(w, 'Lbob')).toMatchObject({ name: null, displayName: 'Bob Smith', statusLabel: 'Hot' })
+  })
+
+  it('it fills what the lead lacks (a status, a Mojo ID)', async () => {
+    const w = importWorld('Mojo,Name,Address,Phone,Status\nM_TRUST,Smith Family Trust,"5 Oak St, Brooklyn",212-555-0707,Warm\n')
+    seed(w, { id: 'Ljohn', name: 'John Smith', displayName: 'John Smith', primaryAddressFull: '5 Oak St, Brooklyn, NY 11201', phones: ['+12125550707'] })
+    expect(await run(w, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Ljohn')).toMatchObject({ name: 'John Smith', primaryAddressFull: '5 Oak St, Brooklyn, NY 11201', statusLabel: 'Warm', mojoId: 'M_TRUST' })
+  })
+
+  it('a lead at the same street with the same name is preferred over one with another name', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nMary Smith,"5 Oak St, Brooklyn",212-555-0708,Cold\n')
+    seed(w, { id: 'Ljohn', seq: 1, name: 'John Smith', displayName: 'John Smith', primaryAddressFull: '5 Oak St, Brooklyn', statusLabel: 'Hot', phones: ['+12125550708'] })
+    seed(w, { id: 'Lmary', seq: 2, name: 'Mary Smith', displayName: 'Mary Smith', primaryAddressFull: '5 Oak St, Brooklyn', statusLabel: 'Hot', phones: ['+12125550708'] })
+    await run(w)
+    expect(lead(w, 'Ljohn').statusLabel).toBe('Hot')
+    expect(lead(w, 'Lmary').statusLabel).toBe('Cold') // same street, same person: a confirmed match
+  })
+
+  it("away from the same street another person's name is still a new lead: Alice never gets Bob's address or Mojo ID", async () => {
+    const w = importWorld('Mojo,Name,Address,Phone,Status\nM_BOB,Bob Other,5 Oak St,212-555-0709,Cold\n')
+    seed(w, { id: 'Lalice', name: 'Alice Owner', displayName: 'Alice Owner', statusLabel: 'Hot', phones: ['+12125550709'] })
+    expect(await run(w, MOJO_NAME_ADDR_PHONE_STATUS)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
+    expect(lead(w, 'Lalice')).toMatchObject({ name: 'Alice Owner', primaryAddressFull: null, mojoId: null, statusLabel: 'Hot' })
+    expect(w.leads).toHaveLength(2)
+  })
+
+  it('another street with another name on the same phone: a new lead', async () => {
+    const w = importWorld('Name,Address,Phone,Status\nBob Other,"9 Elm St, Brooklyn",212-555-0710,Cold\n')
+    seed(w, { id: 'Lalice', name: 'Alice Owner', displayName: 'Alice Owner', primaryAddressFull: '5 Oak St, Brooklyn', statusLabel: 'Hot', phones: ['+12125550710'] })
+    expect(await run(w)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
+    expect(lead(w, 'Lalice')).toMatchObject({ statusLabel: 'Hot', primaryAddressFull: '5 Oak St, Brooklyn' })
+    expect(w.leads).toHaveLength(2)
+  })
+
+  it('a row with no address and another name on the phone: a new lead', async () => {
+    const w = importWorld('Name,Phone\nBob Other,212-555-0711\n')
+    seed(w, { id: 'Lalice', name: 'Alice Owner', displayName: 'Alice Owner', primaryAddressFull: '5 Oak St, Brooklyn', phones: ['+12125550711'] })
+    expect(await run(w, NAME_PHONE)).toMatchObject({ importedRows: 1, duplicateRows: 0 })
+    expect(w.leads).toHaveLength(2)
   })
 })
