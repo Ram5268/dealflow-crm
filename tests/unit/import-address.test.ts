@@ -10,6 +10,20 @@ describe('sameStreet: different properties never match', () => {
     ['361 Degraw St # 3, Brooklyn', '361 Degraw St Apt 4, Brooklyn', 'another unit'],
     ['361 Degraw St #3', '361 Degraw St Unit 4B', 'another unit'],
     ['361 Degraw St, Apt 3, Brooklyn, NY', '361 Degraw St, Apt 4, Brooklyn, NY', 'another unit (in its own part)'],
+    // Brief 41.1 review: a unit written without a marker, a floor, a unit word.
+    ['123 Main St 4B, Brooklyn, NY', '123 Main St 5A, Brooklyn, NY', 'another bare unit'],
+    ['123 Main St 4B Brooklyn NY 11201', '123 Main St 5A Brooklyn NY 11201', 'another bare unit (one cell)'],
+    ['361 Degraw St 2F', '361 Degraw St 3F', 'another bare unit'],
+    ['361 Degraw St 2F', '361 Degraw St Apt 3F', 'another unit, one bare'],
+    ['123 Main St 4', '123 Main St 5', 'another bare unit number'],
+    ['123 Main St, 4B', '123 Main St, 5A', 'another bare unit (in its own part)'],
+    ['123 Main St PH1', '123 Main St PH2', 'another penthouse'],
+    ['361 Degraw St Apt PH', '361 Degraw St Apt 4', 'the penthouse vs a unit'],
+    ['361 Degraw St Rear', '361 Degraw St Front', 'rear vs front'],
+    ['361 Degraw St Bsmt', '361 Degraw St 1st Fl', 'the basement vs a floor'],
+    ['361 Degraw St, 2nd Floor', '361 Degraw St, Fl 3', 'another floor'],
+    ['123 Main St 11201', '123 Main St 11215', 'another ZIP'],
+    ['123 Main St, Brooklyn, NY 11201', '123 Main St, Brooklyn, NY 11215', 'another ZIP'],
     ['12 Main St, Brooklyn, NY', '12 Main St Extension, Brooklyn', 'a suffix word'],
     ['100 Flatbush Ave, Brooklyn', '100 Flatbush Avenue Extension', 'a suffix word'],
     ['10 Ocean Pkwy, Brooklyn', '10 Ocean Pkwy N, Brooklyn', 'a suffix word'],
@@ -49,6 +63,18 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St # 3, Brooklyn', '361 Degraw Street Apt 3'], // same unit
     ['361 Degraw St #03', '361 Degraw St Unit 3'],
     ['361 Degraw St, Brooklyn', '361 Degraw St Apt 3, Brooklyn'], // a unit on one side only
+    ['123 Main St 4B', '123 Main St Apt 4B'], // a bare unit = the same unit with a marker
+    ['123 Main St, 4B, Brooklyn', '123 Main St #4B'],
+    ['361 Degraw St Apt 2F', '361 Degraw St 2F'],
+    ['123 Main St 4B, Brooklyn', '123 Main St, Brooklyn'], // a bare unit on one side only
+    ['361 Degraw St Rear', '361 Degraw St'],
+    ['361 Degraw St PH', '361 Degraw St #PH'],
+    ['361 Degraw St Penthouse', '361 Degraw St PH'],
+    ['361 Degraw St PH 1', '361 Degraw St PH1'],
+    ['361 Degraw St 2nd Fl', '361 Degraw St Floor 2'],
+    ['361 Degraw St Apt 3-R', '361 Degraw St #3R'],
+    ['4 Cedar St, Brooklyn, NY 11201', '4 Cedar St Brooklyn NY 11201-1234'], // the same ZIP (ZIP+4)
+    ['21410 Northern Blvd, Bayside, NY 11361', '214-10 Northern Blvd Bayside NY 11361'], // a 5-digit house number isn't a ZIP
     ['2 Pine St, Brooklyn', '2 Pine, Brooklyn'], // a type on one side only
     ['100 Flatbush Ave Ext', '100 Flatbush Avenue Extension, Brooklyn'],
     ['10 Ocean Pkwy N', '10 Ocean Parkway North, Brooklyn'],
