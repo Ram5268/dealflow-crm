@@ -128,9 +128,12 @@ function unitOf(part: string): { unit: string | null; rest: string } {
   const m = UNIT.exec(part)
   if (!m) return { unit: null, rest: part }
   const marker = m[0].trim().replace(/[#.]/g, '').split(/\s+/)[0]
-  const value = m[1] ? unitKey(m[1]) : ''
+  const penthouse = marker === 'ph' || marker === 'penthouse'
+  // A penthouse number has a digit or is one letter ("PH 1", "PH A"); a word
+  // after "PH" is the city of a one-cell address ("… PH Brooklyn NY 11217").
+  const value = m[1] && (!penthouse || /\d|^[a-z]$/.test(m[1])) ? unitKey(m[1]) : ''
   // "PH" / "Penthouse" is a marker and a unit ("PH", "PH 1"); "Apt"/"#" alone says nothing.
-  const unit = marker === 'ph' || marker === 'penthouse' ? `ph${value === 'ph' ? '' : value}` : value
+  const unit = penthouse ? `ph${value === 'ph' ? '' : value}` : value
   return { unit: unit || null, rest: part.slice(0, m.index) }
 }
 

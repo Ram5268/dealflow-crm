@@ -28,6 +28,7 @@ describe('sameStreet: different properties never match', () => {
     ['123 Main St, A', '123 Main St, B', 'another letter unit (in its own part)'],
     ['123 Main St A, 11201', '123 Main St B, 11201', 'another letter unit (the same ZIP)'],
     ['123 Main St PH1', '123 Main St PH2', 'another penthouse'],
+    ['123 Main St PH A Brooklyn', '123 Main St PH B, Brooklyn', 'another penthouse letter'],
     ['361 Degraw St Apt PH', '361 Degraw St Apt 4', 'the penthouse vs a unit'],
     ['361 Degraw St Rear', '361 Degraw St Front', 'rear vs front'],
     ['361 Degraw St Bsmt', '361 Degraw St 1st Fl', 'the basement vs a floor'],
@@ -115,6 +116,8 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St PH', '361 Degraw St #PH'],
     ['361 Degraw St Penthouse', '361 Degraw St PH'],
     ['361 Degraw St PH 1', '361 Degraw St PH1'],
+    ['361 Degraw St PH Brooklyn NY 11217', '361 Degraw St PH, Brooklyn'], // "PH" then the city, in one cell
+    ['361 Degraw St Penthouse Brooklyn NY', '361 Degraw St #PH'],
     ['361 Degraw St 2nd Fl', '361 Degraw St Floor 2'],
     ['361 Degraw St Apt 3-R', '361 Degraw St #3R'],
     ['4 Cedar St, Brooklyn, NY 11201', '4 Cedar St Brooklyn NY 11201-1234'], // the same ZIP (ZIP+4)
