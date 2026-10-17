@@ -72,6 +72,22 @@ const UNIT_WORDS: Record<string, string> = {
   garden: 'garden', gdn: 'garden', upper: 'upper', lower: 'lower',
 }
 const ZIP = /^\d{5}(\d{4})?$/
+// The town an address names, when it names one (Brief 41.1 re-review):
+// "100 Main St Flushing" and "100 Main St Jamaica" are two properties. A
+// borough and a neighbourhood can name the same place ("Brooklyn" / "Park
+// Slope"), so only two boroughs or two other towns are compared.
+const STATE_WORDS = new Set(['ny', 'nj', 'ct', 'pa', 'usa', 'us'])
+const BOROUGHS = new Set(['brooklyn', 'queens', 'bronx', 'manhattan', 'staten island'])
+const TOWN_ALIASES: Record<string, string> = {
+  bklyn: 'brooklyn', 'new york': 'manhattan', 'new york city': 'manhattan', nyc: 'manhattan', 'the bronx': 'bronx',
+}
+// "Garden City", "Front Royal": a unit word followed by one of these is a town.
+const TOWN_CONTINUATION = new Set(['city', 'heights', 'hills', 'park', 'village', 'valley', 'beach', 'lake', 'grove', 'harbor', 'estates', 'plains'])
+
+function townKey(words: string[]): string | null {
+  const t = words.filter((w) => !STATE_WORDS.has(w) && !ZIP.test(w)).join(' ')
+  return t ? TOWN_ALIASES[t] ?? t : null
+}
 // "2nd Floor", "1st Fl" / "Fl 3", "Floor 3": a floor is its own kind of unit.
 const FLOOR_BEFORE = /(?:^|\s)(\d+)\s*(?:st|nd|rd|th)?\s*(?:fl|flr|floor)\b\.?/
 const FLOOR_AFTER = /(?:^|\s)(?:fl|flr|floor)\b\.?\s*(\d+)(?:st|nd|rd|th)?\b/
@@ -84,6 +100,7 @@ export interface StreetIdentity {
   after: string
   unit: string | null
   zip: string | null
+  town: string | null
 }
 
 // "Apt 03-R" → "3r", "Penthouse" → "ph", "PH-1" → "ph1".
@@ -135,12 +152,23 @@ export function streetIdentity(address: string | null | undefined): StreetIdenti
     if (next.unit && next.rest.trim() === '') unit = next.unit
     else if (!next.unit && /^[a-z0-9-]+$/.test(parts[1])) unit = bareUnit(parts[1].replace(/-/g, ''))
   }
-  const tokens = first.rest
-    .replace(/(\d)-(\d)/g, '$1$2') // 18-14 → 1814
-    .replace(/'/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim().split(' ').filter(Boolean)
-    .map((t) => t.replace(/^(\d+)(st|nd|rd|th)$/, '$1')) // 54th → 54
+  const tokenize = (part: string) =>
+    part
+      .replace(/(\d)-(\d)/g, '$1$2') // 18-14 → 1814
+      .replace(/'/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim().split(' ').filter(Boolean)
+      .map((t) => t.replace(/^(\d+)(st|nd|rd|th)$/, '$1')) // 54th → 54
+  const tokens = tokenize(first.rest)
+  // The town in a later comma part ("…, Flushing, NY 11354"), skipping a unit part.
+  const commaTown = () => {
+    for (const part of parts.slice(1)) {
+      if (unitOf(part).rest.trim() === '' || bareUnit(part.replace(/-/g, ''))) continue
+      const key = townKey(tokenize(part).map((w) => WORDS[w] ?? MORE_WORDS[w] ?? w))
+      if (key) return key
+    }
+    return null
+  }
   const house = /^\d+[a-z]?$/.test(tokens[0] ?? '') ? tokens[0] : ''
   let words = (house ? tokens.slice(1) : tokens).map((t, i) => (t === 'st' && i === 0 ? 'saint' : WORDS[t] ?? MORE_WORDS[t] ?? t))
   // A one-cell address carries the city, state and ZIP after the street
@@ -148,13 +176,14 @@ export function streetIdentity(address: string | null | undefined): StreetIdenti
   let cut = words.length
   while (cut > 1 && (LOCALITY.has(words[cut - 1]) || ZIP.test(words[cut - 1]))) cut--
   if (cut > 1 && cut < words.length && DIRECTIONS.has(words[cut - 1]) && TOWN_AFTER_DIRECTION.has(words[cut])) cut--
+  const trailing = words.slice(cut) // city, state, ZIP of a one-cell address
   words = words.slice(0, cut)
   if (words.length === 0 || words.every((w) => LOCALITY.has(w))) return null
   const zip = zipOf(raw)
   // The type is the first type word after at least one name word, so "Court
   // St" is Court + street and "Avenue J" (type first) is all name.
   const t = words.findIndex((w, i) => i > 0 && STREET_TYPES.has(w))
-  if (t === -1) return house ? { house, name: words.join(' '), type: null, after: '', unit, zip } : null
+  if (t === -1) return house ? { house, name: words.join(' '), type: null, after: '', unit, zip, town: townKey(trailing) ?? commaTown() } : null
   const rest = words.slice(t + 1)
   let k = 0
   const after: string[] = []
@@ -164,12 +193,20 @@ export function streetIdentity(address: string | null | undefined): StreetIdenti
     if (DIRECTIONS.has(rest[k]) && TOWN_AFTER_DIRECTION.has(rest[k + 1] ?? '')) break
     after.push(rest[k])
   }
-  // A unit with no marker right after the street ("123 Main St 4B", "… PH 1").
-  if (!unit) {
+  // A unit with no marker right after the street ("123 Main St 4B", "… PH 1"),
+  // but not the first word of a town ("123 Main St Garden City NY").
+  let townFrom = k
+  if (!unit && !(UNIT_WORDS[rest[k]] && TOWN_CONTINUATION.has(rest[k + 1] ?? ''))) {
     unit = bareUnit(rest[k])
-    if (unit === 'ph' && /^\d+$/.test(rest[k + 1] ?? '')) unit = `ph${rest[k + 1]}`
+    if (unit) townFrom = k + 1
+    if (unit === 'ph' && /^\d+$/.test(rest[k + 1] ?? '')) {
+      unit = `ph${rest[k + 1]}`
+      townFrom = k + 2
+    }
   }
-  return { house, name: words.slice(0, t).join(' '), type: words[t], after: after.join(' '), unit, zip }
+  // Whatever follows the street and unit in a one-cell address is its town.
+  const town = townKey([...rest.slice(townFrom), ...trailing]) ?? commaTown()
+  return { house, name: words.slice(0, t).join(' '), type: words[t], after: after.join(' '), unit, zip, town }
 }
 
 // Two addresses name the same property when the house number, street name,
@@ -187,5 +224,7 @@ export function sameStreet(a: string | null | undefined, b: string | null | unde
   if (x.type && y.type && x.type !== y.type) return false
   if (x.unit && y.unit && x.unit !== y.unit) return false
   if (x.zip && y.zip && x.zip !== y.zip) return false
+  // Two named towns of the same kind (two boroughs, or two other towns) that differ.
+  if (x.town && y.town && x.town !== y.town && BOROUGHS.has(x.town) === BOROUGHS.has(y.town)) return false
   return true
 }

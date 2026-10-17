@@ -18,6 +18,12 @@ describe('sameStreet: different properties never match', () => {
     ['123 Main St 4', '123 Main St 5', 'another bare unit number'],
     ['123 Main St, 4B', '123 Main St, 5A', 'another bare unit (in its own part)'],
     ['123 Main St A', '123 Main St B', 'another letter unit'],
+    // Brief 41.1 re-review: two named towns of the same kind that differ.
+    ['100 Main St Flushing', '100 Main St Jamaica', 'another town (one cell, no ZIP)'],
+    ['100 Main St Brooklyn', '100 Main St Queens', 'another borough'],
+    ['100 Main St, Brooklyn', '100 Main St, Queens', 'another borough'],
+    ['100 Main St E Hampton NY', '100 Main St W Hampton NY', 'another town'],
+    ['123 Main St 4B Brooklyn NY 11201', '123 Main St 4B, Queens', 'another borough'],
     ['123 Main St A, Brooklyn', '123 Main St B, Brooklyn', 'another letter unit'],
     ['123 Main St, A', '123 Main St, B', 'another letter unit (in its own part)'],
     ['123 Main St PH1', '123 Main St PH2', 'another penthouse'],
@@ -74,6 +80,13 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St, Brooklyn', '361 Degraw St Apt 3, Brooklyn'], // a unit on one side only
     ['123 Main St 4B', '123 Main St Apt 4B'], // a bare unit = the same unit with a marker
     ['123 Main St A', '123 Main St Apt A'], // a letter unit = the same with a marker
+    // The same town written two ways; a borough vs one of its neighbourhoods.
+    ['100 Main St, Flushing, NY 11354', '100 Main St Flushing NY'],
+    ['123 Main St Garden City NY 11530', '123 Main St Apt 2, Garden City, NY 11530'], // "Garden" starts a town here
+    ['100 Main St, Park Slope', '100 Main St, Brooklyn'],
+    ['100 Main St, New York, NY', '100 Main St Manhattan'],
+    ['10 Ocean Pkwy South Beach', '10 Ocean Pkwy, South Beach'],
+    ['100 Main St Flushing', '100 Main St'], // a town on one side only
     ['123 Main St A, Brooklyn', '123 Main St, Brooklyn'], // a letter unit on one side only
     ['123 Main St, A', '123 Main St #A'],
     ['1 Plaza St E', '1 Plaza St East'], // N/S/E/W after the type are still directions
