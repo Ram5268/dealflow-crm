@@ -5,8 +5,18 @@ import { getObject } from './storage'
 import { parseFile } from './parser'
 import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
-import { normalizeStreet, sameStreet } from './address'
-import { mappingKey, resumePoint, type ResumeState } from './batch'
+import { normalizeStreet, sameStreet, streetIdentity } from './address'
+import {
+  heldBy,
+  importRunOf,
+  mappingKey,
+  newRunId,
+  resumePoint,
+  sameMappingJson,
+  withImportRun,
+  type ResumeState,
+} from './batch'
+import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict } from './names'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,6 +33,11 @@ import type { MappingProposal, ColumnMapping } from './ai-mapping'
 // row that is another property becomes a new lead; rows that could be the same
 // lead run one after another; a failed or timed-out commit is marked 'failed';
 // a completed batch never re-runs.
+//
+// Brief 41.1 (F1, F10): a run only writes its batch while it holds the claim
+// (its run id), so a stopped run can never reopen or overwrite a newer run; a
+// phone match whose names disagree is a different person; a row whose event
+// fails is counted once.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DuplicateStrategy = 'skip' | 'merge' | 'add-anyway'
@@ -110,7 +125,7 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
     collapseWs(contact.name) ||
     collapseWs(lead.primaryAddressFull) ||
     collapseWs(lead.mojoId) ||
-    'Imported Lead'
+    PLACEHOLDER_NAME
 
   return {
     displayName,
@@ -236,6 +251,11 @@ export interface CommitDeps {
   now?: () => number
   timeLimitMs?: number
   watchdogMs?: number
+  // The run claimImportCommit started (Brief 41.1). The commit only works on,
+  // and only writes, a batch that run still holds. Without one (tests, a
+  // direct call) the commit takes the batch itself, unless a claimed run
+  // holds it.
+  runId?: string
 }
 
 export interface CommitResult {
@@ -254,22 +274,41 @@ export const COMMIT_TIME_LIMIT_MS = 240_000
 export const COMMIT_WATCHDOG_MS = 270_000
 const PROGRESS_EVERY = 100
 
+// Why a run stopped starting rows: the time limit, the watchdog, or a write
+// that found the import no longer this run's.
+type StopReason = 'time' | 'watchdog' | 'lost'
+
+// A run that stopped before every row: carries where a re-run with the same
+// mapping continues.
+class ImportStopped extends Error {
+  constructor(reason: StopReason, doneRows: number, totalRows: number, readonly resume: ResumeState) {
+    super(
+      reason === 'time'
+        ? `time limit reached after ${doneRows} of ${totalRows} rows. ` +
+            'Run it again to continue from there; rows already imported are not repeated or duplicated'
+        : reason === 'watchdog'
+          ? `the import stopped responding after ${doneRows} of ${totalRows} rows. ` +
+            'Run it again to continue from there; rows already imported are not repeated or duplicated'
+          : `this run stopped after ${doneRows} of ${totalRows} rows: the import was marked stopped or taken over by a newer run. ` +
+            'Run it again to continue from there; rows already imported are not repeated or duplicated'
+    )
+  }
+}
+
 // Full commit path. Reads the raw file, resolves the mapping, and upserts every
 // row. A completed batch is never imported twice: a retry or a second run
 // returns the counts the first run recorded. Any failure, including running
 // out of time, marks the batch 'failed' (with the reason) before rethrowing.
 // Running it again is safe: after a time-limit stop it continues where it
 // stopped; otherwise rows already imported are merged, not duplicated.
-// A time-limit stop: carries where a re-run with the same mapping continues.
-class ImportTimeLimit extends Error {
-  constructor(doneRows: number, totalRows: number, readonly resume: ResumeState) {
-    super(
-      `time limit reached after ${doneRows} of ${totalRows} rows. ` +
-        'Run it again to continue from there; rows already imported are not repeated or duplicated'
-    )
-  }
-}
-
+//
+// Brief 41.1 (F1): the run works on, and writes, its batch only while it holds
+// the claim (deps.runId, from claimImportCommit). Every write is an UPDATE
+// whose WHERE requires the batch to still be this run's, so a run that stopped
+// responding can never mark a newer run's import failed (which let a third run
+// start beside it and import the same homeowners twice), overwrite its counts
+// or complete it. Once the watchdog fires, or a write finds the import gone to
+// a newer run, this run starts no more rows.
 export async function commitImport(
   importBatchId: string,
   duplicateStrategy: DuplicateStrategy,
@@ -285,6 +324,7 @@ export async function commitImport(
   const watchdogMs = deps.watchdogMs ?? COMMIT_WATCHDOG_MS
   const source = `import:${importBatchId}`
   const key = mappingKey(mapping)
+  const runId = deps.runId ?? newRunId()
 
   const result: CommitResult = {
     totalRows: 0,
@@ -294,36 +334,69 @@ export async function commitImport(
     errorRows: 0,
   }
   const errorLog: Array<{ row: number; message: string }> = []
-  const markFailed = (message: string, resume?: ResumeState) =>
-    db.importBatch
-      .update({
-        where: { id: importBatchId },
-        data: {
-          status: 'failed',
-          ...counts(result),
-          errorLog: [
-            ...errorLog.slice(0, 499),
-            { row: 0, message: `Import stopped: ${message}`, ...(resume ? { resume, mappingKey: key } : {}) },
-          ],
-          completedAt: new Date(),
-        },
-      })
-      .catch(() => {}) // the original error is what the caller needs
+  // Lands only while this run holds the batch in one of `statuses`.
+  const writeHeld = async (data: Prisma.ImportBatchUpdateManyMutationInput, statuses: string[]): Promise<boolean> => {
+    const { count } = await db.importBatch.updateMany({ where: heldBy(importBatchId, runId, statuses), data })
+    return count === 1
+  }
+  // The run's heartbeat: an import with none for 10 minutes has no live run.
+  const beat = () => withImportRun(mapping, { id: runId, beatAt: new Date().toISOString() })
+  // 'failed' with the reason and where a re-run continues. The watchdog's
+  // write is marked (a re-run waits a minute: this run may still be finishing
+  // a row) and lands only while the run is importing. The run's own late
+  // failure may replace its watchdog failure, being more exact, but never
+  // touches a newer run.
+  const markFailed = (message: string, resume: ResumeState | undefined, byWatchdog = false) =>
+    writeHeld(
+      {
+        status: 'failed',
+        ...counts(result),
+        errorLog: [
+          ...errorLog.slice(0, 499),
+          {
+            row: 0,
+            message: `Import stopped: ${message}`,
+            ...(resume ? { resume: { next: resume.next, partial: resume.partial }, mappingKey: key } : {}),
+            ...(byWatchdog ? { watchdog: true } : {}),
+          },
+        ],
+        completedAt: new Date(),
+      },
+      byWatchdog ? ['importing'] : ['importing', 'failed']
+    ).catch(() => false) // the original error is what the caller needs
   let settled = false
+  let stopped: StopReason | null = null
   // Where a re-run would continue, as of now; the watchdog records it.
   let resumeNow: () => ResumeState | undefined = () => undefined
   // In case one query hangs (the file download, a row) past the time limit:
-  // mark the batch failed before the platform kills the function. Armed before
-  // any work. If the work does finish, its own 'completed' write comes later
-  // and wins.
+  // mark the batch failed before the platform kills the function, and start no
+  // more rows. Armed before any work. If the rows already started then finish
+  // every row, the run's own 'completed' write comes later and wins.
   const watchdog = setTimeout(() => {
-    if (!settled) void markFailed('the import stopped responding. Run it again to continue', resumeNow())
+    if (settled) return
+    stopped = 'watchdog'
+    void markFailed('the import stopped responding. Run it again to continue', resumeNow(), true)
   }, watchdogMs)
   watchdog.unref?.()
 
   try {
     const batch = await db.importBatch.findUniqueOrThrow({ where: { id: importBatchId } })
     if (batch.status === 'completed') return counts(batch)
+    const holder = batch.status === 'importing' ? importRunOf(batch.mappingJson)?.id : undefined
+    if (deps.runId) {
+      // Not this run's import (any more): a newer run holds it, or this run's
+      // watchdog already marked it failed. Do nothing.
+      if (holder !== deps.runId) return counts(batch)
+    } else {
+      // A direct call (tests, scripts) never runs beside a claimed run; it
+      // takes the batch itself, if nothing changed since it was read.
+      if (holder) throw new Error('this import is held by a run that was claimed for it; commit it through claimImportCommit')
+      const { count } = await db.importBatch.updateMany({
+        where: { id: importBatchId, status: batch.status, completedAt: batch.completedAt, mappingJson: sameMappingJson(batch.mappingJson) },
+        data: { status: 'importing', mappingJson: beat() },
+      })
+      if (count === 0) throw new Error('the import changed while it was starting; run it again')
+    }
     const organizationId = batch.organizationId
 
     // A re-run after a stop continues where that run stopped (the grouping is
@@ -362,25 +435,29 @@ export async function commitImport(
       for (let gi = 0; gi < next; gi++) if (done[gi] < groups[gi].length) partial.push([gi, done[gi]])
       return { next, partial }
     }
-    await db.importBatch.update({ where: { id: importBatchId }, data: { totalRows: result.totalRows } })
+    if (!(await writeHeld({ totalRows: result.totalRows, mappingJson: beat() }, ['importing']))) stopped ??= 'lost'
 
-    // Counts are written every PROGRESS_EVERY rows so the progress page moves.
+    // Counts and a heartbeat are written every PROGRESS_EVERY rows so the
+    // progress page moves.
     let processed = done.reduce((n, d) => n + d, 0)
     let reported = processed
     const reportProgress = async () => {
       if (processed - reported < PROGRESS_EVERY) return
       reported = processed
-      await db.importBatch
-        .update({ where: { id: importBatchId }, data: counts(result) })
-        .catch(() => {}) // progress is best-effort; the final write is authoritative
+      // Best-effort; the final write is authoritative. Refused means the
+      // import is no longer this run's (or its watchdog fired): stop.
+      const held = await writeHeld({ ...counts(result), mappingJson: beat() }, ['importing']).catch(() => true)
+      if (!held) stopped ??= 'lost'
     }
 
-    let outOfTime = false
+    // Some row was not started (time limit, watchdog or lost claim).
+    let cutShort = false
     // `counted` marks the row done in its group the moment it is counted, so a
     // stop while its event is still being sent never redoes (and recounts) it.
     const importRow = async (i: number, counted: () => void): Promise<boolean> => {
-      if (outOfTime || now() - startedAt > timeLimitMs) {
-        outOfTime = true
+      if (stopped || now() - startedAt > timeLimitMs) {
+        stopped ??= 'time'
+        cutShort = true
         return false
       }
       const plan = plans[i]
@@ -391,6 +468,7 @@ export async function commitImport(
         counted()
         rowErrors('no Mojo ID, phone, name or address to identify this row; skipped')
       } else {
+        let leadId: string | null = null
         try {
           const outcome = await upsertRow(db, organizationId, source, plan, duplicateStrategy, rowErrors)
           if (outcome === 'skipped') {
@@ -400,17 +478,22 @@ export async function commitImport(
             result.importedRows++
             if (outcome.merged) result.duplicateRows++
             counted()
-            await emit('crm_lead_sync', {
-              leadId: outcome.leadId,
-              sourceLabel: batch.sourceLabel,
-              importBatchId,
-              correlationId,
-            })
+            leadId = outcome.leadId
           }
         } catch (err) {
           result.errorRows++
           counted()
           rowErrors(err instanceof Error ? err.message : String(err))
+        }
+        // Brief 41.1: the row is counted once, as imported (its lead is
+        // written), even if its event fails; that failure is listed instead
+        // of counting the row again as an error (progress went past 100%).
+        if (leadId) {
+          try {
+            await emit('crm_lead_sync', { leadId, sourceLabel: batch.sourceLabel, importBatchId, correlationId })
+          } catch (err) {
+            rowErrors(`imported, but its sync event failed: ${err instanceof Error ? err.message : String(err)}`)
+          }
         }
         if (plan.phones.some((p) => p.nonstandard)) rowErrors('nonstandard phone type kept as-is')
       }
@@ -430,22 +513,19 @@ export async function commitImport(
         markDone()
       }
     })
-    if (outOfTime) throw new ImportTimeLimit(processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
+    if (cutShort) throw new ImportStopped(stopped ?? 'time', processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
 
     settled = true
-    await db.importBatch.update({
-      where: { id: importBatchId },
-      data: {
-        status: 'completed',
-        ...counts(result),
-        errorLog: errorLog.slice(0, 500),
-        completedAt: new Date(),
-      },
-    })
+    // Every row is done. This may replace the run's own watchdog failure (the
+    // work did finish), never a newer run's state.
+    await writeHeld(
+      { status: 'completed', ...counts(result), errorLog: errorLog.slice(0, 500), completedAt: new Date() },
+      ['importing', 'failed']
+    )
     return result
   } catch (err) {
     settled = true
-    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportTimeLimit ? err.resume : resumeNow())
+    await markFailed(err instanceof Error ? err.message : String(err), err instanceof ImportStopped ? err.resume : resumeNow())
     throw err
   } finally {
     settled = true
@@ -476,11 +556,13 @@ interface LeadMatch {
   displayName: string
   primaryAddressFull: string | null
   statusLabel: string | null
-  // true when the row is certainly this property (same Mojo ID, or same street):
-  // only then may it change a name, status or custom value.
+  // true when the row is certainly this property and person (same Mojo ID, or
+  // same street with no name conflict): only then may it change a name,
+  // status or custom value.
   sameProperty: boolean
-  // how it matched: only a Mojo ID match may rewrite an existing address (a
-  // same-street match already has it, often more completely).
+  // how it matched: only a Mojo ID match with no name conflict may rewrite an
+  // existing address (a same-street match already has it, often more
+  // completely).
   by: 'mojo' | 'street' | 'other'
 }
 
@@ -538,7 +620,10 @@ async function upsertRow(
       skipDuplicates: true,
     })
   }
-  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty ? 'overwrite' : 'fill', rowErrors)
+  // Ryan: "Yes, update property details". A Mojo ID match refreshes Mojo's
+  // property fields (estimated value and the like) even when the lead kept
+  // its own name and status; any other unconfirmed match only fills them in.
+  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty || existing.by === 'mojo' ? 'overwrite' : 'fill', rowErrors)
   return { leadId, merged: true }
 }
 
@@ -587,21 +672,29 @@ async function createLead(
 // otherwise the row only fills blanks. The name only changes from a Lead.name
 // column (a co-owner never replaces it). The Mojo ID is handled separately
 // (fill-only, atomically) in upsertRow.
+// An address that names a street ("12 Main St", "Main St"); not "12, Brooklyn"
+// or a city only, which can neither confirm nor contradict a property.
+const hasStreet = (address: string | null | undefined) => !!streetIdentity(address)
+
 function mergeUpdate(plan: RowPlan, source: string, existing: LeadMatch): Prisma.LeadUpdateInput {
   const data: Prisma.LeadUpdateInput = { source }
   const may = (current: string | null) => existing.sameProperty || !current
   // A lead created by hand (or with the name in Contact.name) has a real
-  // displayName but no Lead.name: that counts as a name to keep.
-  const shownName =
-    existing.name ??
-    (existing.displayName !== 'Imported Lead' && existing.displayName !== existing.primaryAddressFull && existing.displayName !== existing.mojoId
-      ? existing.displayName
-      : null)
-  if (plan.lead.name && may(shownName)) {
+  // displayName but no Lead.name: that counts as a name to keep. "Imported
+  // Lead", the address, the Mojo ID or a list placeholder ("Current
+  // Resident") standing in for a name don't, and a placeholder in the file
+  // never replaces a name.
+  const leadContext = { address: existing.primaryAddressFull, mojoId: existing.mojoId }
+  const shownName = [existing.name, existing.displayName].find((n) => !!n && isRealName(n, leadContext)) ?? null
+  const rowName = plan.lead.name && isRealName(plan.lead.name, { address: plan.lead.primaryAddressFull, mojoId: plan.lead.mojoId }) ? plan.lead.name : null
+  if (rowName && may(shownName)) {
     data.name = plan.lead.name
     data.displayName = plan.displayName
   }
-  if (plan.lead.primaryAddressFull && (existing.by === 'mojo' || !existing.primaryAddressFull)) {
+  // A stored line with no street name ("12, Brooklyn, NY") counts as blank:
+  // a row with a street fills it (Brief 41.1 review).
+  const blankAddress = !existing.primaryAddressFull || (!hasStreet(existing.primaryAddressFull) && hasStreet(plan.lead.primaryAddressFull))
+  if (plan.lead.primaryAddressFull && ((existing.by === 'mojo' && existing.sameProperty) || blankAddress)) {
     data.primaryAddressFull = plan.lead.primaryAddressFull
     data.primaryAddressSummary = plan.lead.primaryAddressFull.split(',')[0]
   }
@@ -664,24 +757,47 @@ async function mapWithConcurrency<T>(
 //  2. Else the leads sharing the row's first phone, oldest first, skipping any
 //     with a different Mojo ID (another property of the same owner):
 //       - the row has an address: the lead at the same street (same property),
-//         else a lead with no address yet (the row fills it in); otherwise the
-//         row is another property and becomes a new lead;
+//         else a lead with no address yet, or one whose address names no
+//         street ("12, Brooklyn"; the row fills it in); otherwise the row is
+//         another property and becomes a new lead;
 //       - the row has no address: the first such lead. A row with a Mojo ID
 //         never attaches it to a lead whose address it can't confirm.
 //  3. Else the exact name + address. With no address that's the name alone,
 //     so only a phoneless row with a real name may use it, and a row with a
 //     Mojo ID never does.
 // No match → a new lead.
+//
+// Brief 41.1 (F10): in step 2, a lead whose real names (owner, hand-typed
+// name, contacts) all differ from the row's real names is another person who
+// shares the phone, so away from the same street it is skipped like another
+// property. At the same street it is the same household: the row merges but
+// only fills blanks. Names are compared forgivingly ("OWNER, Alice Q." is
+// "Alice Owner", "O'Brien" is "OBrien"); a row or lead with no real name (a
+// phone-only list, "Imported Lead", "Current Resident") never conflicts.
 async function findExistingLead(
   db: PrismaClient,
   organizationId: string,
   plan: RowPlan
 ): Promise<LeadMatch | null> {
-  const select = { id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true } as const
+  const select = {
+    id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true,
+    contacts: { select: { name: true, displayName: true } },
+  } as const
   const rowAddress = plan.lead.primaryAddressFull ?? null
+  const rowNames = [plan.lead.name, plan.contact.name].filter(
+    (n): n is string => !!n && isRealName(n, { address: rowAddress, mojoId: plan.lead.mojoId })
+  )
+  // Both sides have real names and none agree.
+  const otherPerson = (l: Parameters<typeof leadRealNames>[0]) => namesConflict(rowNames, leadRealNames(l))
   if (plan.lead.mojoId) {
     const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
-    if (byMojo) return { ...byMojo, sameProperty: true, by: 'mojo' }
+    // Brief 41.1 (Ryan: "keep my name for good"): a fill-only merge links the
+    // row's Mojo ID to a lead that kept its own name. When the names conflict,
+    // a Mojo ID match only fills blanks too, so a later pass (a re-import, the
+    // same row again in the file, a re-run) never renames the lead or changes
+    // its status, address or custom values. Names that agree, or a side with
+    // no real name, update as before.
+    if (byMojo) return { ...byMojo, sameProperty: !otherPerson(byMojo), by: 'mojo' }
   }
   const otherProperty = (l: { mojoId: string | null }) => !!(plan.lead.mojoId && l.mojoId && l.mojoId !== plan.lead.mojoId)
 
@@ -695,12 +811,18 @@ async function findExistingLead(
       })
     ).filter((l) => !otherProperty(l))
     if (rowAddress) {
-      const same = candidates.find((l) => sameStreet(l.primaryAddressFull, rowAddress))
-      if (same) return { ...same, sameProperty: true, by: 'street' }
-      const blank = candidates.find((l) => !l.primaryAddressFull)
+      // The same street and phone is one household even when the names differ
+      // (co-owners on separate rows, "Bob" vs "ROBERT", a trust or LLC): one
+      // lead, but such a row only fills its blanks; it never renames the lead
+      // or changes its status (Ryan's decision, Brief 41.1 review).
+      const atStreet = candidates.filter((l) => sameStreet(l.primaryAddressFull, rowAddress))
+      const same = atStreet.find((l) => !otherPerson(l)) ?? atStreet[0]
+      if (same) return { ...same, sameProperty: !otherPerson(same), by: 'street' }
+      // A lead with no address, or one with no street name (Brief 41.1 review).
+      const blank = candidates.find((l) => !hasStreet(l.primaryAddressFull) && !otherPerson(l))
       if (blank) return { ...blank, sameProperty: false, by: 'other' }
     } else {
-      const usable = candidates.find((l) => !(plan.lead.mojoId && !l.mojoId && l.primaryAddressFull))
+      const usable = candidates.find((l) => !otherPerson(l) && !(plan.lead.mojoId && !l.mojoId && hasStreet(l.primaryAddressFull)))
       if (usable) return { ...usable, sameProperty: false, by: 'other' }
     }
     // Leads with this phone are other properties: try the exact name + address.

@@ -5,6 +5,8 @@ import { withRoute, json, HttpError, errorResponse } from '@/lib/shared/http'
 import { getObject } from '@/lib/core-data/importer/storage'
 import { parseFile } from '@/lib/core-data/importer/parser'
 import { proposeMapping, defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
+import { isStalled, sameMappingJson } from '@/lib/core-data/importer/batch'
+import { FILE_GONE_MESSAGE } from '@/lib/core-data/importer/progress-view'
 import { captureException } from '@/lib/shared/sentry'
 import { logger } from '@/lib/logger'
 import { ZodError } from 'zod'
@@ -18,11 +20,18 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
   if (!batch) throw new HttpError(404, 'ImportBatch not found')
   // Brief 41: revisiting the mapping page must not reset an import that is
   // running or finished (that reset let the same file be committed twice).
-  if (batch.status === 'importing' || batch.status === 'completed') {
+  // Brief 41.1: an import stuck at 'importing' with no progress for 10 minutes
+  // has no live run, so "Back to the import" may reopen it (no re-upload).
+  const stalled = isStalled(batch, Date.now())
+  if (batch.status === 'completed' || (batch.status === 'importing' && !stalled)) {
     throw new HttpError(409, batch.status === 'completed' ? 'This import has already run.' : 'This import is already running.')
   }
 
-  const buffer = await getObject(batch.storageKey)
+  // A file cleared by the 24 h sweep: say to upload it again (not a 500).
+  const buffer = await getObject(batch.storageKey).catch((err: unknown) => {
+    if (err instanceof Error && /no stored bytes/.test(err.message)) throw new HttpError(410, FILE_GONE_MESSAGE)
+    throw err
+  })
   const parsed = parseFile(buffer, batch.filename)
   const existingDefs = await prisma.customFieldDefinition.findMany({
     where: { organizationId, objectType: 'lead' },
@@ -58,9 +67,19 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
   }
 
   // Conditional: a commit may have started while the AI call ran (another tab).
+  // A stalled import is reopened only if it is still that same stalled run;
+  // its errors and resume point are cleared, so the re-run starts fresh (its
+  // counts may be ahead of that point; rows already imported are merged).
   const { count } = await prisma.importBatch.updateMany({
-    where: { id: batch.id, status: { notIn: ['importing', 'completed'] } },
-    data: { mappingJson: proposal as object, status: 'mapping_review', totalRows: parsed.totalRowsDetected },
+    where: stalled
+      ? { id: batch.id, status: 'importing', mappingJson: sameMappingJson(batch.mappingJson) }
+      : { id: batch.id, status: { notIn: ['importing', 'completed'] } },
+    data: {
+      mappingJson: proposal as object,
+      status: 'mapping_review',
+      totalRows: parsed.totalRowsDetected,
+      ...(stalled ? { errorLog: [] } : {}),
+    },
   })
   if (count === 0) throw new HttpError(409, 'This import has already started.')
 

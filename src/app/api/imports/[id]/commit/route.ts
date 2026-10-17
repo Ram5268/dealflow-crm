@@ -19,7 +19,9 @@ const commitSchema = z.object({
 // POST /api/imports/:id/commit → 202 Accepted; the commit runs after the
 // response. Brief 41: the batch is claimed atomically first, so a second click
 // or a retried request gets 409 instead of starting a parallel commit, and an
-// import that already ran is never run again.
+// import that already ran is never run again. Brief 41.1: the claim starts a
+// run (its id goes to the commit, which only writes while it holds the
+// import); a re-run waits a minute after a "stopped responding" failure.
 export const POST = withRoute(async (req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
   const body = await parseBody(req, commitSchema)
@@ -27,6 +29,13 @@ export const POST = withRoute(async (req: NextRequest, { correlationId, params }
   const claim = await claimImportCommit(prisma, params!.id, organizationId, body.mapping)
   if (!claim.claimed) {
     if (claim.status === null) throw new HttpError(404, 'ImportBatch not found')
+    if (claim.retryInSeconds) {
+      throw new HttpError(
+        409,
+        `The last run of this import is still stopping. Try again in about ${claim.retryInSeconds} seconds.`,
+        { retryInSeconds: claim.retryInSeconds }
+      )
+    }
     throw new HttpError(409, claim.status === 'completed' ? 'This import has already run.' : 'This import is already running.')
   }
 
@@ -36,6 +45,7 @@ export const POST = withRoute(async (req: NextRequest, { correlationId, params }
       duplicateStrategy: body.duplicateStrategy,
       mapping: body.mapping,
       correlationId,
+      runId: claim.runId,
     })
   )
 
