@@ -72,10 +72,12 @@ const UNIT_WORDS: Record<string, string> = {
   garden: 'garden', gdn: 'garden', upper: 'upper', lower: 'lower',
 }
 const ZIP = /^\d{5}(\d{4})?$/
-// The town an address names, when it names one (Brief 41.1 re-review):
-// "100 Main St Flushing" and "100 Main St Jamaica" are two properties. A
-// borough and a neighbourhood can name the same place ("Brooklyn" / "Park
-// Slope"), so only two boroughs or two other towns are compared.
+// The town an address names, when it names one. The same phone, house number
+// and street is almost always the same home, so the town only splits a match
+// when there is no pair of ZIPs to settle it and both towns are boroughs
+// ("100 Main St Brooklyn" vs "100 Main St Queens"). Neighbourhoods are written
+// too many ways ("Bed-Stuy" / "Bedford Stuyvesant", "LIC" / "Long Island
+// City", "Jamaica" / "Jamaica Estates" in one ZIP) to tell two apart.
 const STATE_WORDS = new Set(['ny', 'nj', 'ct', 'pa', 'usa', 'us'])
 const BOROUGHS = new Set(['brooklyn', 'queens', 'bronx', 'manhattan', 'staten island'])
 const TOWN_ALIASES: Record<string, string> = {
@@ -215,7 +217,8 @@ export function streetIdentity(address: string | null | undefined): StreetIdenti
 // address with the city after the street, "4B" = "Apt 4B"). A street type,
 // unit or ZIP missing on one side is allowed ("2 Pine" = "2 Pine St";
 // "361 Degraw St" = "361 Degraw St # 3"), but two different ones are not
-// ("Pl" vs "St", "#3" vs "#4", "4B" vs "5A", "Rear" vs "Front", 11201 vs 11215).
+// ("Pl" vs "St", "#3" vs "#4", "4B" vs "5A", "Rear" vs "Front", 11201 vs
+// 11215, Brooklyn vs Queens when neither has a ZIP).
 export function sameStreet(a: string | null | undefined, b: string | null | undefined): boolean {
   const x = streetIdentity(a)
   const y = streetIdentity(b)
@@ -224,7 +227,7 @@ export function sameStreet(a: string | null | undefined, b: string | null | unde
   if (x.type && y.type && x.type !== y.type) return false
   if (x.unit && y.unit && x.unit !== y.unit) return false
   if (x.zip && y.zip && x.zip !== y.zip) return false
-  // Two named towns of the same kind (two boroughs, or two other towns) that differ.
-  if (x.town && y.town && x.town !== y.town && BOROUGHS.has(x.town) === BOROUGHS.has(y.town)) return false
+  // Without two ZIPs (two ZIPs were compared above), two different boroughs.
+  if (!(x.zip && y.zip) && x.town && y.town && x.town !== y.town && BOROUGHS.has(x.town) && BOROUGHS.has(y.town)) return false
   return true
 }

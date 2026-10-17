@@ -18,14 +18,15 @@ describe('sameStreet: different properties never match', () => {
     ['123 Main St 4', '123 Main St 5', 'another bare unit number'],
     ['123 Main St, 4B', '123 Main St, 5A', 'another bare unit (in its own part)'],
     ['123 Main St A', '123 Main St B', 'another letter unit'],
-    // Brief 41.1 re-review: two named towns of the same kind that differ.
-    ['100 Main St Flushing', '100 Main St Jamaica', 'another town (one cell, no ZIP)'],
-    ['100 Main St Brooklyn', '100 Main St Queens', 'another borough'],
-    ['100 Main St, Brooklyn', '100 Main St, Queens', 'another borough'],
-    ['100 Main St E Hampton NY', '100 Main St W Hampton NY', 'another town'],
-    ['123 Main St 4B Brooklyn NY 11201', '123 Main St 4B, Queens', 'another borough'],
+    // Brief 41.1 review: two different boroughs when there is no pair of ZIPs.
+    ['100 Main St Brooklyn', '100 Main St Queens', 'another borough, no ZIP'],
+    ['100 Main St, Brooklyn', '100 Main St, Queens', 'another borough, no ZIP'],
+    ['100 Main St, Bklyn', '100 Main St, Queens', 'another borough (an alias), no ZIP'],
+    ['100 Main St, NYC', '100 Main St, Brooklyn', 'another borough (an alias), no ZIP'],
+    ['123 Main St 4B Brooklyn NY 11201', '123 Main St 4B, Queens', 'another borough, one ZIP'],
     ['123 Main St A, Brooklyn', '123 Main St B, Brooklyn', 'another letter unit'],
     ['123 Main St, A', '123 Main St, B', 'another letter unit (in its own part)'],
+    ['123 Main St A, 11201', '123 Main St B, 11201', 'another letter unit (the same ZIP)'],
     ['123 Main St PH1', '123 Main St PH2', 'another penthouse'],
     ['361 Degraw St Apt PH', '361 Degraw St Apt 4', 'the penthouse vs a unit'],
     ['361 Degraw St Rear', '361 Degraw St Front', 'rear vs front'],
@@ -80,6 +81,20 @@ describe('sameStreet: spellings of one property still match', () => {
     ['361 Degraw St, Brooklyn', '361 Degraw St Apt 3, Brooklyn'], // a unit on one side only
     ['123 Main St 4B', '123 Main St Apt 4B'], // a bare unit = the same unit with a marker
     ['123 Main St A', '123 Main St Apt A'], // a letter unit = the same with a marker
+    // The same ZIP settles it, whatever the town is called (Brief 41.1 review).
+    ['123 Main St, New York, NY 11216', '123 Main St, Brooklyn, NY 11216'],
+    ['100 Main St, Long Island City, NY 11101', '100 Main St, Astoria, NY 11101'],
+    ['100 Main St, Ridgewood, NY 11385', '100 Main St, Glendale, NY 11385'],
+    ['100 Main St, Jamaica, NY 11432', '100 Main St, Jamaica Estates, NY 11432'],
+    // Without ZIPs, neighbourhoods and other towns never split a match: too many spellings.
+    ['100 Main St, Bed-Stuy', '100 Main St, Bedford Stuyvesant'],
+    ['100 Main St, LIC', '100 Main St, Long Island City'],
+    ['100 Main St, Crown Heights', '100 Main St, Prospect Heights'],
+    ['100 Main St Flushing', '100 Main St Jamaica'],
+    ['100 Main St E Hampton NY', '100 Main St W Hampton NY'],
+    // Words after the street in one cell aren't a town that splits a match.
+    ['123 Main St Bldg 2', '123 Main St'],
+    ['123 Main St Parlor Floor', '123 Main St Duplex'],
     // The same town written two ways; a borough vs one of its neighbourhoods.
     ['100 Main St, Flushing, NY 11354', '100 Main St Flushing NY'],
     ['123 Main St Garden City NY 11530', '123 Main St Apt 2, Garden City, NY 11530'], // "Garden" starts a town here
