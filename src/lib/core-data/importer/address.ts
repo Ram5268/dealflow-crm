@@ -93,7 +93,8 @@ function townKey(words: string[]): string | null {
 // "2nd Floor", "1st Fl" / "Fl 3", "Floor 3": a floor is its own kind of unit.
 const FLOOR_BEFORE = /(?:^|\s)(\d+)\s*(?:st|nd|rd|th)?\s*(?:fl|flr|floor)\b\.?/
 const FLOOR_AFTER = /(?:^|\s)(?:fl|flr|floor)\b\.?\s*(\d+)(?:st|nd|rd|th)?\b/
-const UNIT = /(?:#|(?:^|\s)(?:apt|apartment|unit|ste|suite|rm|room|ph|penthouse)\b\.?)\s*([a-z0-9][a-z0-9-]*)?/
+// A separator may follow the marker: "Apt #3", "Apt-3", "Unit: 3", "#-3", "PH-1".
+const UNIT = /(?:#|(?:^|\s)(?:apt|apartment|unit|ste|suite|rm|room|ph|penthouse)\b\.?)\s*[#:-]?\s*([a-z0-9][a-z0-9-]*)?/
 
 export interface StreetIdentity {
   house: string
@@ -127,7 +128,7 @@ function unitOf(part: string): { unit: string | null; rest: string } {
   if (floor) return { unit: `fl${floor[1].replace(/^0+(?=\d)/, '')}`, rest: part.slice(0, floor.index) }
   const m = UNIT.exec(part)
   if (!m) return { unit: null, rest: part }
-  const marker = m[0].trim().replace(/[#.]/g, '').split(/\s+/)[0]
+  const marker = m[0].replace(/[#.:-]/g, ' ').trim().split(/\s+/)[0]
   const penthouse = marker === 'ph' || marker === 'penthouse'
   // A penthouse number has a digit or is one letter ("PH 1", "PH A"); a word
   // after "PH" is the city of a one-cell address ("… PH Brooklyn NY 11217").

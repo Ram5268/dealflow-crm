@@ -57,6 +57,15 @@ describe('sameStreet: different properties never match', () => {
     ['12 Main St Extension Brooklyn NY', '12 Main St, Brooklyn', 'a suffix word (one cell)'],
     [null, '5 Main St', 'no address'],
     ['', '', 'no address'],
+    // Brief 41.1 review round 4: a separator after the unit marker keeps the unit.
+    ['361 Degraw St Apt #3', '361 Degraw St Apt #4', 'another unit (Apt #)'],
+    ['361 Degraw St Apt-3', '361 Degraw St Apt-4', 'another unit (Apt-)'],
+    ['361 Degraw St Unit-3', '361 Degraw St Unit-4', 'another unit (Unit-)'],
+    ['361 Degraw St Apt:3', '361 Degraw St Apt 4', 'another unit (Apt:)'],
+    ['361 Degraw St #-3', '361 Degraw St #-4', 'another unit (#-)'],
+    ['361 Degraw St PH-1', '361 Degraw St PH-2', 'another penthouse (PH-)'],
+    ['361 Degraw St Apt #3', '361 Degraw St Apt 4, Brooklyn', 'another unit (Apt # vs Apt)'],
+    ['361 Degraw St Apt-3R', '361 Degraw St Apt 4R', 'another unit (Apt- vs Apt)'],
   ]
   for (const [a, b, why] of different) {
     it(`${a} | ${b} (${why})`, () => {
@@ -147,6 +156,15 @@ describe('sameStreet: spellings of one property still match', () => {
     ['200 Prospect Park W', '200 Prospect Park West, Brooklyn'],
     ['12 Brooklyn Ave, Brooklyn', '12 Brooklyn Ave Brooklyn NY 11213'],
     ['1 Grand Army Plz', '1 Grand Army Plaza, Brooklyn'],
+    // The same unit however it's written (round 4 review).
+    ['361 Degraw St Apt #3', '361 Degraw St Apt 3'],
+    ['361 Degraw St Apt-3', '361 Degraw St #3'],
+    ['361 Degraw St Apt:3', '361 Degraw St Unit 3'],
+    ['361 Degraw St PH-1', '361 Degraw St PH1'],
+    ['361 Degraw St PH-1', '361 Degraw St PH 1'],
+    ['361 Degraw St Apt # 3', '361 Degraw St #3'],
+    ['361 Degraw St Apt. #3B', '361 Degraw St Apt 3B'],
+    ['361 Degraw St Apt #3, Brooklyn', '361 Degraw St, Brooklyn'],
   ]
   for (const [a, b] of same) {
     it(`${a} | ${b}`, () => {
