@@ -10,7 +10,7 @@ const stop = (message: string, extra: Record<string, unknown> = {}) => ({ errorL
 
 describe('progressView', () => {
   it('a working import: progress only, no button, keeps polling', () => {
-    expect(progressView(base)).toEqual({ label: 'importing', percent: 40, message: null, action: 'none', pollMs: 1500 })
+    expect(progressView(base)).toEqual({ label: 'importing', percent: 40, showCounts: true, message: null, action: 'none', pollMs: 1500 })
   })
 
   it('a newer run working after a failure: the button goes away', () => {
@@ -40,14 +40,15 @@ describe('progressView', () => {
 
   it('reopened but not committed again (mapping_review): a plain label and the way back (Brief 41.1 review)', () => {
     const v = progressView({ ...base, status: 'mapping_review' })
-    expect(v).toMatchObject({ label: 'not started', action: 'back', pollMs: 5000 })
+    // No percent or counts: they would be the old run's (Brief 41.1 re-review).
+    expect(v).toMatchObject({ label: 'not started', percent: 0, showCounts: false, action: 'back', pollMs: 5000 })
     expect(v.message).toMatch(/hasn't been committed/)
     expect(progressView({ ...base, status: 'pending', progress: 0 })).toMatchObject({ label: 'not started', action: 'back' })
   })
 
   it('reopened within the minute after a "stopped responding" stop: the countdown, then the way back', () => {
     const v = progressView({ ...base, status: 'mapping_review', retryInSeconds: 20, ...stop('the import stopped responding', { watchdog: true }) })
-    expect(v).toMatchObject({ label: 'not started', action: 'wait', pollMs: 3000 })
+    expect(v).toMatchObject({ label: 'not started', percent: 0, showCounts: false, action: 'wait', pollMs: 3000 })
     expect(v.message).toMatch(/still stopping.*about 20 seconds/)
   })
 

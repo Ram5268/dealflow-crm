@@ -62,9 +62,10 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
               <div className="h-full bg-accent transition-all" style={{ width: `${view.percent}%` }} />
             </div>
             <p className="mb-4 text-base text-muted">
-              {view.label} · {view.percent}% · {batch.importedRows}/{batch.totalRows} imported
-              {batch.duplicateRows > 0 && ` · ${batch.duplicateRows} merged`}
-              {batch.errorRows > 0 && ` · ${batch.errorRows} errors`}
+              {view.label}
+              {view.showCounts && ` · ${view.percent}% · ${batch.importedRows}/${batch.totalRows} imported`}
+              {view.showCounts && batch.duplicateRows > 0 && ` · ${batch.duplicateRows} merged`}
+              {view.showCounts && batch.errorRows > 0 && ` · ${batch.errorRows} errors`}
             </p>
             {view.message && (
               <p className="mb-4 text-base text-danger" data-testid="import-failed">

@@ -26,6 +26,8 @@ export type ProgressAction = 'none' | 'wait' | 'back' | 'upload' | 'leads'
 export interface ProgressView {
   label: string
   percent: number
+  // false for an import not started (again): the counts are an old run's.
+  showCounts: boolean
   message: string | null
   action: ProgressAction
   // When to check again; null once the import is done.
@@ -55,25 +57,27 @@ const fileGone = (b: ImportStatusView) => /no stored bytes/.test(JSON.stringify(
 
 export function progressView(b: ImportStatusView): ProgressView {
   const percent = Math.max(0, Math.min(100, Math.round(b.progress) || 0))
-  if (b.status === 'completed') return { label: 'completed', percent, message: null, action: 'leads', pollMs: null }
+  if (b.status === 'completed') return { label: 'completed', percent, showCounts: true, message: null, action: 'leads', pollMs: null }
   if (b.status === 'failed') {
     const wait = b.retryInSeconds ?? 0
     if (wait > 0) {
       return {
         label: 'failed',
         percent,
+        showCounts: true,
         message: `${failureText(b)} The last run is still stopping, so you can run it again in about ${wait} seconds.`,
         action: 'wait',
         pollMs: 3000,
       }
     }
     // Keep checking: if a newer run starts (another tab), the button goes away.
-    return { label: 'failed', percent, message: failureText(b), action: fileGone(b) ? 'upload' : 'back', pollMs: 5000 }
+    return { label: 'failed', percent, showCounts: true, message: failureText(b), action: fileGone(b) ? 'upload' : 'back', pollMs: 5000 }
   }
   if (b.status === 'importing' && b.stalled) {
     return {
       label: 'stopped',
       percent,
+      showCounts: true,
       message:
         'This import stopped responding: no progress for over 10 minutes. Rows imported so far are kept. Run it again; rows already imported are merged, not duplicated.',
       action: 'back',
@@ -88,18 +92,20 @@ export function progressView(b: ImportStatusView): ProgressView {
     return wait > 0
       ? {
           label: 'not started',
-          percent,
+          percent: 0,
+          showCounts: false,
           message: `The last run is still stopping. You can commit this import again in about ${wait} seconds.`,
           action: 'wait',
           pollMs: 3000,
         }
       : {
           label: 'not started',
-          percent,
+          percent: 0,
+          showCounts: false,
           message: "This import hasn't been committed. Go back to the import to check the columns and commit it.",
           action: 'back',
           pollMs: 5000,
         }
   }
-  return { label: b.status, percent, message: null, action: 'none', pollMs: 1500 }
+  return { label: b.status, percent, showCounts: true, message: null, action: 'none', pollMs: 1500 }
 }
