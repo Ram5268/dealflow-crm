@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { commitImport } from '@/lib/core-data/importer/commit-worker'
 import { BATCH, col, emitOk, importWorld, mappingOf, type FakeLead } from './helpers/fake-import-db'
+import type { MappingProposal } from '@/lib/core-data/importer/ai-mapping'
 
 // Brief 41.1 (F10) review: which existing lead a row lands on, end to end on
 // the fake DB (no database). The perf-DB file tests the same rules on Postgres.
@@ -202,5 +203,46 @@ describe('a name you kept is kept for good: later Mojo imports never replace it 
     seed(w, { id: 'Lph', displayName: 'Imported Lead', mojoId: 'M_NEW', statusLabel: 'Hot', phones: ['+12125550507'] })
     await run(w, MOJO_NAME_ADDR_PHONE_STATUS)
     expect(lead(w, 'Lph')).toMatchObject({ name: 'Nia Owner', displayName: 'Nia Owner', statusLabel: 'Cold', primaryAddressFull: '3 Ash St, Brooklyn' })
+  })
+})
+
+describe("Mojo's property details still update on a Mojo ID match (round-3 item 2, Ryan's decision)", () => {
+  const EST = { column: 'Est', sampleValues: [], target: { kind: 'existing_custom_field' as const, definitionId: 'cfd_est' }, confidence: 1, reasoning: '' }
+  const MOJO_NAME_STATUS_EST = { mapping: [col('Mojo', 'Lead.mojoId'), col('Name', 'Lead.name'), col('Status', 'Lead.statusLabel'), EST], likelyDuplicates: [] } as unknown as MappingProposal
+  const NAME_ADDR_PHONE_EST = { mapping: [col('Name', 'Lead.name'), col('Address', 'Lead.primaryAddressFull'), col('Phone', 'ContactPhone.phone'), EST], likelyDuplicates: [] } as unknown as MappingProposal
+  const est = (w: World, leadId: string) => w.values.get(`cfd_est|${leadId}`)?.valueNumber
+  const kimWithValue = (w: World, extra: Partial<FakeLead> = {}) => {
+    w.fields.push({ id: 'cfd_est', name: 'Estimated Value', type: 'number' })
+    seed(w, { id: 'Lkim', name: 'Kim Owner', displayName: 'Kim Owner', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201', statusLabel: 'Hot', mojoId: 'M_LEE', phones: ['+12125550505'], ...extra })
+    w.values.set('cfd_est|Lkim', { definitionId: 'cfd_est', objectId: 'Lkim', valueNumber: 1500000 })
+  }
+
+  it('a later Mojo row with a new owner name and status: the name and status stay, the estimated value updates', async () => {
+    const w = importWorld('Mojo,Name,Status,Est\nM_LEE,Raj Patel,Sold,1900000\n')
+    kimWithValue(w)
+    expect(await run(w, MOJO_NAME_STATUS_EST)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Kim Owner', displayName: 'Kim Owner', statusLabel: 'Hot', primaryAddressFull: '8 Birch St, Brooklyn, NY 11201' })
+    expect(est(w, 'Lkim')).toBe(1900000)
+  })
+
+  it('another name at the same street with no Mojo ID only fills custom values, it never overwrites them', async () => {
+    const w = importWorld('Name,Address,Phone,Est\nLee Other,8 Birch Street,212-555-0505,1900000\n')
+    kimWithValue(w)
+    expect(await run(w, NAME_ADDR_PHONE_EST)).toMatchObject({ importedRows: 1, duplicateRows: 1 })
+    expect(est(w, 'Lkim')).toBe(1500000)
+  })
+
+  it('known limit: a Mojo export with the kept name as the Second Name agrees, so the lead updates to the main owner as before', async () => {
+    const w = importWorld('Mojo,Name,Second,Status\nM_LEE,Raj Patel,Kim Owner,Sold\n')
+    kimWithValue(w)
+    await run(w, mappingOf(col('Mojo', 'Lead.mojoId'), col('Name', 'Lead.name'), col('Second', 'Contact.name'), col('Status', 'Lead.statusLabel')))
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Raj Patel', statusLabel: 'Sold' })
+  })
+
+  it("a Mojo owner who is already one of the lead's contacts agrees with it: it updates as before", async () => {
+    const w = importWorld('Mojo,Name,Status\nM_LEE,Lee Owner,Sold\n')
+    kimWithValue(w, { contacts: [{ id: 'c_kim', name: 'Kim Owner', displayName: 'Kim Owner' }, { id: 'c_lee', name: 'Lee Owner', displayName: 'Lee Owner' }] })
+    await run(w, mappingOf(col('Mojo', 'Lead.mojoId'), col('Name', 'Lead.name'), col('Status', 'Lead.statusLabel')))
+    expect(lead(w, 'Lkim')).toMatchObject({ name: 'Lee Owner', statusLabel: 'Sold' })
   })
 })

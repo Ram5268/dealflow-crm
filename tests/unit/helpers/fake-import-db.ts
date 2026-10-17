@@ -84,6 +84,19 @@ export interface FakeLead {
   contacts: Array<{ id: string; name: string | null; displayName: string }>
 }
 
+export interface FakeCustomField {
+  id: string
+  name: string
+  type: string
+}
+
+export interface FakeCustomValue {
+  definitionId: string
+  objectId: string
+  valueText?: string | null
+  valueNumber?: number | null
+}
+
 export interface BatchWrite {
   seq: number
   by: string
@@ -169,6 +182,10 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
   }
   const leads: FakeLead[] = []
   const writes: BatchWrite[] = []
+  // Custom fields: definitions a test adds, and the values the import writes
+  // (one per field and lead, like the real unique key).
+  const fields: FakeCustomField[] = []
+  const values = new Map<string, FakeCustomValue>()
   let seq = 0
 
   const applyBatch = (data: Record<string, unknown>) => {
@@ -184,10 +201,11 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
       if (hooks.latency) await sleep(hooks.latency)
       else await Promise.resolve()
     }
-    const leadView = (l: FakeLead) => ({
+    // Contacts only when the query selects them, as Prisma does.
+    const leadView = (l: FakeLead, select?: { contacts?: unknown }) => ({
       id: l.id, mojoId: l.mojoId, name: l.name, displayName: l.displayName,
       primaryAddressFull: l.primaryAddressFull, statusLabel: l.statusLabel,
-      contacts: l.contacts.map((c) => ({ name: c.name, displayName: c.displayName })),
+      ...(select?.contacts ? { contacts: l.contacts.map((c) => ({ name: c.name, displayName: c.displayName })) } : {}),
     })
     const client = {
       importBatch: {
@@ -226,23 +244,26 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
         async aggregate() {
           return { _max: { displayOrder: null } }
         },
+        async findFirst({ where }: { where: { id: string } }) {
+          return fields.find((d) => d.id === where.id) ?? null
+        },
       },
       lead: {
-        async findMany({ where, take }: { where: { contacts: { some: { phones: { some: { phone: string } } } } }; take?: number }) {
+        async findMany({ where, take, select }: { where: { contacts: { some: { phones: { some: { phone: string } } } } }; take?: number; select?: { contacts?: unknown } }) {
           const phone = where.contacts.some.phones.some.phone
           // A snapshot as of the query; the answer may arrive later.
-          const found = leads.filter((l) => l.phones.includes(phone)).sort((a, b) => a.seq - b.seq).slice(0, take ?? 25).map(leadView)
+          const found = leads.filter((l) => l.phones.includes(phone)).sort((a, b) => a.seq - b.seq).slice(0, take ?? 25).map((l) => leadView(l, select))
           await step('lead.findMany', { phone })
           return found
         },
-        async findFirst({ where }: { where: { mojoId?: string; displayName?: string; primaryAddressFull?: string | null } }) {
+        async findFirst({ where, select }: { where: { mojoId?: string; displayName?: string; primaryAddressFull?: string | null }; select?: { contacts?: unknown } }) {
           const found = leads.find((l) =>
             where.mojoId !== undefined
               ? l.mojoId === where.mojoId
               : l.displayName === where.displayName && l.primaryAddressFull === (where.primaryAddressFull ?? null)
           )
           await step('lead.findFirst', where)
-          return found ? leadView(found) : null
+          return found ? leadView(found, select) : null
         },
         async create({ data }: { data: Record<string, unknown> & { contacts: { create: { name: string | null; displayName: string; phones: { create: Array<{ phone: string }> } } } } }) {
           await step('lead.create', data)
@@ -300,8 +321,31 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
       },
       contactEmail: { async createMany() { return { count: 0 } } },
       customFieldValue: {
-        async createMany() { return { count: 0 } },
-        async deleteMany() { return { count: 0 } },
+        // No await before the change, so a $transaction([deleteMany, createMany])
+        // applies in order, as in Postgres.
+        async createMany({ data, skipDuplicates }: { data: FakeCustomValue[]; skipDuplicates?: boolean }) {
+          let count = 0
+          for (const d of data) {
+            const k = `${d.definitionId}|${d.objectId}`
+            if (values.has(k)) {
+              if (skipDuplicates) continue
+              throw new Error('Unique constraint failed on (definitionId, objectId)')
+            }
+            values.set(k, { definitionId: d.definitionId, objectId: d.objectId, valueText: d.valueText ?? null, valueNumber: d.valueNumber ?? null })
+            count++
+          }
+          return { count }
+        },
+        async deleteMany({ where }: { where: { objectId: string; definitionId: { in: string[] } } }) {
+          let count = 0
+          for (const [k, v] of values) {
+            if (v.objectId === where.objectId && where.definitionId.in.includes(v.definitionId)) {
+              values.delete(k)
+              count++
+            }
+          }
+          return { count }
+        },
       },
       async $transaction(ops: Array<Promise<unknown>>) {
         return Promise.all(ops)
@@ -314,6 +358,8 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
     batch,
     leads,
     writes,
+    fields,
+    values,
     db,
     // Leads per phone, for the "no homeowner twice" checks.
     duplicatePhones() {

@@ -407,6 +407,24 @@ describe("custom values on merge (Brief 41 review)", () => {
   });
 });
 
+describe("Mojo's property details update on a Mojo ID match (Brief 41.1, Ryan's decision)", () => {
+  it("the lead keeps its own name and status; the estimated value refreshes", async () => {
+    const def = await db.customFieldDefinition.create({ data: { organizationId: org, objectType: "lead", name: `${TAG} Estimated Value`, type: "number", displayOrder: 98 } });
+    const kept = await db.lead.create({
+      data: { organizationId: org, displayName: "Tess Owner", name: "Tess Owner", statusLabel: "Hot", mojoId: `${TAG}_tess`, primaryAddressFull: "6 Fir St, Brooklyn, NY 11201", primaryAddressSummary: "6 Fir St" },
+    });
+    await db.customFieldValue.create({ data: { organizationId: org, definitionId: def.id, objectType: "lead", objectId: kept.id, valueNumber: 1500000 } });
+    const before = await leadRow(kept.id);
+    const est = { column: "Est", sampleValues: [], target: { kind: "existing_custom_field" as const, definitionId: def.id }, confidence: 1, reasoning: "" };
+    const m = { mapping: [col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Status", "Lead.statusLabel"), est], likelyDuplicates: [] } as unknown as MappingProposal;
+    const res = await commitImport(await batchFor(`MojoID,Name,Status,Est\n${TAG}_tess,Raj Patel,Sold,1900000\n`), "merge", m, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(kept.id)).toEqual(before); // name, status, address kept
+    const v = await db.customFieldValue.findUniqueOrThrow({ where: { definitionId_objectId: { definitionId: def.id, objectId: kept.id } } });
+    expect(v.valueNumber).toBe(1900000);
+  });
+});
+
 describe("the status read never returns the raw file (Brief 41, M25c)", () => {
   it("has the counts and progress but no sourceBlob or mapping", async () => {
     const id = await batchFor("Phone\n212-555-0150\n");

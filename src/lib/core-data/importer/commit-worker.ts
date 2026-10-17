@@ -620,7 +620,10 @@ async function upsertRow(
       skipDuplicates: true,
     })
   }
-  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty ? 'overwrite' : 'fill', rowErrors)
+  // Ryan: "Yes, update property details". A Mojo ID match refreshes Mojo's
+  // property fields (estimated value and the like) even when the lead kept
+  // its own name and status; any other unconfirmed match only fills them in.
+  await writeCustomValues(db, organizationId, leadId, plan.customValues, existing.sameProperty || existing.by === 'mojo' ? 'overwrite' : 'fill', rowErrors)
   return { leadId, merged: true }
 }
 
