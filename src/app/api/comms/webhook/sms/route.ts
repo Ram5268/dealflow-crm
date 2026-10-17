@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
-import { verifyTwilioSignature } from '@/lib/comms/sms/twilio-client'
+import { signatureCheckSkipped, verifyTwilioSignature } from '@/lib/comms/sms/twilio-client'
 import { handleInboundSms, updateDeliveryState } from '@/lib/comms/sms/inbound'
 import { logger } from '@/lib/logger'
 
@@ -15,19 +15,27 @@ const twiml = () =>
 // an inbound message (STOP handled inside handleInboundSms). 200 TwiML when the
 // message is handled. Brief 41 (H12): if saving it or recording a STOP fails,
 // answer 500, never 200: a 200 told Twilio all was well and the opt-out was
-// lost. A redelivery is safe (the message is saved once per MessageSid).
+// lost. A redelivery is safe (the message is saved once per MessageSid); the
+// webhook URL's retry settings are in docs/10dlc-status.md.
+//
+// Brief 41.1 (F3): with no TWILIO_AUTH_TOKEN the check used to verify against
+// '', a key anyone has, so a forged STOP wrote a permanent opt-out. Now an
+// unset or empty token answers 503 until it's configured, and the local-mock
+// skip (TWILIO_MOCK_SKIP_SIGNATURE) is ignored in production.
 export async function POST(req: Request) {
   const rawBody = await req.text()
   const params = Object.fromEntries(new URLSearchParams(rawBody)) as Record<string, string>
 
-  const skipSig = process.env.TWILIO_MOCK_SKIP_SIGNATURE === 'true'
-  if (!skipSig) {
-    const ok = verifyTwilioSignature(
-      process.env.TWILIO_AUTH_TOKEN ?? '',
-      req.url,
-      params,
-      req.headers.get('x-twilio-signature'),
-    )
+  if (!signatureCheckSkipped()) {
+    if (process.env.TWILIO_MOCK_SKIP_SIGNATURE === 'true') {
+      logger.warn('sms webhook: TWILIO_MOCK_SKIP_SIGNATURE is ignored in production')
+    }
+    const authToken = process.env.TWILIO_AUTH_TOKEN?.trim()
+    if (!authToken) {
+      logger.error('sms webhook: TWILIO_AUTH_TOKEN is not set, so no request can be verified; answering 503 until it is configured')
+      return NextResponse.json({ error: 'sms_webhook_not_configured' }, { status: 503 })
+    }
+    const ok = verifyTwilioSignature(authToken, req.url, params, req.headers.get('x-twilio-signature'))
     if (!ok) return NextResponse.json({ error: 'invalid_signature' }, { status: 401 })
   }
 

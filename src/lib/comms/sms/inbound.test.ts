@@ -30,7 +30,7 @@ describe('handleInboundSms', () => {
       body: '  STOP ',
       messageSid: 'SM1',
     })
-    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222')
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'keyword', phrase: 'stop' })
     // Brief 41 (H12): the message is saved before the STOP write.
     expect(db.message.create.mock.invocationCallOrder[0]).toBeLessThan(stop.handleStop.mock.invocationCallOrder[0])
     expect(r).toEqual({ action: 'stop', messageId: 'm1' })
@@ -54,7 +54,7 @@ describe('handleInboundSms', () => {
     expect(db.message.findUnique).toHaveBeenCalledWith({ where: { providerMessageId: 'twilio:SM9' }, select: { id: true } })
     expect(db.message.create).not.toHaveBeenCalled()
     expect(events.notifyMessageReceived).not.toHaveBeenCalled()
-    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222')
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'keyword', phrase: 'stop' })
     expect(r).toEqual({ action: 'stop', messageId: 'm-existing' })
   })
 
@@ -106,12 +106,56 @@ describe('handleInboundSms', () => {
     db.contactPhone.findFirst.mockResolvedValue(null)
     await handleInboundSms({ orgId: 'o', from: '(917) 331-2047', to: '+15550000000', body: 'STOP', messageSid: 'SM8' })
     expect(db.contactPhone.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: '+19173312047', contact: { organizationId: 'o' } } }))
-    expect(stop.handleStop).toHaveBeenCalledWith('o', '+19173312047')
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+19173312047', { kind: 'keyword', phrase: 'stop' })
   })
 
   it('recognizes UNSUBSCRIBE / CANCEL as opt-out', async () => {
     db.contactPhone.findFirst.mockResolvedValue(null)
-    expect((await handleInboundSms({ orgId: 'o', from: '+1', to: '+2', body: 'unsubscribe', messageSid: 'a' })).action).toBe('stop')
-    expect((await handleInboundSms({ orgId: 'o', from: '+1', to: '+2', body: 'CANCEL', messageSid: 'b' })).action).toBe('stop')
+    expect((await handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+2', body: 'unsubscribe', messageSid: 'a' })).action).toBe('stop')
+    expect((await handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+2', body: 'CANCEL', messageSid: 'b' })).action).toBe('stop')
+  })
+
+  // Brief 41.1 (F5): the text is lowercased, punctuation stripped and spaces
+  // collapsed before matching, and the keyword set covers the FCC's revocation
+  // words (revoke, opt out). "STOP." used to be saved as an ordinary message.
+  const sms = (body: string) => handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+15550000000', body, messageSid: `SM-${body}` })
+  it.each([
+    'STOP', 'stop', 'Stop', 'stop.', 'STOP!', ' Stop \n', 'STOP!!!', '"stop"',
+    'STOPALL', 'stop all', 'Stop All', 'UNSUBSCRIBE', 'cancel', 'END', 'quit', 'Quit.',
+    'REVOKE', 'opt out', 'Opt Out', 'OPTOUT', 'opt-out', 'Opt-Out!', 'OPT - OUT',
+    'remove me', 'Remove me.', 'do not text', 'DO NOT TEXT!', "don't text", 'Don’t text', 'dont text',
+    'Donʼt text', 'Don＇t text', 'Don´t text', 'Don′t text', 'ＳＴＯＰ', 'Ｓｔｏｐ！',
+  ])('the keyword %j opts the sender out', async (body) => {
+    expect((await sms(body)).action).toBe('stop')
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'keyword', phrase: expect.any(String) })
+  })
+
+  // A longer message that contains one of those phrases opts out too: treating
+  // a maybe as an opt-out is the safe side. It's marked as a phrase match so the
+  // inbox can show it for review later.
+  it.each([
+    'please stop texting me', 'Stop texting me!', 'stop please', 'STOP. Wrong number',
+    'Please remove me from your list', 'I want to opt out', 'opt-out please', 'Unsubscribe me',
+    "Don't text this number again", 'do not text me again', 'I revoke my consent', 'Can you stop by Tuesday?',
+  ])('the longer message %j opts the sender out as a phrase match', async (body) => {
+    expect((await sms(body)).action).toBe('stop')
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'phrase', phrase: expect.any(String) })
+  })
+
+  // A short code or a sender name can't be put on the opt-out list; failing
+  // would only make Twilio retry. The text is still saved.
+  it.each(['22395', 'DEALFLOW', ''])('opt-out wording from the non-phone sender %j is saved as a message, no opt-out', async (from) => {
+    const r = await handleInboundSms({ orgId: 'o', from, to: '+15550000000', body: 'STOP', messageSid: `SM-np-${from}` })
+    expect(r).toEqual({ action: 'message', messageId: 'm1' })
+    expect(db.message.create).toHaveBeenCalledOnce()
+    expect(stop.handleStop).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'is it still available?', 'I stopped by yesterday', 'Sending the docs now', 'great weekend',
+    'unstoppable', 'endless options', 'cancellation policy?', 'opt in', 'quite nice', 'remove', '', '   ', '?!',
+  ])('the ordinary message %j is not an opt-out', async (body) => {
+    expect((await sms(body)).action).toBe('message')
+    expect(stop.handleStop).not.toHaveBeenCalled()
   })
 })

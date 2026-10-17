@@ -2,6 +2,7 @@ import { prisma } from '../../prisma'
 import { logger } from '../../logger'
 import { toE164 } from '../../shared/phone'
 import { notifyMessageReceived } from '../events'
+import { classifyOptOut } from './opt-out'
 import { handleStop } from './stop-handler'
 
 /**
@@ -13,8 +14,10 @@ import { handleStop } from './stop-handler'
  * (a redelivery finds it by providerMessageId instead of failing or
  * duplicating), and the STOP write is in-process and throws on failure so the
  * webhook answers non-2xx.
+ *
+ * Brief 41.1 (F5): what counts as an opt-out is in ./opt-out.ts (normalized
+ * text, the FCC's revocation words, and longer messages that contain one).
  */
-const STOP_RE = /^(stop|stopall|unsubscribe|cancel|end|quit)$/i
 
 export interface InboundSms {
   orgId: string
@@ -31,7 +34,7 @@ export interface InboundResult {
 }
 
 export async function handleInboundSms(input: InboundSms): Promise<InboundResult> {
-  const isStop = STOP_RE.test(input.body.trim())
+  const optOut = classifyOptOut(input.body)
   const from = toE164(input.from) ?? input.from
   const providerMessageId = `twilio:${input.messageSid}`
 
@@ -90,9 +93,24 @@ export async function handleInboundSms(input: InboundSms): Promise<InboundResult
 
   // 2. STOP → internal DNC. Legally required: a failure throws, so the webhook
   // answers non-2xx rather than losing the opt-out.
-  if (isStop) await handleStop(input.orgId, from)
+  // A sender that isn't a phone number (a short code or a name) can't be put
+  // on the opt-out list, and failing here would only make Twilio retry.
+  if (optOut && !toE164(input.from)) {
+    logger.warn({ messageId, kind: optOut.kind }, 'sms inbound: opt-out wording from a sender that is not a phone number; nothing to add')
+    return { action: 'message', messageId }
+  }
+  if (optOut) {
+    // An opt-out phrase inside a longer message is logged apart from a plain
+    // keyword, so it can be found for review (never the body or the number).
+    if (optOut.kind === 'phrase') {
+      logger.warn({ messageId, phrase: optOut.phrase }, 'sms inbound: opt-out phrase inside a longer message; added to the opt-out list')
+    } else {
+      logger.info({ messageId, keyword: optOut.phrase }, 'sms inbound: opt-out keyword')
+    }
+    await handleStop(input.orgId, from, optOut)
+  }
 
-  return { action: isStop ? 'stop' : 'message', messageId }
+  return { action: optOut ? 'stop' : 'message', messageId }
 }
 
 /**

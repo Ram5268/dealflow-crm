@@ -9,9 +9,11 @@ import type { ImportCommitJob } from './enqueue'
 export async function startImportWorker(): Promise<void> {
   const boss = await getBoss()
   await boss.work<ImportCommitJob>(QUEUES.importCommit, async ([job]) => {
-    const { importBatchId, duplicateStrategy, mapping, correlationId } = job.data
+    const { importBatchId, duplicateStrategy, mapping, correlationId, runId } = job.data
+    // A retried job keeps its run id, so it does nothing once that run has
+    // stopped (failed) or a newer run holds the import (Brief 41.1).
     await runWithCorrelationId(correlationId, () =>
-      commitImport(importBatchId, duplicateStrategy, mapping, correlationId)
+      commitImport(importBatchId, duplicateStrategy, mapping, correlationId, { runId })
     )
     logger.info({ importBatchId }, 'import.commit job done')
   })

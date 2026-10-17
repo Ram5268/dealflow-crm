@@ -17,9 +17,9 @@ import { assertTestDatabase, scriptArgs } from '../src/lib/shared/db-guard'
  * Dev-only. Tear down before running any gate: the e2e suite asserts exact row
  * counts and carries a residue check.
  */
-// Brief 41 (H11): seeds and deletes fixture rows; refuses a live
-// DATABASE_URL_MAIN unless run with --i-mean-live.
-assertTestDatabase(process.env.DATABASE_URL_MAIN, '_agentf-visual-seed (DATABASE_URL_MAIN)', { allowOverride: true })
+// Brief 41 (H11) + 41.1: seeds and deletes fake fixture rows, so it only ever
+// runs on a *_perf / *_test database. No --i-mean-live override.
+assertTestDatabase(process.env.DATABASE_URL_MAIN, '_agentf-visual-seed (DATABASE_URL_MAIN)', { allowOverride: false })
 
 const prisma = new PrismaClient()
 const TAG = 'AGENT_F_VISUAL'
@@ -198,12 +198,12 @@ async function down() {
   )
 }
 
-// Brief 41: the command is read without --i-mean-live, so "--i-mean-live down"
-// cleans up instead of seeding. It must be given: anything but up/down
-// (including nothing) is refused, so a slip never seeds.
+// Brief 41: the command must be given: anything but up/down (including
+// nothing) is refused, so a slip never seeds. (A stray --i-mean-live is
+// skipped when reading it; it unlocks nothing.)
 const cmd = scriptArgs()[0]
 if (cmd !== 'up' && cmd !== 'down') {
-  console.error(`usage: _agentf-visual-seed.ts up|down [--i-mean-live] (got ${cmd ? `"${cmd}"` : 'nothing'})`)
+  console.error(`usage: _agentf-visual-seed.ts up|down (got ${cmd ? `"${cmd}"` : 'nothing'})`)
   process.exit(1)
 }
 void (cmd === 'down' ? down() : up())

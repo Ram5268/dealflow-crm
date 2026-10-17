@@ -3,7 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { prismaPerf } from "./setup/pg";
 import { putObject } from "@/lib/core-data/importer/storage";
 import { commitImport } from "@/lib/core-data/importer/commit-worker";
-import { claimImportCommit, getImportStatus } from "@/lib/core-data/importer/batch";
+import { claimImportCommit, getImportStatus, heldBy, importRunOf, mappingKey, type CommitClaim } from "@/lib/core-data/importer/batch";
 import type { MappingProposal } from "@/lib/core-data/importer/ai-mapping";
 import type { EmitResult } from "@/lib/core-data/events/emit";
 
@@ -31,6 +31,11 @@ const MOJO_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Phone", "ContactPh
 const MOJO_ADDR_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"));
 const NAME_ADDR_PHONE = mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"));
 const NAME_ADDR = mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"));
+const NAME_PHONE = mapping(col("Name", "Lead.name"), col("Phone", "ContactPhone.phone"));
+const MOJO_NAME_ADDR_PHONE = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"));
+// Brief 41.1: a claim starts a run; the commit gets its id.
+const runIdOf = (c: CommitClaim) => (c.claimed ? c.runId : undefined);
+const inAMinute = { now: () => Date.now() + 61_000 };
 
 async function batchFor(csv: string, status = "importing"): Promise<string> {
   const b = await db.importBatch.create({
@@ -214,7 +219,7 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const claims = await Promise.all([1, 2, 3].map(() => claimImportCommit(db, id, org, PHONE_ONLY)));
     expect(claims.filter((c) => c.claimed)).toHaveLength(1);
     expect(claims.filter((c) => !c.claimed)).toEqual([{ claimed: false, status: "importing" }, { claimed: false, status: "importing" }]);
-    await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
+    await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, runId: claims.map(runIdOf).find(Boolean) });
     expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: false, status: "completed" });
     expect(await claimImportCommit(db, "ib_missing", org, PHONE_ONLY)).toEqual({ claimed: false, status: null });
   });
@@ -227,7 +232,7 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const after = await db.importBatch.findUniqueOrThrow({ where: { id: b.id } });
     expect(after.status).toBe("failed");
     expect(JSON.stringify(after.errorLog)).toMatch(/no stored bytes/);
-    expect(await claimImportCommit(db, b.id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    expect(await claimImportCommit(db, b.id, org, PHONE_ONLY)).toMatchObject({ claimed: true });
   });
 
   it("an import that runs out of time stops, is marked failed, and a re-run continues where it stopped", async () => {
@@ -243,12 +248,13 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     expect(doneFirst).toBeGreaterThan(0);
     expect(doneFirst).toBeLessThan(6);
     // Re-run with the same mapping: it keeps the counts and only does the rest.
-    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    const claim = await claimImportCommit(db, id, org, PHONE_ONLY);
+    expect(claim).toMatchObject({ claimed: true });
     const claimed = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(claimed.importedRows).toBe(doneFirst);
     let emits = 0;
     const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
-    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db });
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db, runId: runIdOf(claim) });
     expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 0, errorRows: 0 });
     expect(emits).toBe(6 - doneFirst);
     for (let k = 0; k < 6; k++) expect(await leadsWithPhone(`+121255502${String(k).padStart(2, "0")}`)).toHaveLength(1);
@@ -273,11 +279,12 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
       { column: "Notes", sampleValues: ["note 3"], target: { kind: "existing_custom_field", definitionId: def.id }, confidence: 0.9, reasoning: "Matches the existing Notes field." },
       { column: "Phone", sampleValues: ["212-555-0401"], target: { kind: "standard_field", field: "ContactPhone.phone" }, confidence: 0.95, reasoning: "Phone numbers." },
     ], likelyDuplicates: [] } as unknown as MappingProposal;
-    expect(await claimImportCommit(db, id, org, again)).toEqual({ claimed: true });
+    const claim = await claimImportCommit(db, id, org, again);
+    expect(claim).toMatchObject({ claimed: true });
     expect((await db.importBatch.findUniqueOrThrow({ where: { id } })).importedRows).toBe(doneFirst);
     let emits = 0;
     const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
-    const res = await commitImport(id, "merge", again, "c", { emit: counting, db });
+    const res = await commitImport(id, "merge", again, "c", { emit: counting, db, runId: runIdOf(claim) });
     expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 0, errorRows: 0 });
     expect(emits).toBe(6 - doneFirst);
     for (let k = 0; k < 6; k++) {
@@ -297,10 +304,11 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     // The shared-phone group stopped after its first row; row 5 finished.
     expect(stopped).toMatchObject({ importedRows: 2, duplicateRows: 0 });
     expect(JSON.stringify(stopped.errorLog)).toContain('"resume":{"next":2,"partial":[[0,1]]}');
-    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
+    const claim = await claimImportCommit(db, id, org, PHONE_ONLY);
+    expect(claim).toMatchObject({ claimed: true });
     let emits = 0;
     const counting = async () => { emits++; return { overflow: false, bytes: 0 } as EmitResult; };
-    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db });
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit: counting, db, runId: runIdOf(claim) });
     // Exactly the 4 rows not yet done: 3 more of the group (merged) and row 6.
     expect(emits).toBe(4);
     expect(res).toMatchObject({ totalRows: 6, importedRows: 6, duplicateRows: 3, errorRows: 0 });
@@ -312,10 +320,11 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     let t = 0;
     await expect(commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, now: () => (t += 1000), timeLimitMs: 1_500 })).rejects.toThrow(/time limit/);
     const other = mapping(col("Phone", "ContactPhone.phone"), col("Name", "Contact.name"));
-    expect(await claimImportCommit(db, id, org, other)).toEqual({ claimed: true });
+    const claim = await claimImportCommit(db, id, org, other);
+    expect(claim).toMatchObject({ claimed: true });
     const fresh = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(fresh.importedRows).toBe(0);
-    const res = await commitImport(id, "merge", other, "c", { emit, db });
+    const res = await commitImport(id, "merge", other, "c", { emit, db, runId: runIdOf(claim) });
     expect(res).toMatchObject({ totalRows: 3, importedRows: 3 });
     for (const n of ["+12125550210", "+12125550211", "+12125550212"]) expect(await leadsWithPhone(n)).toHaveLength(1);
   });
@@ -346,14 +355,19 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
     const stopped = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(stopped.status).toBe("failed");
     expect(stopped.importedRows).toBe(2); // both rows were counted (one's event never went out)
-    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toEqual({ claimed: true });
-    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
+    // Brief 41.1: the stopped run may still be finishing a row, so a re-run
+    // waits a minute after a "stopped responding" failure.
+    expect(await claimImportCommit(db, id, org, PHONE_ONLY)).toMatchObject({ claimed: false, status: "failed", retryInSeconds: expect.any(Number) });
+    const claim = await claimImportCommit(db, id, org, PHONE_ONLY, inAMinute);
+    expect(claim).toMatchObject({ claimed: true });
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, runId: runIdOf(claim) });
     expect(res).toMatchObject({ totalRows: 2, importedRows: 2, duplicateRows: 0, errorRows: 0 });
     for (const n of ["+12125550230", "+12125550231"]) expect(await leadsWithPhone(n)).toHaveLength(1);
   }, 60_000);
 
   it("the watchdog also covers a hang before any row (reading the batch or the file)", async () => {
-    const id = await batchFor("Phone\n212-555-0221\n");
+    const id = await batchFor("Phone\n212-555-0221\n", "mapping_review");
+    const claim = await claimImportCommit(db, id, org, PHONE_ONLY);
     const stuck = new Proxy(db, {
       get(target, prop) {
         const v = Reflect.get(target, prop);
@@ -361,7 +375,7 @@ describe("the commit is claimed once, marked on failure, and never re-run (Brief
         return new Proxy(v, { get: (d, p) => (p === "findUniqueOrThrow" ? () => new Promise(() => {}) : Reflect.get(d, p)) });
       },
     }) as PrismaClient;
-    void commitImport(id, "merge", PHONE_ONLY, "c", { emit, db: stuck, watchdogMs: 300 }).catch(() => {});
+    void commitImport(id, "merge", PHONE_ONLY, "c", { emit, db: stuck, watchdogMs: 300, runId: runIdOf(claim) }).catch(() => {});
     await new Promise((r) => setTimeout(r, 3_000));
     const b = await db.importBatch.findUniqueOrThrow({ where: { id } });
     expect(b.status).toBe("failed");
@@ -393,15 +407,170 @@ describe("custom values on merge (Brief 41 review)", () => {
   });
 });
 
+describe("Mojo's property details update on a Mojo ID match (Brief 41.1, Ryan's decision)", () => {
+  it("the lead keeps its own name and status; the estimated value refreshes", async () => {
+    const def = await db.customFieldDefinition.create({ data: { organizationId: org, objectType: "lead", name: `${TAG} Estimated Value`, type: "number", displayOrder: 98 } });
+    const kept = await db.lead.create({
+      data: { organizationId: org, displayName: "Tess Owner", name: "Tess Owner", statusLabel: "Hot", mojoId: `${TAG}_tess`, primaryAddressFull: "6 Fir St, Brooklyn, NY 11201", primaryAddressSummary: "6 Fir St" },
+    });
+    await db.customFieldValue.create({ data: { organizationId: org, definitionId: def.id, objectType: "lead", objectId: kept.id, valueNumber: 1500000 } });
+    const before = await leadRow(kept.id);
+    const est = { column: "Est", sampleValues: [], target: { kind: "existing_custom_field" as const, definitionId: def.id }, confidence: 1, reasoning: "" };
+    const m = { mapping: [col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Status", "Lead.statusLabel"), est], likelyDuplicates: [] } as unknown as MappingProposal;
+    const res = await commitImport(await batchFor(`MojoID,Name,Status,Est\n${TAG}_tess,Raj Patel,Sold,1900000\n`), "merge", m, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(kept.id)).toEqual(before); // name, status, address kept
+    const v = await db.customFieldValue.findUniqueOrThrow({ where: { definitionId_objectId: { definitionId: def.id, objectId: kept.id } } });
+    expect(v.valueNumber).toBe(1900000);
+  });
+});
+
 describe("the status read never returns the raw file (Brief 41, M25c)", () => {
   it("has the counts and progress but no sourceBlob or mapping", async () => {
     const id = await batchFor("Phone\n212-555-0150\n");
     await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db });
     const status = await getImportStatus(db, id, org);
-    expect(status).toMatchObject({ id, status: "completed", totalRows: 1, importedRows: 1, progress: 100 });
+    expect(status).toMatchObject({ id, status: "completed", totalRows: 1, importedRows: 1, progress: 100, stalled: false, retryInSeconds: 0 });
     expect(status).not.toHaveProperty("sourceBlob");
     expect(status).not.toHaveProperty("mappingJson");
     expect(JSON.stringify(status).length).toBeLessThan(2_000);
     expect(await getImportStatus(db, id, "org_other")).toBeNull();
+  });
+});
+
+describe("each run writes only while it holds the import (Brief 41.1, F1)", () => {
+  it("Postgres applies the run filters: another run's writes and commit change nothing", async () => {
+    const id = await batchFor("Phone\n212-555-0520\n", "mapping_review");
+    const claim = await claimImportCommit(db, id, org, PHONE_ONLY);
+    expect(claim).toMatchObject({ claimed: true, runId: expect.any(String) });
+    const runId = runIdOf(claim)!;
+    expect(importRunOf((await db.importBatch.findUniqueOrThrow({ where: { id } })).mappingJson)?.id).toBe(runId);
+    // The JSON path filter on the run id, as every run write uses it.
+    expect((await db.importBatch.updateMany({ where: heldBy(id, "another-run", ["importing", "failed"]), data: { totalRows: 99 } })).count).toBe(0);
+    expect((await db.importBatch.updateMany({ where: heldBy(id, runId), data: { totalRows: 1 } })).count).toBe(1);
+    await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, runId: "another-run" });
+    expect(await leadsWithPhone("+12125550520")).toHaveLength(0);
+    expect((await db.importBatch.findUniqueOrThrow({ where: { id } })).status).toBe("importing");
+    const res = await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, runId });
+    expect(res).toMatchObject({ totalRows: 1, importedRows: 1 });
+    expect((await db.importBatch.findUniqueOrThrow({ where: { id } })).status).toBe("completed");
+  });
+
+  it("an import stuck at 'importing' with no progress for 10 minutes is claimed again once, from row 1", async () => {
+    const id = await batchFor("Phone\n212-555-0521\n");
+    const dead = { ...PHONE_ONLY, importRun: { id: "dead-run", beatAt: new Date(Date.now() - 11 * 60_000).toISOString() } };
+    await db.importBatch.update({
+      where: { id },
+      data: { mappingJson: dead, importedRows: 1, errorLog: [{ row: 0, message: "Import stopped: x", resume: { next: 1, partial: [] }, mappingKey: mappingKey(PHONE_ONLY) }] },
+    });
+    expect(await getImportStatus(db, id, org)).toMatchObject({ status: "importing", stalled: true });
+    // Compare-and-set on the whole stored mapping (with the dead run's heartbeat).
+    const claims = await Promise.all([1, 2, 3].map(() => claimImportCommit(db, id, org, PHONE_ONLY)));
+    expect(claims.filter((c) => c.claimed)).toHaveLength(1);
+    const after = await db.importBatch.findUniqueOrThrow({ where: { id } });
+    expect(after).toMatchObject({ status: "importing", importedRows: 0, errorLog: [] });
+    expect(importRunOf(after.mappingJson)?.id).toBe(claims.map(runIdOf).find(Boolean));
+    await commitImport(id, "merge", PHONE_ONLY, "c", { emit, db, runId: "dead-run" }); // the dead run wakes up: nothing
+    expect(await leadsWithPhone("+12125550521")).toHaveLength(0);
+    expect(await getImportStatus(db, id, org)).toMatchObject({ status: "importing", stalled: false });
+  });
+
+  it("a stuck import claimed before run ids existed (no mapping stored) counts from its upload", async () => {
+    const b = await db.importBatch.create({
+      data: { organizationId: org, userId, sourceLabel: TAG, filename: "x.csv", storageKey: "pending", status: "importing", createdAt: new Date(Date.now() - 11 * 60_000) },
+    });
+    expect(await claimImportCommit(db, b.id, org, PHONE_ONLY)).toMatchObject({ claimed: true });
+  });
+});
+
+describe("a phone match whose names disagree is another person (Brief 41.1, F10)", () => {
+  const seedNamed = (name: string, phone: string, extra: { address?: string; contacts?: string[] } = {}) =>
+    db.lead.create({
+      data: {
+        organizationId: org, displayName: name, name: name === "Imported Lead" ? null : name,
+        primaryAddressFull: extra.address ?? null, primaryAddressSummary: extra.address?.split(",")[0] ?? null,
+        contacts: {
+          create: [
+            { organizationId: org, displayName: name, phones: { create: { phone, type: "mobile", isPrimary: true } } },
+            ...(extra.contacts ?? []).map((c) => ({ organizationId: org, displayName: c, name: c })),
+          ],
+        },
+      },
+    });
+
+  it("Bob's row doesn't give Alice his address and Mojo ID: it becomes his own lead", async () => {
+    const alice = await seedNamed("Alice Conflict", "+12125550501");
+    const res = await commitImport(await batchFor(`MojoID,Name,Address,Phone\n${TAG}_bob,Bob Conflict,5 Oak St,212-555-0501\n`), "merge", MOJO_NAME_ADDR_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 0 });
+    expect(await leadRow(alice.id)).toMatchObject({ name: "Alice Conflict", displayName: "Alice Conflict", primaryAddressFull: null, mojoId: null });
+    expect(await db.lead.findFirstOrThrow({ where: { organizationId: org, mojoId: `${TAG}_bob` } })).toMatchObject({ name: "Bob Conflict", primaryAddressFull: "5 Oak St" });
+    expect(await leadsWithPhone("+12125550501")).toHaveLength(2);
+  });
+
+  it("the same person spelled another way still merges and fills the blank address", async () => {
+    const hank = await seedNamed("Hank Owner", "+12125550502");
+    const res = await commitImport(await batchFor("Name,Address,Phone\n\"OWNER, Hank J.\",7 Ash St,212-555-0502\n"), "merge", NAME_ADDR_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(hank.id)).toMatchObject({ name: "Hank Owner", primaryAddressFull: "7 Ash St" });
+  });
+
+  it("a lead with no real name ('Imported Lead') takes the row's name", async () => {
+    const unnamed = await seedNamed("Imported Lead", "+12125550503");
+    const res = await commitImport(await batchFor("Name,Phone\nIvy Owner,212-555-0503\n"), "merge", NAME_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(unnamed.id)).toMatchObject({ name: "Ivy Owner", displayName: "Ivy Owner" });
+  });
+
+  it("a co-owner listed on the lead is the same household: merges", async () => {
+    const jack = await seedNamed("Jack Owner", "+12125550504", { contacts: ["Jill Owner"] });
+    const res = await commitImport(await batchFor("Name,Phone\nJill Owner,212-555-0504\n"), "merge", NAME_PHONE, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadsWithPhone("+12125550504")).toEqual([expect.objectContaining({ id: jack.id })]);
+  });
+
+  it("the same street with another person's name on the phone: one lead, which only gets its blanks filled (Ryan's decision)", async () => {
+    await seedLead("gina", { name: "Kim Owner", address: "8 Birch St, Brooklyn, NY 11201", status: "Hot", mojoId: null, phone: "+12125550505" });
+    const before = await leadRow(lead.gina);
+    const m = mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"), col("Status", "Lead.statusLabel"));
+    const csv = `MojoID,Name,Address,Phone,Status\n${TAG}_lee,Lee Other,8 Birch Street,212-555-0505,Cold\n`;
+    const res = await commitImport(await batchFor(csv), "merge", m, "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadsWithPhone("+12125550505")).toHaveLength(1);
+    // Never renamed, its status and address kept; the blank Mojo ID filled.
+    expect(await leadRow(lead.gina)).toEqual({ ...before, mojoId: `${TAG}_lee` });
+    // "Keep my name for good": the same file again now matches by Mojo ID and
+    // still only fills blanks.
+    expect(await commitImport(await batchFor(csv), "merge", m, "c", { emit, db })).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadRow(lead.gina)).toEqual({ ...before, mojoId: `${TAG}_lee` });
+  });
+});
+
+describe("another unit or a suffix word is another property (Brief 41.1, F10)", () => {
+  const cases: Array<[string, string, string]> = [
+    ["unit #3 vs Apt 4", "361 Degraw St # 3, Brooklyn, NY 11217", "361 Degraw St Apt 4, Brooklyn"],
+    ["a street vs its Extension", "12 Main St Extension, Brooklyn, NY", "12 Main St"],
+    ["bare unit 4B vs 5A", "123 Main St 4B, Brooklyn, NY", "123 Main St 5A, Brooklyn, NY"],
+  ];
+  cases.forEach(([why, stored, incoming], k) => {
+    it(`${why}: a new lead; the stored one is untouched`, async () => {
+      const phone = `+121255505${String(10 + k)}`;
+      await seedLead("gina", { name: `Mona Owner ${k}`, address: stored, status: "Hot", mojoId: null, phone });
+      const before = await leadRow(lead.gina);
+      const csv = `Name,Address,Phone\nMona Owner ${k},${incoming.includes(",") ? `"${incoming}"` : incoming},${phone.slice(2)}\n`;
+      const res = await commitImport(await batchFor(csv), "merge", NAME_ADDR_PHONE, "c", { emit, db });
+      expect(res).toMatchObject({ importedRows: 1, duplicateRows: 0 });
+      expect(await leadRow(lead.gina)).toEqual(before);
+      expect(await leadsWithPhone(phone)).toHaveLength(2);
+    });
+  });
+
+  it("a stored line with no street name (\"12, Brooklyn, NY\") counts as blank: the same owner fills it in", async () => {
+    const phone = "+12125550519";
+    await seedLead("gina", { name: "Nora Owner", address: "12, Brooklyn, NY", status: "Hot", mojoId: null, phone });
+    const res = await commitImport(await batchFor(`Name,Address,Phone,Status\nNora Owner,12 Main St,${phone.slice(2)},Cold\n`), "merge", mapping(col("Name", "Lead.name"), col("Address", "Lead.primaryAddressFull"), col("Phone", "ContactPhone.phone"), col("Status", "Lead.statusLabel")), "c", { emit, db });
+    expect(res).toMatchObject({ importedRows: 1, duplicateRows: 1 });
+    expect(await leadsWithPhone(phone)).toHaveLength(1);
+    // A fill-only merge: the address is filled in; the status isn't changed.
+    expect(await leadRow(lead.gina)).toMatchObject({ name: "Nora Owner", primaryAddressFull: "12 Main St", statusLabel: "Hot" });
   });
 });
