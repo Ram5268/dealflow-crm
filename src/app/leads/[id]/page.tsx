@@ -17,6 +17,8 @@ import { getLeadProperty } from '@/lib/core-data/dealflow-sync/property-lookup'
 import { PropertyValueCard } from './PropertyValueCard'
 import { captureLabel, reasonText, timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { MatchingBuyers } from './MatchingBuyers'
+import { getLeadMemberships } from '@/lib/core-data/lists/memberships'
+import { LeadMembershipRows } from '@/components/lists/LeadMembershipRows'
 
 export const dynamic = 'force-dynamic'
 
@@ -53,6 +55,11 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     include: { contacts: { include: { phones: true, emails: true } } },
   })
   if (!lead) notFound()
+  // Brief 45 (PR C): the lead's lists and groups, for the card's chips. Started
+  // here so it runs alongside the reads below; awaited after them. The catch
+  // only keeps it from going unhandled if one of those fails first.
+  const memberships = getLeadMemberships(organizationId, id)
+  memberships.catch(() => {})
 
   const [customFields, activities, sequences, buyers, property] = await Promise.all([
     hydrateCustomFields(id),
@@ -68,9 +75,12 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   // Brief 38: the sync fills Contact.timezone, so show the primary contact's
   // zone (then the lead's). A blank stays blank rather than guessing Eastern.
   const timezone = pickPrimaryContact(lead.contacts)?.timezone ?? lead.timezone
+  const { lists, groupIds } = await memberships
 
   return (
-    <div className="flex h-full flex-col">
+    // Brief 45 (PR C): this page is the lead's contact card, so keys 1–9
+    // toggle its groups whenever you're not typing (GroupChips).
+    <div className="flex h-full flex-col" data-contact-card="page">
       {/* Header — identity + quick actions */}
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0 flex-1">
@@ -86,6 +96,9 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           {lead.primaryAddressFull && (
             <p className="mt-0.5 truncate text-sm text-muted">{lead.primaryAddressFull}</p>
           )}
+          {/* Brief 45 (PR C): "Groups:" chips (one click on, one click off)
+              and "Lists:" chips linking to each list [brief §5.3]. */}
+          <LeadMembershipRows key={lead.id} leadId={lead.id} groupIds={groupIds} lists={lists} />
         </div>
 
         <div className="flex shrink-0 items-start gap-2">

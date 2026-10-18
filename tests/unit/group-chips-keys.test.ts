@@ -8,7 +8,7 @@ import {
   type ChipKeyContext,
   type ChipKeyInput,
 } from '@/components/lists/chip-keys'
-import { GROUPS as SHORTCUT_GROUPS } from '@/components/shell/ShortcutsSheet'
+import { SHORTCUT_GROUPS } from '@/components/shell/ShortcutsSheet'
 
 // Brief 45 PR C — keys 1–9 toggle the first nine groups while the contact card
 // has focus [brief §5.3]. Bare digits are used because nothing else in the CRM
@@ -42,9 +42,13 @@ describe('which chip a key toggles', () => {
   })
 
   it('leaves chords alone (⌘1–9 and Ctrl+1–9 switch browser tabs)', () => {
-    for (const mod of ['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const) {
+    for (const mod of ['metaKey', 'ctrlKey', 'altKey'] as const) {
       expect(chipKeyIndex(key('1', { [mod]: true }), IN_CARD)).toBeNull()
     }
+    // Shift is not a chord here: a US keyboard types "!" with Shift+1 (no
+    // match), and layouts such as AZERTY need Shift to type a digit at all.
+    expect(chipKeyIndex(key('!', { code: 'Digit1', shiftKey: true }), IN_CARD)).toBeNull()
+    expect(chipKeyIndex(key('1', { code: 'Digit1', shiftKey: true }), IN_CARD)).toBe(0)
   })
 
   it('ignores a held-down key, typing in an IME, and keys something else already handled', () => {

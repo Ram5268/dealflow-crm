@@ -3,15 +3,12 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
 import {
   Badge,
   Button,
   DataTable,
-  DropdownContent,
   DropdownItem,
-  DropdownRoot,
-  DropdownTrigger,
   EmptyState,
   Input,
   Select,
@@ -24,6 +21,10 @@ import type { AppliedGroup, AppliedSort, LeadRow } from '@/lib/leads/list'
 import { cn } from '@/lib/ui/cn'
 import { groupColorStyle } from '@/lib/ui/groupColors'
 import { formatCount, rankedHeadline } from '@/components/lists/format'
+import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
+import { SelectAllMatching } from '@/components/lists/SelectAllMatching'
+import { selectAllOffer } from '@/components/lists/bulk-actions'
+import { allLeadsExportUrl, getAllLeadIds } from '@/lib/core-data/lists/client'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -145,6 +146,21 @@ export function LeadsView({
     URL.revokeObjectURL(url)
     toast({ title: `Exported ${chosen.length} lead${chosen.length === 1 ? '' : 's'}` })
   }, [rows, selected, toast])
+
+  // Brief 45 (PR C): "Select all N matching" reaches past this page through the
+  // all-leads `ids=1` call, which knows the search box but not Smart Views, so
+  // it's offered only without a Smart View.
+  const pageIds = rows.map((r) => r.id)
+  const everyoneSelected = !viewId && selectAllOffer({ pageIds, selected, total }).kind === 'all'
+  const exportForMenu = useCallback(() => {
+    if (!everyoneSelected) return exportSelected()
+    // Everyone matching is selected, most of them not on this page: the
+    // ranked CSV of all of them (no phones or emails, like this export).
+    const a = document.createElement('a')
+    a.href = allLeadsExportUrl({ q: q || undefined })
+    a.click()
+    toast({ title: `Exporting all ${selected.size.toLocaleString('en-US')} matching leads` })
+  }, [everyoneSelected, exportSelected, q, selected, toast])
 
   const columns: Column<LeadRow>[] = [
     // Brief 45: in rank order, each person's place in All leads (the same
@@ -270,12 +286,11 @@ export function LeadsView({
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 && (
             <>
-              <span className="text-sm text-muted">{selected.size} selected</span>
-              <DropdownRoot>
-                <DropdownTrigger asChild>
-                  <Button size="sm">Bulk actions</Button>
-                </DropdownTrigger>
-                <DropdownContent>
+              <span className="text-sm text-muted">{selected.size.toLocaleString('en-US')} selected</span>
+              {/* Brief 45 (PR C): Add to group · Remove from group · Add to list
+                  · Export CSV [brief §5.4]. Organization only; nothing here
+                  contacts anyone. */}
+              <BulkActionsMenu leadIds={[...selected]} onDone={() => router.refresh()} onExport={exportForMenu}>
                   {/* Sequences ship in M4; the entry is visible but inert so the
                       menu shape does not change when it goes live. */}
                   <Tooltip content={sequencesOffReason ? null : 'Sequences ship in M4'} side="left">
@@ -296,14 +311,7 @@ export function LeadsView({
                       {sequencesOffReason}
                     </p>
                   )}
-                  <DropdownItem onSelect={exportSelected}>
-                    <span className="flex items-center gap-2">
-                      <Download size={13} className="text-subtle" />
-                      Export CSV
-                    </span>
-                  </DropdownItem>
-                </DropdownContent>
-              </DropdownRoot>
+              </BulkActionsMenu>
             </>
           )}
           <span className="text-sm text-subtle" aria-live="polite">
@@ -316,6 +324,16 @@ export function LeadsView({
           )}
         </div>
       </div>
+
+      {!viewId && (
+        <SelectAllMatching
+          pageIds={pageIds}
+          selected={selected}
+          total={total}
+          onSelect={setSelected}
+          loadAll={() => getAllLeadIds({ q: q || undefined })}
+        />
+      )}
 
       {groupError && (
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">

@@ -1,6 +1,7 @@
 'use client'
 
 import { Kbd, Modal } from '@/components/ui'
+import { chipKeysRangeLabel } from '@/components/lists/chip-keys'
 
 export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
   {
@@ -42,6 +43,12 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ['Enter'], label: 'Save a new name' },
       { keys: ['Esc'], label: 'Cancel a new name' },
     ],
+  },
+  {
+    // Brief 45 (PR C): the group chips on a lead's card (the lead page, list
+    // rows, the dialer), while that card has focus and you're not typing.
+    title: 'Contact card',
+    items: [{ keys: [chipKeysRangeLabel()], label: 'Add or remove one of the first nine groups' }],
   },
 ]
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AmmunitionPayload } from "@/lib/telephony/ammunition/hydrate";
 import { captureLabel, reasonText } from "@/lib/core-data/dealflow-sync/labels";
+import { LeadGroupChips } from "@/components/lists/LeadGroupChips";
 
 /**
  * Ammunition panel. Fetches server-hydrated ammo for the active call. The
@@ -36,6 +37,14 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
   return (
     <Shell>
       <h3 className="mb-2 text-base font-semibold text-fg-strong">{data.lead?.displayName ?? "Lead"}</h3>
+      {/* Brief 45 (PR C): the same group chips as the lead page, clickable
+          while talking [brief §5.3]. Keys 1–9 work once focus is in this card
+          (not page-wide here: the softphone's keypad sits next to it). */}
+      {data.lead && (
+        <div className="mb-2">
+          <LeadGroupChips leadId={data.lead.id} hotkeys />
+        </div>
+      )}
       {data.lead && (
         <dl className="grid grid-cols-2 gap-1 text-base">
           <dt className="text-muted">Priority</dt>
@@ -72,7 +81,9 @@ export function AmmunitionPanel({ activeCallId }: { activeCallId: string | null 
 /** Panel chrome shared by the three render states, so they cannot drift. */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <aside className="overflow-hidden rounded-lg border border-line bg-elevated">
+    // Brief 45 (PR C): the call's contact card. Focusable on click, so keys
+    // 1–9 can toggle the lead's groups (GroupChips).
+    <aside data-contact-card="dialer" tabIndex={-1} className="overflow-hidden rounded-lg border border-line bg-elevated">
       <h2 className="bg-active px-3 py-2 text-xs font-medium text-muted">Ammunition</h2>
       <div className="p-3">{children}</div>
     </aside>
