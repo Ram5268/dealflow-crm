@@ -21,8 +21,10 @@ const MAY_SET: Record<string, string> = {
 }
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
-// Not code of this checkout: dependencies, build output, other checkouts (worktrees/).
-const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'worktrees', 'coverage', 'coverage-comms', 'playwright-report', 'test-results', '.vercel'])
+// Not code of this checkout: dependencies anywhere; build output and other
+// checkouts (worktrees/) at the top level only, so a src/**/dist/ is still read.
+const SKIP_ANYWHERE = new Set(['node_modules', '.git'])
+const SKIP_AT_ROOT = new Set(['.next', 'dist', 'worktrees', 'coverage', 'coverage-comms', 'playwright-report', 'test-results', '.vercel'])
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/
 
 type Use = { file: string; line: number; kind: 'read' | 'write' }
@@ -31,7 +33,7 @@ function codeFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) codeFiles(full, out)
+      if (!SKIP_ANYWHERE.has(entry.name) && !(dir === ROOT && SKIP_AT_ROOT.has(entry.name))) codeFiles(full, out)
     } else if (entry.isFile() && CODE.test(entry.name)) out.push(full)
   }
   return out
