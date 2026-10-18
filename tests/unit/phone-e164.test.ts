@@ -10,7 +10,7 @@ describe('toE164', () => {
     }
   })
   it('keeps non-US numbers, and accepts unusual but possible ones (an opt-out is never refused for that)', () => {
-    expect(toE164('+44 20 7183 8750')).toBe('+442071838750')
+    expect(toE164('+44 20 7946 0750')).toBe('+442079460750')
     expect(toE164('+1 555 555 0101')).toBe('+15555550101')
   })
   it('null for anything that is not a phone number', () => {

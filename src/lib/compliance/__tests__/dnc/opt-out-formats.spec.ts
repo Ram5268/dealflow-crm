@@ -116,6 +116,6 @@ describe('the suppression lookup key (GET /api/compliance/dnc/suppressions?phone
   it('looks rows up in every stored form, so a row from before Brief 41 shows too', () => {
     expect(storedForms('+19175550147').sort()).toEqual(['+19175550147', '19175550147', '9175550147'])
     expect(storedForms('(917) 555-0147').sort()).toEqual(['+19175550147', '19175550147', '9175550147'])
-    expect(storedForms('+442071838750')).toEqual(['+442071838750'])
+    expect(storedForms('+442079460750')).toEqual(['+442079460750'])
   })
 })

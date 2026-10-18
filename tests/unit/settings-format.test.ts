@@ -80,7 +80,7 @@ describe('caller id masking', () => {
   it('returns anything else verbatim so a misconfigured value stays visible', () => {
     expect(maskCallerId('')).toBe('')
     expect(maskCallerId('not-a-number')).toBe('not-a-number')
-    expect(maskCallerId('+442071838750')).toBe('+442071838750') // non-NANP
+    expect(maskCallerId('+442079460750')).toBe('+442079460750') // non-NANP
   })
 })
 
