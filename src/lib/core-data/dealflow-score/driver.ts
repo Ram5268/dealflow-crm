@@ -186,7 +186,7 @@ export async function scoreNextChunk(
   }
   const baseUrl = 'baseUrl' in deps ? deps.baseUrl : dealflowAppBase()
   if (!baseUrl) {
-    logger.warn({ importId }, "import scoring: no DEALFLOW_APP_BASE_URL and this isn't Vercel's production deployment; not calling DealFlow")
+    logger.warn({ importId }, "import scoring: no DEALFLOW_APP_BASE_URL and this isn't production; not calling DealFlow")
     return stop(db, importId, null, SCORE_ERROR.noAddress, after)
   }
 

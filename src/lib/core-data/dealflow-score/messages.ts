@@ -13,7 +13,7 @@ export const SCORE_ERROR = {
   refused: 'DealFlow turned the request down',
   expired: 'More than an hour has passed since this upload finished',
   save: "The new rankings couldn't be saved just now",
-  // No DEALFLOW_APP_BASE_URL, and not Vercel's production deployment (request.ts).
+  // No DEALFLOW_APP_BASE_URL, and not production (request.ts dealflowAppBase).
   noAddress: "DealFlow isn't connected on this server",
 } as const
 

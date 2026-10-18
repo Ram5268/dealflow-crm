@@ -374,7 +374,7 @@ describe("when DealFlow can't rank them: the import stays completed and the reas
     expect(calls).toHaveLength(0);
   });
 
-  it("no DealFlow address off Vercel's production deployment: DealFlow isn't asked, and the reason says so [engineering precaution]", async () => {
+  it("no DealFlow address outside production: DealFlow isn't asked, and the reason says so [engineering precaution]", async () => {
     const s = await seedImport(2);
     const { fetch, calls } = dealflow();
     expect(await scoreNextChunk(org, s.importId, null, deps(fetch, { baseUrl: null }))).toMatchObject({ done: true, error: SCORE_ERROR.noAddress });

@@ -76,19 +76,30 @@ describe("DealFlow's address [no new setting]", () => {
     }
   })
 
-  it("unset: the morning sync's default, on Vercel's production deployment only", () => {
+  it("unset, on production: the morning sync's default", () => {
+    // Vercel's production deployment.
     expect(dealflowAppBase({ VERCEL_ENV: 'production', NODE_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
-    expect(dealflowAppBase({ VERCEL_ENV: 'production', DEALFLOW_APP_BASE_URL: '  ' })).toBe(DEFAULT_DEALFLOW_APP_BASE) // blank = unset
+    // No VERCEL_ENV (Vercel's system variables not exposed): a production build still ranks uploads.
+    expect(dealflowAppBase({ NODE_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
     // The sync's deep links are built on the same default (sync.ts).
     expect(dealflowDeepLink('m_1')).toBe(`${DEFAULT_DEALFLOW_APP_BASE}/matches?m=m_1`)
   })
 
   it('unset anywhere else never falls back to the live DealFlow [engineering precaution]', () => {
-    expect(dealflowAppBase({ VERCEL_ENV: 'preview', NODE_ENV: 'production' })).toBeNull() // a Vercel preview is a production build
+    // A Vercel preview is a production build; VERCEL_ENV decides when it is there.
+    expect(dealflowAppBase({ VERCEL_ENV: 'preview', NODE_ENV: 'production' })).toBeNull()
     expect(dealflowAppBase({ VERCEL_ENV: 'development', NODE_ENV: 'development' })).toBeNull()
-    expect(dealflowAppBase({ NODE_ENV: 'production' })).toBeNull() // `next start` off Vercel
+    // No VERCEL_ENV: a dev or test run never calls.
+    expect(dealflowAppBase({ NODE_ENV: 'development' })).toBeNull()
     expect(dealflowAppBase({ NODE_ENV: 'test' })).toBeNull()
     expect(dealflowAppBase({})).toBeNull()
+  })
+
+  it('a blank address counts as unset', () => {
+    expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: '  ', VERCEL_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
+    expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: '  ', NODE_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
+    expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: '', VERCEL_ENV: 'preview', NODE_ENV: 'production' })).toBeNull()
+    expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: ' ', NODE_ENV: 'development' })).toBeNull()
   })
 })
 

@@ -20,15 +20,21 @@ export const SCORE_TIMEOUT_MS = 280_000
 
 /**
  * DealFlow's address: DEALFLOW_APP_BASE_URL, else the morning sync's default,
- * but that default only on Vercel's production deployment (VERCEL_ENV, set by
- * Vercel itself). Anywhere else (a Vercel preview, a local or test run) an
- * unset address gives null (don't call), so it never reaches the live
- * DealFlow by accident [engineering precaution].
+ * but that default only on production. With Vercel's own VERCEL_ENV that is
+ * VERCEL_ENV=production (a preview or development deployment never calls the
+ * live DealFlow); without it, a production build (a local dev or test run
+ * never does). Otherwise null: don't call.
+ *
+ * [engineering precaution] The trade-off: production never silently stops
+ * ranking uploads if Vercel didn't expose its system variables. The cost is
+ * that a preview reaches the live DealFlow only in that same case, and
+ * DealFlow then refuses any import that isn't in the live CRM, doing nothing.
  */
 export function dealflowAppBase(env: Record<string, string | undefined> = process.env): string | null {
   const set = env.DEALFLOW_APP_BASE_URL?.trim()
   if (set) return set.replace(/\/+$/, '')
-  return env.VERCEL_ENV === 'production' ? DEFAULT_DEALFLOW_APP_BASE : null
+  const production = env.VERCEL_ENV ? env.VERCEL_ENV === 'production' : env.NODE_ENV === 'production'
+  return production ? DEFAULT_DEALFLOW_APP_BASE : null
 }
 
 export const sha256Hex = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
