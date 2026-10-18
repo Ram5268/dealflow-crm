@@ -1,8 +1,8 @@
 // Brief 45 (PR F): the CRM's side of DealFlow's POST /api/crm/score-import
 // (DealFlow PR E; CONTRACT §7). When an upload finishes, the CRM sends the
 // upload's new leads to DealFlow, at most 500 per request, so they are ranked
-// within minutes instead of the next morning [Ryan, 2026-10-18: "no list ever
-// sits unranked"].
+// within minutes instead of the next morning: no list ever sits unranked
+// [Ryan, 2026-10-18].
 //
 // The key is a one-time token: 32 random bytes, made fresh for every request.
 // The CRM stores only its SHA-256 on the ImportBatch row; DealFlow reads that
@@ -19,15 +19,16 @@ export const SCORE_IMPORT_PATH = '/api/crm/score-import'
 export const SCORE_TIMEOUT_MS = 280_000
 
 /**
- * DealFlow's address: DEALFLOW_APP_BASE_URL, else the morning sync's default.
- * Outside a production build an unset address gives null (don't call), so a
- * local or test run never reaches the live DealFlow by accident
- * [engineering precaution].
+ * DealFlow's address: DEALFLOW_APP_BASE_URL, else the morning sync's default,
+ * but that default only on Vercel's production deployment (VERCEL_ENV, set by
+ * Vercel itself). Anywhere else (a Vercel preview, a local or test run) an
+ * unset address gives null (don't call), so it never reaches the live
+ * DealFlow by accident [engineering precaution].
  */
 export function dealflowAppBase(env: Record<string, string | undefined> = process.env): string | null {
   const set = env.DEALFLOW_APP_BASE_URL?.trim()
   if (set) return set.replace(/\/+$/, '')
-  return env.NODE_ENV === 'production' ? DEFAULT_DEALFLOW_APP_BASE : null
+  return env.VERCEL_ENV === 'production' ? DEFAULT_DEALFLOW_APP_BASE : null
 }
 
 export const sha256Hex = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex')
@@ -80,8 +81,10 @@ export function parseScoreResponse(raw: unknown, importId: string): ScoreRespons
 /**
  * unreachable: no connection (refused, DNS, network); timeout: no answer in
  * time; server: a 5xx; unreadable: a 200 that isn't DealFlow's answer;
- * refused: any other status (DealFlow's 400 / 403 / 404, a login page, a
- * redirect). Every one of them means "ranked in tomorrow morning's update".
+ * refused: any other status (DealFlow's 400 / 403 / 404, a login page, or a
+ * 301 / 302 / 307 / 308 redirect, which is never followed, so the token is
+ * never sent to another address). Every one of them means "ranked in
+ * tomorrow morning's update".
  */
 export type DealflowFailure = 'unreachable' | 'timeout' | 'server' | 'unreadable' | 'refused'
 
@@ -135,6 +138,8 @@ export async function requestDealflowScores(req: ScoreRequest, deps: RequestDeps
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ importId: req.importId, token: req.token, leadIds: req.leadIds }),
         signal: controller.signal,
+        // A redirect is a refusal: never re-send the token to another address.
+        redirect: 'manual',
       })
       text = await res.text()
     } catch {

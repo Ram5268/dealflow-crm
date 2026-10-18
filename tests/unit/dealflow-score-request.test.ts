@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import {
   DEFAULT_DEALFLOW_APP_BASE,
@@ -68,15 +70,23 @@ describe('the one-time token [CONTRACT §7; engineering precaution: no shared se
 })
 
 describe("DealFlow's address [no new setting]", () => {
-  it('reads DEALFLOW_APP_BASE_URL, with the same default as the morning sync', () => {
-    expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: 'http://localhost:3150/', NODE_ENV: 'development' })).toBe('http://localhost:3150')
-    expect(dealflowAppBase({ NODE_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
+  it('reads DEALFLOW_APP_BASE_URL wherever it is set', () => {
+    for (const VERCEL_ENV of ['production', 'preview', 'development', undefined]) {
+      expect(dealflowAppBase({ DEALFLOW_APP_BASE_URL: 'http://localhost:3150/', VERCEL_ENV })).toBe('http://localhost:3150')
+    }
+  })
+
+  it("unset: the morning sync's default, on Vercel's production deployment only", () => {
+    expect(dealflowAppBase({ VERCEL_ENV: 'production', NODE_ENV: 'production' })).toBe(DEFAULT_DEALFLOW_APP_BASE)
+    expect(dealflowAppBase({ VERCEL_ENV: 'production', DEALFLOW_APP_BASE_URL: '  ' })).toBe(DEFAULT_DEALFLOW_APP_BASE) // blank = unset
     // The sync's deep links are built on the same default (sync.ts).
     expect(dealflowDeepLink('m_1')).toBe(`${DEFAULT_DEALFLOW_APP_BASE}/matches?m=m_1`)
   })
 
-  it('outside a production build, an unset address never falls back to the live DealFlow [engineering precaution]', () => {
-    expect(dealflowAppBase({ NODE_ENV: 'development' })).toBeNull()
+  it('unset anywhere else never falls back to the live DealFlow [engineering precaution]', () => {
+    expect(dealflowAppBase({ VERCEL_ENV: 'preview', NODE_ENV: 'production' })).toBeNull() // a Vercel preview is a production build
+    expect(dealflowAppBase({ VERCEL_ENV: 'development', NODE_ENV: 'development' })).toBeNull()
+    expect(dealflowAppBase({ NODE_ENV: 'production' })).toBeNull() // `next start` off Vercel
     expect(dealflowAppBase({ NODE_ENV: 'test' })).toBeNull()
     expect(dealflowAppBase({})).toBeNull()
   })
@@ -94,6 +104,41 @@ describe('the request [CONTRACT §7 / PR E route]', () => {
     expect(new Headers(calls[0].init.headers).get('content-type')).toBe('application/json')
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ importId: IMPORT, token: a.token, leadIds: ['lead_a', 'lead_b'] })
     expect(calls[0].init.signal).toBeInstanceOf(AbortSignal)
+    expect(calls[0].init.redirect).toBe('manual')
+  })
+
+  it('a redirect is never followed: it counts as turned down, and nothing is sent anywhere else', async () => {
+    for (const status of [301, 302, 307, 308]) {
+      const { fetch, calls } = stubFetch(() => new Response(null, { status, headers: { location: 'https://elsewhere.example/api/crm/score-import' } }))
+      expect(await requestDealflowScores(args(), { fetch })).toEqual({ ok: false, failure: 'refused', status, code: null })
+      expect(calls).toHaveLength(1)
+    }
+  })
+
+  it("with the platform's own fetch: the redirect's target never receives the token (two local servers)", async () => {
+    const received: string[] = []
+    const target = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => (body += c)).on('end', () => {
+        received.push(body)
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}')
+      })
+    })
+    await new Promise<void>((r) => target.listen(0, '127.0.0.1', () => r()))
+    const targetUrl = `http://127.0.0.1:${(target.address() as AddressInfo).port}`
+    let status = 307
+    const redirector = http.createServer((_req, res) => res.writeHead(status, { location: `${targetUrl}/api/crm/score-import` }).end())
+    await new Promise<void>((r) => redirector.listen(0, '127.0.0.1', () => r()))
+    try {
+      for (status of [301, 302, 307, 308]) {
+        const out = await requestDealflowScores(args({ baseUrl: `http://127.0.0.1:${(redirector.address() as AddressInfo).port}` }))
+        expect(out).toEqual({ ok: false, failure: 'refused', status, code: null })
+      }
+      expect(received).toEqual([])
+    } finally {
+      redirector.close()
+      target.close()
+    }
   })
 
   it('waits up to 280 seconds by default', () => {

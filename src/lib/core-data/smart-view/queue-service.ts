@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { HttpError } from '@/lib/shared/http'
+import { rankingTimesSql } from '@/lib/core-data/lists/sql'
 import { compile, compileOrderBy, type CompileContext } from '@/lib/core-data/query-dsl/compiler'
 import { execute } from '@/lib/core-data/query-dsl/executor'
 import {
@@ -238,11 +239,10 @@ export async function getQueue(
     stale = true
     staleReason = 'Compliance service unavailable'
   } else {
-    const latest = await prisma.dealFlowDerivedSignal.aggregate({
-      where: { organizationId },
-      _max: { syncedAt: true },
-    })
-    const syncedAt = latest._max.syncedAt
+    // The morning update's clock: rows an upload's scoring wrote don't count, so
+    // an upload can't hide a morning sync that stopped (Brief 45 PR F).
+    const [latest] = await prisma.$queryRaw<{ rankedAt: Date | null }[]>`SELECT ${rankingTimesSql(organizationId)}`
+    const syncedAt = latest?.rankedAt ?? null
     if (syncedAt) {
       const ageMs = Date.now() - syncedAt.getTime()
       if (ageMs > DEALFLOW_STALE_MS) {

@@ -116,7 +116,8 @@ const SIGNAL_COLUMNS =
 // like the morning sync's own upsert; a row of another organization is left
 // alone. On an existing row the raw JSON is merged, not replaced: these keys
 // win, and keys this scoring doesn't write (Brief 44's `property`, for one)
-// stay [coordination with Brief 44 PR 5].
+// stay [coordination with Brief 44 PR 5], except an old batch's generatedAt
+// and generationRunId, which an upload's row never carries (CONTRACT §7).
 export const UPSERT_SCORED_SIGNALS_SQL = `
   INSERT INTO "DealFlowDerivedSignal" (id, "organizationId", "mojoId", "queueRank", "priorityScore", "queueReason",
     "primaryMatchId", "primaryMatchFit", "primaryCaptureStatus", "primaryMatchConfidence", "syncedAt", "dealflowRawJson")
@@ -128,7 +129,7 @@ export const UPSERT_SCORED_SIGNALS_SQL = `
     "primaryMatchId" = EXCLUDED."primaryMatchId", "primaryMatchFit" = EXCLUDED."primaryMatchFit",
     "primaryCaptureStatus" = EXCLUDED."primaryCaptureStatus", "primaryMatchConfidence" = EXCLUDED."primaryMatchConfidence",
     "syncedAt" = EXCLUDED."syncedAt",
-    "dealflowRawJson" = "DealFlowDerivedSignal"."dealflowRawJson" || EXCLUDED."dealflowRawJson"
+    "dealflowRawJson" = ("DealFlowDerivedSignal"."dealflowRawJson" - 'generatedAt' - 'generationRunId') || EXCLUDED."dealflowRawJson"
   WHERE "DealFlowDerivedSignal"."organizationId" = EXCLUDED."organizationId"`
 
 export interface WriteBackResult {

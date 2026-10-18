@@ -287,22 +287,30 @@ describe("the write-back: only those leads' fields and signals [brief §5.8, the
   it("an existing signal row for the Mojo ID keeps the keys this scoring doesn't write (Brief 44's property) [coordination with Brief 44 PR 5]", async () => {
     const s = await seedImport(2); // the first new lead has a Mojo ID
     const mojoId = `${TAG}_${seq}_m0`;
-    // A stale row (a reused Mojo ID), with a key only the morning sync writes.
+    // A stale row (a reused Mojo ID), with a key only the morning sync writes,
+    // and an old batch's time and run id.
     await db.dealFlowDerivedSignal.create({
       data: {
         organizationId: org, mojoId, priorityScore: 10, queueRank: 4, syncedAt: new Date(Date.now() - 2 * 86_400_000),
-        dealflowRawJson: { property: { beds: 3, note: "made-up" }, buyers: [{ matchId: "old_match" }], crmLeadId: "an_old_lead" },
+        dealflowRawJson: {
+          property: { beds: 3, note: "made-up" }, buyers: [{ matchId: "old_match" }], crmLeadId: "an_old_lead",
+          generatedAt: new Date(Date.now() - 50 * 60 * MIN).toISOString(), generationRunId: "old_run",
+        },
       },
     });
     const { fetch } = dealflow();
     await runToEnd(s.importId, deps(fetch));
     const row = await db.dealFlowDerivedSignal.findUniqueOrThrow({ where: { mojoId } });
     expect(row).toMatchObject({ priorityScore: 70, queueRank: null });
-    expect(row.dealflowRawJson).toMatchObject({
+    const raw = row.dealflowRawJson as Record<string, unknown>;
+    expect(raw).toMatchObject({
       property: { beds: 3, note: "made-up" }, // kept
       source: IMPORT_SCORING_SOURCE, importId: s.importId, crmLeadId: s.newIds[0], // this scoring's keys win
     });
-    expect((row.dealflowRawJson as { buyers: { matchId: string }[] }).buyers.map((b) => b.matchId)).toEqual([`match_${s.newIds[0]}`]);
+    expect((raw.buyers as { matchId: string }[]).map((b) => b.matchId)).toEqual([`match_${s.newIds[0]}`]);
+    // An upload's row never carries a batch's time or run id (CONTRACT §7), not even an old row's.
+    expect("generatedAt" in raw).toBe(false);
+    expect("generationRunId" in raw).toBe(false);
   });
 
   it("the morning clocks don't move: the sidebar's 'ranked' time, the ranking cutoff, and an older unscored lead still shows 'scoring…'", async () => {
@@ -366,10 +374,10 @@ describe("when DealFlow can't rank them: the import stays completed and the reas
     expect(calls).toHaveLength(0);
   });
 
-  it("no DealFlow address on a computer that isn't production: DealFlow isn't asked [engineering precaution]", async () => {
+  it("no DealFlow address off Vercel's production deployment: DealFlow isn't asked, and the reason says so [engineering precaution]", async () => {
     const s = await seedImport(2);
     const { fetch, calls } = dealflow();
-    expect(await scoreNextChunk(org, s.importId, null, deps(fetch, { baseUrl: null }))).toMatchObject({ done: true, error: SCORE_ERROR.unreachable });
+    expect(await scoreNextChunk(org, s.importId, null, deps(fetch, { baseUrl: null }))).toMatchObject({ done: true, error: SCORE_ERROR.noAddress });
     expect(calls).toHaveLength(0);
   });
 
