@@ -38,7 +38,7 @@ export function healthReport(
     dialingEnabled: env.DIALING_ENABLED === 'true',
     emailEnabled: emailEnabled(env),
     // Brief 41.2: the Outlook switch (Ryan's instruction: Outlook stays on hard
-    // pause). Also on only when exactly 'true'.
+    // pause). Also on only when exactly 'true' (engineering precaution).
     graphEnabled: graphEnabled(env),
   }
   const status: HealthReport['status'] =

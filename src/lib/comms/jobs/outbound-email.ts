@@ -29,8 +29,9 @@ export async function handleSendEmailJob(input: Job | Job[]): Promise<void> {
         logger.warn({ messageId }, 'send-email job dropped: email is off (EMAIL_ENABLED)')
         continue
       }
-      // Brief 41.2: likewise for a send that would go out through Outlook while
-      // Outlook is paused (Ryan's instruction).
+      // Brief 41.2: likewise drop, don't retry (engineering precaution), a send
+      // that would go out through Outlook while Outlook is paused (Ryan's
+      // instruction).
       if (err instanceof GraphDisabledError) {
         logger.warn({ messageId }, 'send-email job dropped: Outlook is paused (GRAPH_ENABLED)')
         continue

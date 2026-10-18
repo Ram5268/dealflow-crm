@@ -20,8 +20,8 @@ export async function runGraphSyncForCredential(
 ): Promise<SyncResult | { skipped: true }> {
   // Brief 41.2: Outlook is paused (Ryan's instruction). Drop the job before the
   // credential is read: no refresh, no Graph call, and no error, so pg-boss
-  // doesn't retry it after the switch flips (as outbound-email drops sends
-  // while email is off).
+  // doesn't retry it after the switch flips (engineering precaution, as
+  // outbound-email drops sends while email is off).
   if (!graphEnabled()) {
     logger.warn({ credentialId }, 'graph sync job dropped: Outlook is paused (GRAPH_ENABLED)')
     return { skipped: true }

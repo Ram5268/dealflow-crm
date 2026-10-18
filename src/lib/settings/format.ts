@@ -125,11 +125,12 @@ export interface MailboxCardActions {
 }
 
 /**
- * What a Connected Accounts card offers. Brief 41.2: Outlook is paused unless
- * GRAPH_ENABLED is exactly 'true' (Ryan's instruction: Outlook stays on hard
- * pause). While it is, the Outlook card says so and has no Connect or Reconnect
- * link; a stored connection still shows, with Disconnect, which only removes
- * it locally. Gmail is unaffected. The caller reads the switch on the server.
+ * What a Connected Accounts card offers. Brief 41.2: Outlook is paused (Ryan's
+ * instruction: Outlook stays on hard pause); only GRAPH_ENABLED exactly 'true'
+ * turns it on (engineering precaution). While it's paused, the Outlook card
+ * says so and has no Connect or Reconnect link; a stored connection still
+ * shows, with Disconnect, which only removes it locally. Gmail is unaffected.
+ * The caller reads the switch on the server.
  */
 export function mailboxCardActions(
   account: { key: 'gmail' | 'outlook'; label: string; connected: boolean; authorizeHref: string },

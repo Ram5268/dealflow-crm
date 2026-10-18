@@ -77,8 +77,9 @@ test.describe('M5 settings', () => {
       'href',
       '/api/comms/oauth/gmail/authorize',
     )
-    // Brief 41.2: Outlook is paused unless GRAPH_ENABLED is exactly 'true'
-    // (Ryan's instruction); its card then says so and carries no link.
+    // Brief 41.2: Outlook is paused (Ryan's instruction); only GRAPH_ENABLED
+    // exactly 'true' turns it on (engineering precaution). While it's paused,
+    // its card says so and carries no link.
     const health = await (await page.request.get('/api/comms/health')).json()
     if (health.checks.graphEnabled) {
       await expect(outlook.getByRole('link')).toHaveAttribute(
