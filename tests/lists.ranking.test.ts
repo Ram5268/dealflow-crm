@@ -306,7 +306,8 @@ describe("row details, rank state and the calling-off rule", () => {
     const lines = csv.split("\n");
     expect(lines[0]).toBe("Rank,Name,Address,Priority,Match fit,Why now,Best buyer,Groups,Attempts,Last result,Timezone");
     expect(lines[1]).toBe('1,Row owner ranked,100 Example St,88,91,"Right neighborhood, bedrooms fit",Agent One · Example Realty,Hot; Nurture,4,Left voicemail,Central');
-    expect(lines[2].startsWith("2,'=HYPERLINK(")).toBe(true);
+    // The formula gets a leading apostrophe; its quotes then make the cell quoted.
+    expect(lines[2].startsWith(`2,"'=HYPERLINK(""http://example.invalid"")"`)).toBe(true);
     expect(lines).toHaveLength(8); // header + 7 people
     expect(csv).not.toMatch(/5550142|row\.owner@example\.com/);
     const all = await exportRankedCsv(o, null, { now: NOW }, db);
