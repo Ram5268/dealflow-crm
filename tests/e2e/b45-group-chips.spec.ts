@@ -64,6 +64,17 @@ async function leadsCounter(page: Page): Promise<{ pageSize: number; total: numb
   return { pageSize: Number(pageSize), total: Number(total) }
 }
 
+/**
+ * The lead page timeline's newest entry (it lists the newest 50, newest
+ * first), and a stamp of it, to see a new entry arrive however long the
+ * history is.
+ */
+function newestEntry(page: Page) {
+  const entry = page.locator('section', { has: page.getByRole('heading', { name: 'Activity', exact: true }) }).locator('li').first()
+  const stamp = async () => ((await entry.count()) ? `${await entry.locator('time').getAttribute('datetime')} ${await entry.innerText()}` : null)
+  return { entry, stamp }
+}
+
 function trackErrors(page: Page): string[] {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -92,9 +103,8 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     await expect(page.getByTestId('lead-list-chips')).toContainText('Lists:')
 
     const first = chips.locator(`[data-group-id="${groups[0].id}"]`)
-    const addedEntries = page.getByText(`Added to ${groups[0].name}`, { exact: true })
-    const removedEntries = page.getByText(`Removed from ${groups[0].name}`, { exact: true })
-    const addedBefore = await addedEntries.count()
+    const newest = newestEntry(page)
+    const before = await newest.stamp()
     // Hold the save, to see the chip light up before the CRM answers.
     let release!: () => void
     const held = new Promise<void>((resolve) => (release = resolve))
@@ -109,18 +119,20 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     release()
     expect((await saved).status()).toBe(200)
     await page.unroute(memberUrl)
-    // The page refreshes its timeline after the change: one new entry.
-    await expect(addedEntries).toHaveCount(addedBefore + 1)
+    // The page refreshes its timeline after the change: a new newest entry.
+    await expect.poll(newest.stamp).not.toBe(before)
+    await expect(newest.entry).toContainText(`Added to ${groups[0].name}`)
     expect(await groupIdsOf(request, lead.leadId)).toEqual([groups[0].id])
 
     await page.reload()
     await expect(first).toHaveAttribute('aria-pressed', 'true')
-    const removedBefore = await removedEntries.count()
+    const beforeRemove = await newest.stamp()
     const removed = page.waitForResponse((r) => r.url().endsWith(`/members/${lead.leadId}`) && r.request().method() === 'DELETE')
     await first.click()
     await expect(first).toHaveAttribute('aria-pressed', 'false')
     expect((await removed).status()).toBe(200)
-    await expect(removedEntries).toHaveCount(removedBefore + 1)
+    await expect.poll(newest.stamp).not.toBe(beforeRemove)
+    await expect(newest.entry).toContainText(`Removed from ${groups[0].name}`)
     expect(await groupIdsOf(request, lead.leadId)).toEqual([])
     expect(errors).toEqual([])
   })
@@ -142,11 +154,12 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     await page.getByLabel('New group name').pressSequentially('2')
     await expect(second).toHaveAttribute('aria-pressed', 'true')
     await page.keyboard.press('Escape') // closes the box; focus is back on "+", inside the card
-    const removedEntries = page.getByText(`Removed from ${groups[1].name}`, { exact: true })
-    const removedBefore = await removedEntries.count()
+    const newest = newestEntry(page)
+    const before = await newest.stamp()
     await page.keyboard.press('2')
     await expect(second).toHaveAttribute('aria-pressed', 'false')
-    await expect(removedEntries).toHaveCount(removedBefore + 1)
+    await expect.poll(newest.stamp).not.toBe(before)
+    await expect(newest.entry).toContainText(`Removed from ${groups[1].name}`)
     await expect.poll(() => groupIdsOf(request, lead.leadId)).toEqual([])
   })
 
