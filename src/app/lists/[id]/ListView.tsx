@@ -60,7 +60,6 @@ function WhyNowCell({ row }: { row: RankedRow }) {
     return (
       <Tooltip content={badge.help}>
         <span
-          tabIndex={0}
           className={cn(
             'inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-xs',
             row.rankState === 'scoring' ? 'bg-accent-subtle text-accent' : 'bg-active text-muted',
@@ -116,7 +115,6 @@ function LocalTimeCell({ timezone, window, now }: { timezone: string | null; win
       <Tooltip content={info.label}>
         <span
           role="img"
-          tabIndex={0}
           aria-label={info.label}
           className={cn('inline-block h-2 w-2 shrink-0 rounded-full', info.inside ? 'bg-success' : 'bg-line-strong')}
         />
@@ -406,7 +404,7 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
           <Select
             value={filters.borough ?? 'any'}
             onValueChange={(v) => push({ borough: v === 'any' ? undefined : v })}
-            options={[{ value: 'any', label: 'Borough: Any' }, ...BOROUGHS.map((b) => ({ value: b, label: b }))]}
+            options={[{ value: 'any', label: 'Borough: Any' }, ...BOROUGHS.map((b) => ({ value: b, label: `Borough: ${b}` }))]}
           />
         </div>
         {filtered && (
