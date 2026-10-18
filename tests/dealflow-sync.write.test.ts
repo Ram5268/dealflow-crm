@@ -9,6 +9,8 @@ import type { SQuery } from "@/lib/core-data/query-dsl/schema";
 import { DEFAULT_VIEW, DEFAULT_VIEW_ID } from "@/lib/core-data/smart-view/defaultView";
 import { reviewQuery } from "@/lib/core-data/smart-view/review-list";
 import { bestBuyerLookup, getLeadBuyers } from "@/lib/core-data/dealflow-sync/buyer-lookup";
+import { getLeadProperty } from "@/lib/core-data/dealflow-sync/property-lookup";
+import { rawProperty } from "./unit/helpers/property-fixture";
 
 // Brief 37 — the DealFlow sync writer against the perf DB, inside a throwaway
 // organization so no other suite's rows are touched. Proves stale-clearing,
@@ -158,5 +160,24 @@ describe("matched buyers (Brief 38)", () => {
     expect(best({ leadId: ids.a, mojoId: `${TAG}_a` })?.matchId).toBe("m_a");
     expect(best({ leadId: ids.b, mojoId: `${TAG}_b` })?.matchId).toBe("m_b");
     expect(best({ leadId: ids.d, mojoId: `${TAG}_d` })).toBeNull();
+  });
+});
+
+describe("property value and facts (Brief 44)", () => {
+  it("stores each seller's whitelisted property on its signal and reads it back per lead", async () => {
+    const property = { ...rawProperty(), ownerName: "Pat Example", bbl: "3999990999" }; // the last two must never reach the CRM
+    await applySync(org, buildSignals({
+      includeTestBuyers: true,
+      rows: [
+        row({ mojo_id: `${TAG}_a`, crm_lead_id: ids.a, queue_rank: 1, primary_match_id: "m_a", property }),
+        row({ mojo_id: `${TAG}_b`, crm_lead_id: null, queue_rank: 2, property: null }),
+      ],
+    }), db);
+
+    const signal = await db.dealFlowDerivedSignal.findUnique({ where: { mojoId: `${TAG}_a` } });
+    expect(JSON.stringify(signal?.dealflowRawJson)).not.toMatch(/ownerName|Pat Example|bbl|3999990999/);
+    expect(await getLeadProperty(org, { id: ids.a, mojoId: `${TAG}_a` }, db)).toEqual(rawProperty());
+    expect(await getLeadProperty(org, { id: ids.b, mojoId: `${TAG}_b` }, db)).toBeNull(); // no published valuation
+    expect(await getLeadProperty(org, { id: ids.c, mojoId: `${TAG}_c` }, db)).toBeNull(); // not ranked
   });
 });

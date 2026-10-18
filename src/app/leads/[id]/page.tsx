@@ -13,6 +13,8 @@ import { sequencesOffReason } from '@/lib/comms/sequences/channel-gate'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
 import { pickPrimaryContact } from '@/lib/core-data/smart-view/queue-service'
 import { getLeadBuyers } from '@/lib/core-data/dealflow-sync/buyer-lookup'
+import { getLeadProperty } from '@/lib/core-data/dealflow-sync/property-lookup'
+import { PropertyValueCard } from './PropertyValueCard'
 import { captureLabel, reasonText, timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { MatchingBuyers } from './MatchingBuyers'
 
@@ -52,7 +54,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   })
   if (!lead) notFound()
 
-  const [customFields, activities, sequences, buyers] = await Promise.all([
+  const [customFields, activities, sequences, buyers, property] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
@@ -61,6 +63,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     }),
     listSequenceRows(organizationId),
     getLeadBuyers(organizationId, lead),
+    getLeadProperty(organizationId, lead), // Brief 44: DealFlow's estimate, Ryan's screen only
   ])
   // Brief 38: the sync fills Contact.timezone, so show the primary contact's
   // zone (then the lead's). A blank stays blank rather than guessing Eastern.
@@ -164,6 +167,10 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                   />
                 )}
               </dl>
+            </Card>
+
+            <Card title="Property value and facts">
+              <PropertyValueCard property={property} />
             </Card>
 
             <Card title={`Contacts (${lead.contacts.length})`}>

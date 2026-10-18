@@ -1,5 +1,6 @@
 import { roQuery } from './ro-client'
 import { toBuyers } from './buyers'
+import { toPropertyFacts } from './property'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DealFlow signal sync — reads the latest nightly CallQueueEntry batch from
@@ -21,6 +22,8 @@ import { toBuyers } from './buyers'
 // seller, ~1,478), in rank order, with the CRM Lead id DealFlow keeps in
 // MojoContact.metadata.crmLeadId, plus the run's includeTestBuyers flag.
 // Brief 38: plus each seller's matched buyers (up to 5), kept in dealflowRawJson.
+// Brief 44: plus DealFlow's newest published estimate of each seller's home
+// (PROPERTY_SQL), whitelisted by toPropertyFacts into dealflowRawJson.property.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Shape of a joined RO row (snake-cased aliases from the SELECT below).
@@ -40,6 +43,7 @@ export interface DealflowJoinRow {
   generation_run_id: string | null
   generated_at: Date | string | null
   buyers?: unknown // Brief 38: the seller's matched buyers (BUYERS_SQL), whitelisted by toBuyers
+  property?: unknown // Brief 44: the seller's newest published valuation (PROPERTY_SQL), whitelisted by toPropertyFacts
 }
 
 export interface DealflowBatch {
@@ -105,6 +109,7 @@ export function buildSignals(batch: DealflowBatch): DerivedSignalUpsert[] {
         matchReason: r.match_reason,
         contributions: r.contributions ?? null,
         buyers: toBuyers(r.buyers),
+        property: toPropertyFacts(r.property),
         // Run-level facts, stored with every signal of the run (no run table).
         generationRunId: r.generation_run_id ?? null,
         generatedAt: r.generated_at instanceof Date ? r.generated_at.toISOString() : r.generated_at,
@@ -160,6 +165,27 @@ export const BUYERS_SQL = `(
       ORDER BY x.ord LIMIT 5
     ) b)`
 
+// Brief 44 (PR 5): DealFlow's own estimate of the seller's home, for Ryan's lead
+// page only (our value estimates stay out of anything a buyer or homeowner
+// could see: Ryan's decision, 2026-10-17). The entry's contact's newest
+// valuation from a PUBLISHED run, i.e. one that passed the job's publish checks
+// (engineering precaution, Brief 44 §5); "newest" = publishedAt DESC NULLS LAST,
+// as everywhere in Brief 44. One jsonb object with the run's dates and data
+// sources, or NULL before any published run. publishedAt (stored as UTC with no
+// zone) is written as UTC ISO. Selects no tax lot number and nothing about a
+// person (engineering precaution: data minimization).
+export const PROPERTY_SQL = `(
+    SELECT jsonb_build_object(
+      'asOf', pv."asOf", 'dataThrough', vr."dataThrough",
+      'publishedAt', to_char(vr."publishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'value', pv."value", 'low', pv."low", 'high', pv."high", 'reason', pv."reason",
+      'facts', pv."factsJson", 'comps', pv."compsJson", 'sources', vr."sourcesJson")
+    FROM "PropertyValuation" pv
+    JOIN "ValuationRun" vr ON vr."id" = pv."runId"
+    WHERE pv."contactId" = cqe."contactId" AND vr."published" = true
+    ORDER BY vr."publishedAt" DESC NULLS LAST
+    LIMIT 1)`
+
 // Brief 37: the whole latest batch (the run owning the newest generatedAt), in
 // rank order, no cap.
 export const RO_SQL = `
@@ -181,7 +207,8 @@ export const RO_SQL = `
     m."captureStatus"       AS primary_capture_status,
     m."matchFitConfidence"  AS primary_match_confidence,
     m."reason"             AS match_reason,
-    ${BUYERS_SQL} AS buyers
+    ${BUYERS_SQL} AS buyers,
+    ${PROPERTY_SQL} AS property
   FROM latest
   JOIN "CallQueueEntry" cqe ON cqe."generationRunId" = latest."generationRunId"
   JOIN "MojoContact" mc ON mc."id" = cqe."contactId"
@@ -232,5 +259,19 @@ export const STUB_ROWS: DealflowJoinRow[] = [
     buyers: [{ matchId: 'match_stub_1', score: 94, tier: 'HOT', reasonKeys: ['neighborhood', 'beds'], captureStatus: 'OWN_BUYER_ONLY',
       type: 'opportunity', name: 'Stub Agent', brokerage: null, neighborhoods: ['West Village'], propertyTypes: ['Condo'],
       bedsMin: 2, bedsMax: 3, priceMin: 1500000, priceMax: 2500000, buyerArchetype: 'CASH_BUYER', isTestData: true }],
+    // Brief 44: an invented home and invented sales, so stub mode shows the property card.
+    property: {
+      asOf: '2026-10-01', dataThrough: '2026-09-30', publishedAt: '2026-10-20T10:31:00.000Z',
+      value: 1830000, low: 1540000, high: 2120000, reason: null,
+      facts: { units: 2, buildingSqft: 2400, lotSqft: 2000, yearBuilt: 1910, floors: 3, zoning: 'R6B', buildingClass: 'B1',
+        historicDistrict: false, lastSale: { date: '2015-06-03', price: 1200000 }, dofMarketValue: { value: 1410000, fiscalYear: 2027 },
+        permits7y: { count: 2, major: true }, openViolations: { dob: 0, ecb: 1, hpd: 0 }, subwayMiles: 0.3,
+        leadVsCity: { units: { lead: 3, city: 2 }, buildingSqft: null } },
+      comps: [
+        { address: '12 Example St', date: '2026-09-12', price: 1750000, pricePerSqft: 712, distanceMiles: 0.1 },
+        { address: '40 Example Ave', date: '2026-08-28', price: 1690000, pricePerSqft: 655, distanceMiles: 0.3 },
+      ],
+      sources: { downloadedOn: '2026-10-18', salesThrough: '2026-09-30', plutoVersion: '26v2', rollFiscalYear: 2027, datasets: {} },
+    },
   },
 ]
