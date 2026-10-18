@@ -123,7 +123,8 @@ describe('roQuery refuses before connecting', () => {
   })
 
   it('more than one statement: a COMMIT could end the read-only transaction before the next one', async () => {
-    useClient(fakeClient().client)
+    const f = fakeClient()
+    useClient(f.client)
     const multi = [
       'SELECT 1; DELETE FROM "Match"',
       'SELECT 1; COMMIT; DELETE FROM "Match"',
@@ -145,6 +146,7 @@ describe('roQuery refuses before connecting', () => {
     ]
     for (const s of multi) await expect(roQuery(s), s).rejects.toThrow(/one statement/)
     expect(connect).not.toHaveBeenCalled()
+    expect(f.sent).toEqual([]) // refused before any BEGIN
   })
 
   it('one statement passes, whatever its quotes and comments hold, and so do the sync queries', async () => {
