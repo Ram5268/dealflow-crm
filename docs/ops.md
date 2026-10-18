@@ -28,6 +28,7 @@ Ran `backup.ts gate1-signoff` then `restore-from-backup.ts backups/backup-gate1-
 |---|---|---|
 | `DATABASE_URL_MAIN` | `dealflow_crm` | CRM data (migrations run here) |
 | `DATABASE_URL_PERF` | `dealflow_crm_perf` | 25k perf seed (name must end `_perf`) |
-| `DATABASE_URL_DEALFLOW_RO` | `railway` | DealFlow signals, **read-only** (SELECT-only client) |
+| `DATABASE_URL_DEALFLOW_RO` | `railway` | DealFlow signals, **read-only**: read only by `src/lib/core-data/dealflow-sync/ro-client.ts`, which sends one SELECT/WITH statement at a time inside a `READ ONLY` transaction |
+| `DATABASE_URL_ADMIN` | the server's default DB | Only for the one-off `scripts/bootstrap-databases.ts` (creates `dealflow_crm` and `dealflow_crm_perf`; already ran). Set it in the shell for that run, never in Vercel |
 
 Migrations: `pnpm prisma migrate deploy` (MAIN + PERF). Two additive migrations: `initial`, `add_notify_overflow`.

@@ -3,11 +3,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/prisma'
 import { runDealflowSync } from '@/lib/core-data/dealflow-sync/run'
 import { fetchDealflowBatch, buildSignals } from '@/lib/core-data/dealflow-sync/sync'
-import { closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
+import { closeDealflowRoPool, dealflowRoConfigured } from '@/lib/core-data/dealflow-sync/ro-client'
 import { mainIsTestDb } from '../setup/live-guard'
 
 const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
-const roEnabled = !!process.env.DATABASE_URL_DEALFLOW_RO
+const roEnabled = dealflowRoConfigured() // Brief 41.2: only the RO client reads its setting
 
 let orgId: string
 
