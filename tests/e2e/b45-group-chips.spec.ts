@@ -226,6 +226,20 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     expect(errors).toEqual([])
   })
 
+  test('Leads: a new search clears the selection, so a bulk action never reaches people no longer shown', async ({ page }) => {
+    await page.goto('/leads')
+    await page.locator('thead').getByRole('checkbox').click()
+    const banner = page.getByTestId('select-all-matching')
+    await banner.getByRole('button', { name: /^Select all [\d,]+ matching$/ }).click()
+    await expect(banner).toContainText('matching are selected.')
+    await expect(page.getByText(/^[\d,]+ selected$/)).toBeVisible()
+
+    await page.getByLabel('Search leads').fill('Dummerton') // a made-up surname from the seed
+    await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Bulk actions' })).toHaveCount(0)
+    await expect(banner).toHaveCount(0)
+  })
+
   test('dialer: nothing new without a call; during a (simulated) call the card has the same chips', async ({ page, request }) => {
     // No call: the stream sends nothing.
     await page.route('**/api/telephony/stream', (route) =>

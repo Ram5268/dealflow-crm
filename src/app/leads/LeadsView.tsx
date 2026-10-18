@@ -147,9 +147,20 @@ export function LeadsView({
     toast({ title: `Exported ${chosen.length} lead${chosen.length === 1 ? '' : 's'}` })
   }, [rows, selected, toast])
 
-  // Brief 45 (PR C): "Select all N matching" reaches past this page through the
-  // all-leads `ids=1` call, which knows the search box but not Smart Views, so
-  // it's offered only without a Smart View.
+  // Brief 45 (PR C): a selection never outlives the search or Smart View it was
+  // made in, so a bulk action can't reach people the list no longer shows
+  // [engineering precaution: "Select all N matching" can select thousands].
+  const filterKey = `${q}\u0000${viewId}`
+  const selectedFor = useRef(filterKey)
+  useEffect(() => {
+    if (selectedFor.current === filterKey) return
+    selectedFor.current = filterKey
+    setSelected(new Set())
+  }, [filterKey])
+
+  // "Select all N matching" reaches past this page through the all-leads
+  // `ids=1` call, which knows the search box but not Smart Views, so it's
+  // offered only without a Smart View.
   const pageIds = rows.map((r) => r.id)
   const everyoneSelected = !viewId && selectAllOffer({ pageIds, selected, total }).kind === 'all'
   const exportForMenu = useCallback(() => {
