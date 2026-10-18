@@ -5,6 +5,7 @@ import {
   enrollBlockedReason,
   assertSequenceCanStart,
   SequenceChannelOffError,
+  sequenceChannelOffResponse,
   sequencesOffReason,
   SEQUENCES_OFF_REASON,
   enrolledWhileOffBanner,
@@ -92,6 +93,18 @@ describe('assertSequenceCanStart', () => {
 
   it('returns quietly when every channel is on', () => {
     expect(() => assertSequenceCanStart(seq('mixed', 'email', 'sms'), env('true', 'true'))).not.toThrow()
+  })
+})
+
+describe('sequenceChannelOffResponse (both enrollment routes)', () => {
+  it('is a 403 with the code, the plain message and the channels that are off', async () => {
+    const res = sequenceChannelOffResponse(new SequenceChannelOffError(['sms'], "Texting is off, so this sequence can't start."))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({
+      error: 'sequence_channel_off',
+      message: "Texting is off, so this sequence can't start.",
+      channels: ['sms'],
+    })
   })
 })
 

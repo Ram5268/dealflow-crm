@@ -217,6 +217,18 @@ export async function enrollContact(orgId: string, input: unknown) {
 
 export async function updateEnrollment(orgId: string, id: string, input: unknown) {
   const { status } = enrollmentStatusSchema.parse(input)
+  // Brief 41.2 (PR E): making an enrollment active again (resume) is refused
+  // while a channel its sequence uses is off, before anything is written: a
+  // resumed enrollment would fire at switch-on just like a new one. Engineering
+  // precaution (audit H15); see channel-gate. Pausing and cancelling stay
+  // allowed. An id that isn't ours matches nothing below, as before.
+  if (status === 'active') {
+    const enrollment = await prisma.sequenceEnrollment.findFirst({
+      where: { id, organizationId: orgId },
+      select: { sequence: { select: { channel: true, steps: { select: { channel: true } } } } },
+    })
+    if (enrollment) assertSequenceCanStart(enrollment.sequence)
+  }
   return prisma.sequenceEnrollment.updateMany({
     where: { id, organizationId: orgId },
     data: { status },

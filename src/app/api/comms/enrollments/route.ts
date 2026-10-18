@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { ZodError } from 'zod'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { enrollContact, DuplicateEnrollmentError } from '@/lib/comms/sequences/crud'
-import { SequenceChannelOffError } from '@/lib/comms/sequences/channel-gate'
+import { SequenceChannelOffError, sequenceChannelOffResponse } from '@/lib/comms/sequences/channel-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,12 +23,7 @@ export async function POST(req: Request) {
       { status: 201 },
     )
   } catch (err) {
-    if (err instanceof SequenceChannelOffError) {
-      return NextResponse.json(
-        { error: err.code, message: err.message, channels: err.channels },
-        { status: 403 },
-      )
-    }
+    if (err instanceof SequenceChannelOffError) return sequenceChannelOffResponse(err)
     if (err instanceof ZodError) {
       return NextResponse.json({ error: 'validation', issues: err.issues }, { status: 400 })
     }

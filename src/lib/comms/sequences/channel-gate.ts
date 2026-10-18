@@ -68,10 +68,19 @@ export class SequenceChannelOffError extends Error {
   }
 }
 
-/** Throws SequenceChannelOffError unless every channel the sequence uses is on. */
+/**
+ * Throws SequenceChannelOffError unless every channel the sequence uses is on.
+ * Checked when an enrollment is created and when one is resumed: a resumed
+ * enrollment would fire at switch-on just like a new one.
+ */
 export function assertSequenceCanStart(seq: SequenceChannelsInput, env: Env = process.env): void {
   const reason = enrollBlockedReason(seq, env)
   if (reason) throw new SequenceChannelOffError(channelsOff(seq, env), reason)
+}
+
+/** The 403 both enrollment routes answer while a channel is off; nothing was saved. */
+export function sequenceChannelOffResponse(err: SequenceChannelOffError): Response {
+  return Response.json({ error: err.code, message: err.message, channels: err.channels }, { status: 403 })
 }
 
 export const SEQUENCES_OFF_REASON = "Email and texting are off, so sequences can't start."
