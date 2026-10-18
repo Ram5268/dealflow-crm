@@ -11,13 +11,27 @@ export const KNOWN_DRIFT_STATEMENTS: readonly string[] = [
   `ALTER TABLE "SavedView" ALTER COLUMN "id" SET DEFAULT 'save_' || substr(md5(random()::text), 1, 24);`,
 ]
 
-// The lines of a `prisma migrate diff --script` output that are neither a
-// comment, blank, nor one of the four known statements (trimmed). Empty means
-// the database matches the schema.
-export function unexpectedDrift(diffSql: string): string[] {
-  const known = new Set(KNOWN_DRIFT_STATEMENTS)
-  return diffSql
+export interface DriftCheck {
+  /** Lines (trimmed) that are neither a comment, blank, nor one of the four. */
+  unexpected: string[]
+  /** Which of the four are absent. */
+  missing: string[]
+}
+
+/**
+ * Reads a `prisma migrate diff --script` output. The database matches the
+ * schema only when nothing is unexpected AND all four known lines are there:
+ * Postgres always prints them for a migrated database, so a diff without them
+ * (an empty file, a diff that never ran against one) must not count as a pass.
+ */
+export function checkKnownDrift(diffSql: string): DriftCheck {
+  const lines = diffSql
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line !== '' && !line.startsWith('--') && !known.has(line))
+    .filter((line) => line !== '' && !line.startsWith('--'))
+  const known = new Set(KNOWN_DRIFT_STATEMENTS)
+  return {
+    unexpected: lines.filter((line) => !known.has(line)),
+    missing: KNOWN_DRIFT_STATEMENTS.filter((statement) => !lines.includes(statement)),
+  }
 }

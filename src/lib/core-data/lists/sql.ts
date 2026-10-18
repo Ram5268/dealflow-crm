@@ -3,8 +3,9 @@
 // Mojo's custom fields by name [CONTRACT §4].
 import { Prisma } from '@prisma/client'
 import { HttpError } from '@/lib/shared/http'
+import { buyerName, toBuyers } from '@/lib/core-data/dealflow-sync/buyers'
 import { nameProblem, normalizeName, ATTEMPTS_PATTERN_SQL } from './rules'
-import { BULK_MAX } from './types'
+import { BULK_MAX, type BestBuyerDTO } from './types'
 import {
   CITY_BOROUGH, NYC_ZIP_NEIGHBORHOODS, PROPERTY_TYPE_UNITS, SINGLE_FAMILY_PATTERN, ZIP3_BOROUGH, ZIP5_BOROUGH,
 } from './geo'
@@ -22,6 +23,26 @@ export const notFound = (what: Thing) => new HttpError(404, `${what} not found.`
 export const badRequest = (message: string) => new HttpError(400, message)
 export const conflict = (message: string) => new HttpError(409, message)
 export const STALE_ORDER = conflict('The order changed somewhere else. Reload and try again.')
+
+/**
+ * A membership insert that hit a foreign-key violation (Postgres 23503): the
+ * list or group (or the lead) was deleted by another request after this one
+ * checked it, e.g. a chip click racing a group delete, or a bulk add racing a
+ * list delete. Answered with the same plain 404 as an unknown id, never a 500.
+ * A raw query reports it as P2010 carrying the Postgres code; a Prisma call as
+ * P2003. Returns null for any other error.
+ */
+export function deletedMeanwhile(
+  err: unknown,
+  table: 'ListMembership' | 'LeadGroupMembership',
+  parent: 'List' | 'Group',
+): HttpError | null {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return null
+  const meta = (err.meta ?? {}) as { code?: unknown; message?: unknown; field_name?: unknown }
+  if (err.code !== 'P2003' && !(err.code === 'P2010' && meta.code === '23503')) return null
+  const detail = `${String(meta.message ?? '')} ${String(meta.field_name ?? '')} ${err.message}`
+  return notFound(detail.includes(`${table}_leadId_fkey`) ? 'Lead' : parent)
+}
 
 /** A valid, normalized name, or a 400 with the plain-English reason. */
 export function validName(raw: unknown): string {
@@ -193,6 +214,48 @@ export function groupChipsSql(leadExpr: string): Prisma.Sql {
   return Prisma.raw(`(SELECT COALESCE(json_agg(json_build_object('id', g.id, 'name', g.name, 'color', g.color)
       ORDER BY g."sortOrder", g."createdAt", g.id), '[]'::json)
     FROM "LeadGroupMembership" gm JOIN "LeadGroup" g ON g.id = gm."groupId" WHERE gm."leadId" = ${leadExpr})`)
+}
+
+// ─── Best buyer, for one page of leads ───────────────────────────────────────
+// The same rule as bestBuyerLookup (dealflow-sync/buyer-lookup.ts): the first
+// buyer DealFlow stored on the signal whose recorded CRM lead id is this lead,
+// else on the signal with this lead's Mojo ID. But only this page's signals
+// are read: the whole org's is ~1.7 MB at 4,500 signals, the slowest part of a
+// list page on the Railway link.
+const VALID_BEST = Prisma.raw(
+  `jsonb_typeof(s."dealflowRawJson"->'buyers'->0->'matchId') = 'string' AND btrim(s."dealflowRawJson"->'buyers'->0->>'matchId') <> ''`,
+)
+
+/** CTEs best_by_lead and best_by_mojo for the leads (id, "mojoId") of CTE `pageCte`. */
+export function bestBuyerCtes(organizationId: string, pageCte: string): Prisma.Sql {
+  const page = Prisma.raw(pageCte)
+  return Prisma.sql`best_by_lead AS (
+    SELECT DISTINCT ON (s."dealflowRawJson"->>'crmLeadId') s."dealflowRawJson"->>'crmLeadId' AS lead_id,
+      s."dealflowRawJson"->'buyers'->0 AS best
+    FROM "DealFlowDerivedSignal" s
+    WHERE s."organizationId" = ${organizationId} AND ${VALID_BEST}
+      AND s."dealflowRawJson"->>'crmLeadId' IN (SELECT id FROM ${page})
+    ORDER BY s."dealflowRawJson"->>'crmLeadId', s."queueRank" NULLS LAST, s.id
+  ),
+  best_by_mojo AS (
+    SELECT s."mojoId", s."dealflowRawJson"->'buyers'->0 AS best
+    FROM "DealFlowDerivedSignal" s
+    WHERE s."organizationId" = ${organizationId} AND ${VALID_BEST}
+      AND s."mojoId" IN (SELECT "mojoId" FROM ${page} WHERE "mojoId" IS NOT NULL)
+  )`
+}
+
+/** Joins for bestBuyerCtes; select `COALESCE(bl.best, bm.best)`. */
+export function bestBuyerJoins(leadAlias: string): Prisma.Sql {
+  return Prisma.raw(
+    `LEFT JOIN best_by_lead bl ON bl.lead_id = ${leadAlias}.id LEFT JOIN best_by_mojo bm ON bm."mojoId" = ${leadAlias}."mojoId"`,
+  )
+}
+
+/** The stored buyer as the page shows it: a name, a score, and whether it's test data. Never a phone or email. */
+export function bestBuyerDTO(raw: unknown): BestBuyerDTO | null {
+  const [b] = toBuyers([raw])
+  return b ? { name: buyerName(b), score: b.score, isTestData: b.isTestData } : null
 }
 
 /** max(syncedAt) and the newest DealFlow batch's generatedAt for the org [CONTRACT §3]. */

@@ -1,7 +1,8 @@
 // Brief 45 — lists. A list sits in one folder or outside any folder
 // [Ryan, 2026-10-18]. Names are unique within a folder and, separately, among
 // lists outside folders; archived lists keep their name, so unarchiving can
-// never make a duplicate [CONTRACT §2]. Deleting or archiving a list never
+// never make a duplicate [brief §5.1, the planner's design approved by Ryan
+// 2026-10-18; CONTRACT §2]. Deleting or archiving a list never
 // deletes a lead [brief §5.1]: only its memberships go.
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'

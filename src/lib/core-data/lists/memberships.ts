@@ -7,7 +7,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import type { BulkAddResult, BulkRemoveResult, LeadMemberships } from './types'
-import { notFound, uniqueIds, utc, type Tx } from './sql'
+import { deletedMeanwhile, notFound, uniqueIds, utc, type Tx } from './sql'
 
 type Db = Tx | PrismaClient
 
@@ -20,16 +20,23 @@ export async function insertListMembers(
   addedBy: string,
 ): Promise<BulkAddResult> {
   if (leadIds.length === 0) return { added: 0, alreadyIn: 0, notFound: 0 }
-  const [r] = await db.$queryRaw<{ valid: number; added: number }[]>`
-    WITH valid AS (
-      SELECT l.id FROM "Lead" l WHERE l.id = ANY(${leadIds}::text[]) AND l."organizationId" = ${organizationId}
-    ), ins AS (
-      INSERT INTO "ListMembership" ("listId", "leadId", "addedAt", "addedBy")
-      SELECT ${listId}, v.id, ${utc(new Date())}, ${addedBy} FROM valid v
-      ON CONFLICT DO NOTHING
-      RETURNING "leadId"
-    )
-    SELECT (SELECT count(*)::int FROM valid) AS valid, (SELECT count(*)::int FROM ins) AS added`
+  let r: { valid: number; added: number }
+  try {
+    const rows = await db.$queryRaw<{ valid: number; added: number }[]>`
+      WITH valid AS (
+        SELECT l.id FROM "Lead" l WHERE l.id = ANY(${leadIds}::text[]) AND l."organizationId" = ${organizationId}
+      ), ins AS (
+        INSERT INTO "ListMembership" ("listId", "leadId", "addedAt", "addedBy")
+        SELECT ${listId}, v.id, ${utc(new Date())}, ${addedBy} FROM valid v
+        ON CONFLICT DO NOTHING
+        RETURNING "leadId"
+      )
+      SELECT (SELECT count(*)::int FROM valid) AS valid, (SELECT count(*)::int FROM ins) AS added`
+    r = rows[0]
+  } catch (err) {
+    // The list (or a lead) was deleted after this request checked it.
+    throw deletedMeanwhile(err, 'ListMembership', 'List') ?? err
+  }
   return { added: r.added, alreadyIn: r.valid - r.added, notFound: leadIds.length - r.valid }
 }
 

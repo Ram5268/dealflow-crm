@@ -8,7 +8,7 @@ import { GROUP_COLORS, BULK_MAX, PAGE_SIZE } from '@/lib/core-data/lists/types'
 
 // Brief 45 PR A — the pure rules behind folders, lists, groups and ranking.
 
-describe('names [Ryan 2026-10-18; brief §5.1]', () => {
+describe("names [brief §5.1: the planner's design, approved by Ryan 2026-10-18]", () => {
   it('normalizes to NFC and trims', () => {
     expect(normalizeName('  Hot  ')).toBe('Hot')
     expect(normalizeName('Café')).toBe('Café')
@@ -55,6 +55,14 @@ describe('call attempts (Mojo "Call Attempts") [CONTRACT §3]', () => {
     for (const t of ['three', '-1', '1e3', '3 calls', '', ' ', '.5', '5.', '١٢', null, undefined]) {
       expect(attemptsFrom(null, t)).toBe(0)
     }
+  })
+
+  it('at most 9 digits on each side of the point; longer text counts as 0 [engineering precaution]', () => {
+    expect(attemptsFrom(null, '123456789')).toBe(123456789)
+    expect(attemptsFrom(null, '1.123456789')).toBe(1.123456789)
+    expect(attemptsFrom(null, '1234567890')).toBe(0)
+    expect(attemptsFrom(null, '1.1234567890')).toBe(0)
+    expect(attemptsFrom(null, '1'.repeat(400))).toBe(0) // would overflow Postgres's float8 cast
   })
 })
 

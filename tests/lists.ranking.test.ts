@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import { prismaPerf, perfConnectionString } from "./setup/pg";
 import { makeOrg, dropOrg, makeLead, setField, daysBefore } from "./setup/b45";
 import { createList } from "@/lib/core-data/lists/lists";
@@ -8,6 +8,8 @@ import { createGroup, addGroupMembers } from "@/lib/core-data/lists/groups";
 import { getRankedPage, getRankedIds, exportRankedCsv } from "@/lib/core-data/lists/ranked";
 import { compareRank, attemptsFrom, type RankKey } from "@/lib/core-data/lists/rules";
 import { boroughOf } from "@/lib/core-data/lists/geo";
+import { bestBuyerLookup } from "@/lib/core-data/dealflow-sync/buyer-lookup";
+import { buyerName } from "@/lib/core-data/dealflow-sync/buyers";
 
 // Brief 45 PR A — every list is always ranked, computed on read (brief §5.5,
 // CONTRACT §3), against a real Postgres (CI's db-suite). Made-up leads only.
@@ -141,7 +143,7 @@ describe("paging and filters keep global rank numbers [brief §5.4]", () => {
     expect(await getRankedIds(o, null, { filters: { q: "owner 24" } }, db)).toEqual(ids.slice(240));
   });
 
-  it("a page costs at most 3 queries", async () => {
+  it("a page costs 2 queries (CONTRACT §6a allows 3)", async () => {
     const u = new URL(perfConnectionString());
     u.searchParams.set("connection_limit", "3");
     const client = new PrismaClient({ datasourceUrl: u.toString(), log: [{ emit: "event", level: "query" }] });
@@ -151,10 +153,10 @@ describe("paging and filters keep global rank numbers [brief §5.4]", () => {
     try {
       await counted.$connect();
       await getRankedPage(o, listId, { page: 2, filters: { q: "owner" } }, counted);
-      expect(queries).toBeLessThanOrEqual(3);
+      expect(queries).toBeLessThanOrEqual(2);
       queries = 0;
       await getRankedPage(o, null, {}, counted);
-      expect(queries).toBeLessThanOrEqual(3);
+      expect(queries).toBeLessThanOrEqual(2);
     } finally {
       await counted.$disconnect();
     }
@@ -340,6 +342,52 @@ describe("borough filter: SQL agrees with boroughOf [CONTRACT §4]", () => {
     for (const borough of ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]) {
       const want = ids.filter((_, i) => expected[i] === borough).sort();
       expect((await getRankedIds(o, null, { filters: { borough } }, db)).sort()).toEqual(want);
+    }
+  });
+});
+
+describe("Call Attempts text that is too long counts as 0 [engineering precaution]", () => {
+  it("a few hundred digits can't break the ranked page, and SQL still agrees with compareRank", async () => {
+    const o = await org("digits");
+    const specs: [string, string][] = [["huge", "1".repeat(400)], ["ten", "1234567890"], ["nine", "123456789"], ["small", " 2 "]];
+    const fixture: RankKey[] = [];
+    for (const [key, text] of specs) {
+      const id = `${TAG}_dg_${key}`;
+      await makeLead(db, o, { id, displayName: `Digits owner ${key}`, priorityScore: 50, topMatchFit: 50, createdAt: T });
+      await setField(db, o, id, "Call Attempts", { valueText: text });
+      fixture.push({ id, priorityScore: 50, topMatchFit: 50, createdAt: T, attempts: attemptsFrom(null, text) });
+    }
+    const page = await getRankedPage(o, null, {}, db);
+    expect(page.rows.map((r) => [r.leadId.replace(`${TAG}_dg_`, ""), r.attempts])).toEqual([
+      ["huge", 0], ["ten", 0], ["small", 2], ["nine", 123456789],
+    ]);
+    expect(page.rows.map((r) => r.leadId)).toEqual([...fixture].sort(compareRank).map((f) => f.id));
+  });
+});
+
+describe("best buyer, read for the page's leads only", () => {
+  it("DealFlow's recorded CRM lead id first, else the Mojo ID: the same answer as bestBuyerLookup", async () => {
+    const o = await org("buyers");
+    const buyer = (matchId: string, name: string) => ({ matchId, score: 80, tier: "HOT", type: "mojo", name, isTestData: true });
+    const lead = (key: string, mojoId: string | null) => makeLead(db, o, { id: `${TAG}_bb_${key}`, displayName: `Buyer owner ${key}`, mojoId });
+    const signal = (mojoId: string, crmLeadId: string | null, buyers: Prisma.InputJsonObject[]) =>
+      db.dealFlowDerivedSignal.create({ data: { organizationId: o, mojoId, dealflowRawJson: { crmLeadId, buyers } } });
+    const a = await lead("a", `${TAG}_mA`);
+    const b = await lead("b", `${TAG}_mB`);
+    const c = await lead("c", `${TAG}_mC`);
+    const d = await lead("d", null);
+    await signal(`${TAG}_mA_df`, a, [buyer("x", "Buyer X")]); // names lead a directly: wins
+    await signal(`${TAG}_mA`, null, [buyer("y", "Buyer Y")]);
+    await signal(`${TAG}_mB`, null, [buyer("z", "Buyer Z")]); // by Mojo ID only
+    await signal(`${TAG}_mC_df`, c, [{ name: "No match id" }]); // not a usable buyer: skipped
+    await signal(`${TAG}_mC`, null, [buyer("w", "Buyer W")]);
+    const page = await getRankedPage(o, null, {}, db);
+    const got = Object.fromEntries(page.rows.map((r) => [r.leadId, r.bestBuyer?.name ?? null]));
+    expect(got).toEqual({ [a]: "Buyer X", [b]: "Buyer Z", [c]: "Buyer W", [d]: null });
+    const lookup = await bestBuyerLookup(o, db);
+    for (const r of page.rows) {
+      const old = lookup({ leadId: r.leadId, mojoId: (await db.lead.findUniqueOrThrow({ where: { id: r.leadId } })).mojoId });
+      expect(r.bestBuyer?.name ?? null).toBe(old ? buyerName(old) : null);
     }
   });
 });

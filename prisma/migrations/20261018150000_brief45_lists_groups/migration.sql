@@ -7,6 +7,13 @@
 -- and none of the 4 cosmetic id defaults in docs/known-drift.md appear here.
 -- Apply with `prisma migrate deploy` (never `prisma migrate dev`).
 
+-- [engineering precaution] Give up and roll back after 5 s instead of queueing
+-- behind a long transaction on "Lead", "ImportBatch" or "Organization": while
+-- it waits, this transaction already holds ImportBatch exclusively and blocks
+-- new Lead writes, and the server keeps waiting even if the client is killed.
+-- On a timeout: `prisma migrate resolve --rolled-back <this migration>`, retry.
+SET LOCAL lock_timeout = '5s';
+
 -- AlterTable
 ALTER TABLE "ImportBatch" ADD COLUMN     "dealflowScoreError" TEXT,
 ADD COLUMN     "dealflowScoreTokenHash" TEXT,

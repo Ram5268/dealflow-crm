@@ -1,5 +1,6 @@
-// Brief 45 — folders. A folder holds lists only: no folder inside a folder and
-// no groups in folders [Ryan, 2026-10-18]. There is no parent column, so
+// Brief 45 — folders. A folder holds lists only, never another folder
+// [Ryan, 2026-10-18], and groups don't go in folders [brief §5.1]. There is no
+// parent column, so
 // nesting is impossible by construction. A folder is deleted only when it has
 // no lists at all, archived ones included [brief §5.1; CONTRACT §2].
 import type { PrismaClient } from '@prisma/client'

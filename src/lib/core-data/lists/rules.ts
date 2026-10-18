@@ -2,7 +2,7 @@
 // no Prisma: the server uses them, and so can the browser.
 import { GROUP_COLORS, NAME_MAX, type GroupColor, type NotRankedReason, type RankState } from './types'
 
-// ─── Names [Ryan, 2026-10-18; brief §5.1] ────────────────────────────────────
+// ─── Names [brief §5.1: the planner's design, approved by Ryan 2026-10-18] ───
 
 export const NAME_LENGTH_ERROR = `Name must be 1–${NAME_MAX} characters.`
 export const NAME_CONTROL_ERROR = "Names can't contain line breaks, tabs or other control characters."
@@ -38,10 +38,12 @@ export const COLOR_ERROR = `Pick one of these colors: ${GROUP_COLORS.join(', ')}
 
 // Mojo's "Call Attempts": valueNumber, else a strictly numeric valueText, else
 // 0. ASCII digits and whitespace only, spelled the same way in SQL (sql.ts),
-// so the database and compareRank always agree.
-const ATTEMPTS_RE = /^[ \t\n\r\f\v]*([0-9]+(?:\.[0-9]+)?)[ \t\n\r\f\v]*$/
+// so the database and compareRank always agree. At most 9 digits on each side
+// of the point [engineering precaution]: a few hundred digits would overflow
+// Postgres's float8 cast and break every ranked page of the org.
+const ATTEMPTS_RE = /^[ \t\n\r\f\v]*([0-9]{1,9}(?:\.[0-9]{1,9})?)[ \t\n\r\f\v]*$/
 /** The same pattern for Postgres (capture group 1 is the number). */
-export const ATTEMPTS_PATTERN_SQL = '^[ \t\n\r\f\v]*([0-9]+(\\.[0-9]+)?)[ \t\n\r\f\v]*$'
+export const ATTEMPTS_PATTERN_SQL = '^[ \t\n\r\f\v]*([0-9]{1,9}(\\.[0-9]{1,9})?)[ \t\n\r\f\v]*$'
 
 export function attemptsFrom(valueNumber: number | null | undefined, valueText: string | null | undefined): number {
   if (valueNumber !== null && valueNumber !== undefined) return valueNumber

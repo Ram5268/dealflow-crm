@@ -1,6 +1,7 @@
 // Brief 45 — the Pipeline page's data [brief §5.6; CONTRACT §6b]: one column
-// per group (board) or one row per lead (table), with the filters Ryan asked
-// for. Organization only: nothing here contacts anyone.
+// per group (board) or one row per lead (table). Ryan asked for a customizable
+// page with filters [Ryan, 2026-10-18]; which filters is the planner's design
+// [brief §5.6]. Organization only: nothing here contacts anyone.
 //
 // Filter → data mapping (also in the PR description):
 //   list / folder   membership in that list / any active list of that folder
@@ -21,19 +22,17 @@ import { z } from 'zod'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
-import { bestBuyerLookup } from '@/lib/core-data/dealflow-sync/buyer-lookup'
-import { buyerName } from '@/lib/core-data/dealflow-sync/buyers'
 import {
   BOARD_PAGE_SIZE, BOROUGHS, PAGE_SIZE, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
-  type BestBuyerDTO, type GroupChipDTO, type PipelineCard, type PipelineColumn, type PipelineFilterOptions,
+  type GroupChipDTO, type PipelineCard, type PipelineColumn, type PipelineFilterOptions,
   type PipelineFilters, type PipelineQuery, type PipelineResult, type PipelineRow, type PipelineSortKey, type SortDir,
 } from './types'
 import { HOT_MIN_FIT, STRONG_BUYER_MIN_FIT, WARM_MIN_FIT } from './rules'
 import { NEIGHBORHOODS, cleanText } from './geo'
 import { listGroups } from './groups'
 import {
-  FIELD, NY, attemptsOf, badRequest, boroughSql, cleanSql, defsCte, fieldValue, groupChipsSql, leadInOrg, likePattern,
-  neighborhoodSql, unitsSql, utc, zipOf,
+  FIELD, NY, attemptsOf, badRequest, bestBuyerCtes, bestBuyerDTO, bestBuyerJoins, boroughSql, cleanSql, defsCte, fieldValue,
+  groupChipsSql, leadInOrg, likePattern, neighborhoodSql, unitsSql, utc, zipOf,
 } from './sql'
 
 // ─── The filters, as the query string spells them ────────────────────────────
@@ -107,7 +106,7 @@ export function parsePipelineQuery(sp: URLSearchParams): PipelineQuery {
   set('taskDue', oneOf(get('taskDue'), TASK_DUE, 'task filter'))
   set('timeInGroup', oneOf(get('timeInGroup'), TIME_IN_GROUP, 'time-in-group filter'))
   set('multiGroup', flag(get('multiGroup'), 'multi-group filter'))
-  set('q', get('q'))
+  set('q', get('q')?.slice(0, 200)) // like list pages' search box
   const page = Number.parseInt(get('page') ?? '1', 10)
   return {
     view: oneOf(get('view'), PIPELINE_VIEWS, 'view') ?? 'board',
@@ -195,8 +194,9 @@ const activityInOrg = (org: string) => Prisma.sql`(a."organizationId" = ${org}) 
 function leadConditions(ctx: Ctx): Prisma.Sql[] {
   const f = ctx.filters
   const conds: Prisma.Sql[] = []
-  if (f.q?.trim()) {
-    const p = likePattern(f.q.trim())
+  const q = f.q?.trim().slice(0, 200)
+  if (q) {
+    const p = likePattern(q)
     conds.push(Prisma.sql`(i."displayName" ILIKE ${p} OR i."primaryAddressSummary" ILIKE ${p})`)
   }
   if (f.list) {
@@ -255,6 +255,7 @@ interface CardSql {
   groups: GroupChipDTO[]
   next_text: string | null
   next_due_date: Date | null
+  best_buyer: unknown
 }
 
 interface RowSql extends Omit<CardSql, 'group_id' | 'col_count' | 'added_at'> {
@@ -287,7 +288,7 @@ export async function getPipeline(
   const now = opts.now ?? new Date()
   const today = DateTime.fromJSDate(now).setZone(NY).startOf('day')
   const sunday = today.plus({ days: (7 - today.weekday) % 7 })
-  const groups = await listGroups(organizationId, db)
+  const [groups, filterOptions] = await Promise.all([listGroups(organizationId, db), loadFilterOptions(organizationId, db)])
   // Columns in sidebar order, whatever order they were asked in; another
   // org's or an unknown group is ignored.
   const wanted = query.groups ? new Set(query.groups) : null
@@ -299,11 +300,6 @@ export async function getPipeline(
     now,
     today: today.toISODate()!,
     sunday: sunday.toISODate()!,
-  }
-  const [best, filterOptions] = await Promise.all([bestBuyerLookup(organizationId, db), loadFilterOptions(organizationId, db)])
-  const bestOf = (leadId: string, mojoId: string | null): BestBuyerDTO | null => {
-    const b = best({ leadId, mojoId })
-    return b ? { name: buyerName(b), score: b.score, isTestData: b.isTestData } : null
   }
   const nextTask = (r: { next_text: string | null; next_due_date: Date | null }) =>
     r.next_text === null ? null : { text: r.next_text, dueDate: r.next_due_date?.toISOString() ?? null }
@@ -317,20 +313,23 @@ export async function getPipeline(
       per_lead AS (SELECT c.id, min(c.added_at) AS in_group_since FROM cand c GROUP BY c.id),
       f AS (SELECT p.in_group_since, i.* FROM per_lead p JOIN info i ON i.id = p.id
             WHERE ${and([...leadConditions(ctx), ...timeInGroup(ctx, 'p.in_group_since')])}),
-      page AS (SELECT * FROM f ORDER BY ${sortSql('f', sort, dir)} LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE})
+      page AS (SELECT * FROM f ORDER BY ${sortSql('f', sort, dir)} LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}),
+      ${bestBuyerCtes(organizationId, 'page')}
       SELECT t.total, p.id, p."displayName", p."primaryAddressSummary" AS address, p.in_group_since, p.rank, p."mojoId",
         p."priorityScore", p."topMatchFit", p.last_contact_at, p.next_due,
-        ${groupChipsSql('p.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date
+        ${groupChipsSql('p.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date,
+        COALESCE(bl.best, bm.best) AS best_buyer
       FROM (SELECT count(*)::int AS total FROM f) t
       LEFT JOIN page p ON true
       ${nextTaskJoin('p.id')}
+      ${bestBuyerJoins('p')}
       ORDER BY ${sortSql('p', sort, dir)}`
     const out: PipelineRow[] = rows.filter((r) => r.id !== null).map((r) => ({
       leadId: r.id as string,
       displayName: r.displayName,
       address: r.address,
       value: null,
-      bestBuyer: bestOf(r.id as string, r.mojoId),
+      bestBuyer: bestBuyerDTO(r.best_buyer),
       lastContactAt: r.last_contact_at?.toISOString() ?? null,
       nextTask: nextTask(r),
       inGroupSince: r.in_group_since.toISOString(),
@@ -352,14 +351,18 @@ export async function getPipeline(
     f AS (SELECT c.group_id, c.added_at, i.* FROM cand c JOIN info i ON i.id = c.id
           WHERE ${and([...leadConditions(ctx), ...timeInGroup(ctx, 'c.added_at')])}),
     numbered AS (SELECT f.*, (row_number() OVER (PARTITION BY f.group_id ORDER BY f.rank))::int AS pos FROM f),
-    counts AS (SELECT group_id, count(*)::int AS n FROM f GROUP BY group_id)
+    counts AS (SELECT group_id, count(*)::int AS n FROM f GROUP BY group_id),
+    shown_cards AS (SELECT * FROM numbered WHERE pos > ${offset} AND pos <= ${offset + BOARD_PAGE_SIZE}),
+    ${bestBuyerCtes(organizationId, 'shown_cards')}
     SELECT g.gid AS group_id, COALESCE(counts.n, 0) AS col_count, n.id, n."displayName", n."primaryAddressSummary" AS address,
       n.added_at, n.rank, n."mojoId", n.last_contact_at,
-      ${groupChipsSql('n.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date
+      ${groupChipsSql('n.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date,
+      COALESCE(bl.best, bm.best) AS best_buyer
     FROM unnest(${columnIds}::text[]) AS g(gid)
     LEFT JOIN counts ON counts.group_id = g.gid
-    LEFT JOIN numbered n ON n.group_id = g.gid AND n.pos > ${offset} AND n.pos <= ${offset + BOARD_PAGE_SIZE}
+    LEFT JOIN shown_cards n ON n.group_id = g.gid
     ${nextTaskJoin('n.id')}
+    ${bestBuyerJoins('n')}
     ORDER BY g.gid, n.pos`
   const columns: PipelineColumn[] = columnGroups.map((group) => {
     const mine = cards.filter((c) => c.group_id === group.id)
@@ -371,7 +374,7 @@ export async function getPipeline(
         displayName: c.displayName,
         address: c.address,
         value: null,
-        bestBuyer: bestOf(c.id as string, c.mojoId),
+        bestBuyer: bestBuyerDTO(c.best_buyer),
         lastContactAt: c.last_contact_at?.toISOString() ?? null,
         nextTask: nextTask(c),
         inGroupSince: c.added_at.toISOString(),

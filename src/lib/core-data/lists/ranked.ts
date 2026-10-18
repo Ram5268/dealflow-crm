@@ -1,5 +1,6 @@
-// Brief 45 — every list, and All leads, always shown ranked [Ryan, 2026-10-18;
-// brief §5.5]. The rank is computed when the list is read, never stored:
+// Brief 45 — every list, and All leads, always shown ranked [Ryan, 2026-10-18].
+// The order is the planner's design [brief §5.5], computed when the list is
+// read and never stored:
 //   1. DealFlow priority, highest first, unscored last;
 //   2. then best buyer fit, highest first;
 //   3. then fewest call attempts (Mojo's "Call Attempts"; missing = 0);
@@ -10,24 +11,22 @@
 //
 // The rank is row_number() over the WHOLE list; search and filters apply
 // after it, so each person's number is their place in the full list
-// [brief §5.4]. A page is 100 rows in at most 3 queries. Display-only: no
+// [brief §5.4]. A page is 100 rows in 2 queries. Display-only: no
 // phone numbers or emails are selected, and nothing here calls, texts or
 // emails anyone.
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
-import { bestBuyerLookup } from '@/lib/core-data/dealflow-sync/buyer-lookup'
-import { buyerName, type DealflowBuyer } from '@/lib/core-data/dealflow-sync/buyers'
 import { reasonText, timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { rankStateOf, STRONG_BUYER_MIN_FIT } from './rules'
 import {
   CALLING_OFF_REASON, IDS_CAP, PAGE_SIZE,
-  type BestBuyerDTO, type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow,
+  type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow,
 } from './types'
 import {
-  NY, attemptsOf, boroughSql, defsCte, fieldValue, groupChipsSql, leadInOrg, likePattern, notFound, rankingTimesSql, utc,
-  zipOf,
+  NY, attemptsOf, bestBuyerCtes, bestBuyerDTO, bestBuyerJoins, boroughSql, defsCte, fieldValue, groupChipsSql, leadInOrg,
+  likePattern, notFound, rankingTimesSql, utc, zipOf,
 } from './sql'
 import { fileStem, toCsv } from './csv'
 
@@ -72,7 +71,7 @@ function calledTodaySql(ctx: Ctx, alias: string): Prisma.Sql {
 function whereSql(ctx: Ctx): Prisma.Sql {
   const f = ctx.filters
   const conds: Prisma.Sql[] = []
-  const q = f.q?.trim()
+  const q = f.q?.trim().slice(0, 200)
   if (q) {
     const p = likePattern(q)
     conds.push(Prisma.sql`(r."displayName" ILIKE ${p} OR r."primaryAddressSummary" ILIKE ${p})`)
@@ -133,19 +132,23 @@ interface RowSql {
   last_result: string | null
   timezone: string | null
   called_today: boolean
+  best_buyer: unknown
 }
 
 function rowsQuery(ctx: Ctx, limit: number, offset: number): Prisma.Sql {
   return Prisma.sql`${rankedCtes(ctx)},
-  page AS (SELECT * FROM filtered ORDER BY rank LIMIT ${limit} OFFSET ${offset})
+  page AS (SELECT * FROM filtered ORDER BY rank LIMIT ${limit} OFFSET ${offset}),
+  ${bestBuyerCtes(ctx.org, 'page')}
   SELECT t.total, p.id, p."displayName", p."primaryAddressSummary" AS address, p."priorityScore", p."topMatchFit",
     p."createdAt", p."mojoId", p."matchReason", p."dealflowSignalSyncedAt", p.added_at, p.attempts, p.rank,
     ${groupChipsSql('p.id')} AS groups,
     ${fieldValue('last_result', 'valueText', 'p.id')} AS last_result,
     COALESCE((SELECT c.timezone FROM "Contact" c WHERE c."leadId" = p.id ORDER BY c."createdAt", c.id COLLATE "C" LIMIT 1), p.lead_tz) AS timezone,
-    ${ctx.callingOn ? calledTodaySql(ctx, 'p') : Prisma.sql`false`} AS called_today
+    ${ctx.callingOn ? calledTodaySql(ctx, 'p') : Prisma.sql`false`} AS called_today,
+    COALESCE(bl.best, bm.best) AS best_buyer
   FROM (SELECT count(*)::int AS total FROM filtered) t
   LEFT JOIN page p ON true
+  ${bestBuyerJoins('p')}
   ORDER BY p.rank`
 }
 
@@ -191,21 +194,16 @@ function metaQuery(ctx: Ctx): Prisma.Sql {
 // yet)", never "OK to call" [engineering precaution: no compliance claim].
 const DEFAULT_WINDOW: CallingWindowDTO = { earliestHour: 9, latestHour: 20, allowedDaysOfWeek: [1, 2, 3, 4, 5], confirmed: false }
 
-function toBestBuyer(b: DealflowBuyer | null): BestBuyerDTO | null {
-  return b ? { name: buyerName(b), score: b.score, isTestData: b.isTestData } : null
-}
-
 async function load(db: PrismaClient, ctx: Ctx, limit: number, offset: number) {
-  const [meta, rows, best] = await Promise.all([
+  const [meta, rows] = await Promise.all([
     db.$queryRaw<MetaSql[]>(metaQuery(ctx)),
     db.$queryRaw<RowSql[]>(rowsQuery(ctx, limit, offset)),
-    bestBuyerLookup(ctx.org, db),
   ])
   if (meta.length === 0) throw notFound('List')
-  return { meta: meta[0], rows, best }
+  return { meta: meta[0], rows }
 }
 
-function toRows(rows: RowSql[], meta: MetaSql, best: Awaited<ReturnType<typeof bestBuyerLookup>>): RankedRow[] {
+function toRows(rows: RowSql[], meta: MetaSql): RankedRow[] {
   return rows
     .filter((r) => r.id !== null)
     .map((r) => {
@@ -220,7 +218,7 @@ function toRows(rows: RowSql[], meta: MetaSql, best: Awaited<ReturnType<typeof b
         rankState,
         notRankedReason,
         whyNow: reasonText(r.matchReason),
-        bestBuyer: toBestBuyer(best({ leadId: r.id as string, mojoId: r.mojoId })),
+        bestBuyer: bestBuyerDTO(r.best_buyer),
         groups: r.groups ?? [],
         attempts: Number(r.attempts),
         lastResult: r.last_result,
@@ -242,8 +240,8 @@ export async function getRankedPage(
 ): Promise<RankedPage> {
   const ctx = context(organizationId, listId, opts)
   const page = pageNumber(opts.page)
-  const { meta, rows, best } = await load(db, ctx, PAGE_SIZE, (page - 1) * PAGE_SIZE)
-  const ranked = toRows(rows, meta, best)
+  const { meta, rows } = await load(db, ctx, PAGE_SIZE, (page - 1) * PAGE_SIZE)
+  const ranked = toRows(rows, meta)
 
   const callingWindows: Record<string, CallingWindowDTO> = {}
   for (const w of meta.windows) {
@@ -303,8 +301,8 @@ export async function exportRankedCsv(
   db: PrismaClient = prisma,
 ): Promise<{ filename: string; csv: string; truncated: boolean }> {
   const ctx = context(organizationId, listId, opts)
-  const { meta, rows, best } = await load(db, ctx, IDS_CAP, 0)
-  const ranked = toRows(rows, meta, best)
+  const { meta, rows } = await load(db, ctx, IDS_CAP, 0)
+  const ranked = toRows(rows, meta)
   const csv = toCsv(EXPORT_COLUMNS, ranked.map((r) => [
     r.rank, r.displayName, r.address, r.priorityScore, r.topMatchFit, r.whyNow, r.bestBuyer?.name ?? null,
     r.groups.map((g) => g.name).join('; '), r.attempts, r.lastResult, timezoneLabel(r.timezone),

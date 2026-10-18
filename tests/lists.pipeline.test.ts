@@ -51,6 +51,12 @@ beforeAll(async () => {
   await setField(db, o, L.l3, "Property Type", { valueText: "Single Family Residence" });
   await setField(db, o, L.l4, "Property Type", { valueText: "Apartment House (5+ Units)" });
   await setField(db, o, L.l1, "Last Contacted Date", { valueDate: new Date("2026-10-11T00:00:00Z") }, "date"); // NY wall clock
+  await db.dealFlowDerivedSignal.create({
+    data: {
+      organizationId: o, mojoId: `${TAG}_sig_l1`,
+      dealflowRawJson: { crmLeadId: L.l1, buyers: [{ matchId: "m_p1", score: 88, type: "opportunity", name: "Agent Pipeline", brokerage: "Example Realty", isTestData: true, phone: "+12125550188" }] },
+    },
+  });
 
   const activity = (leadId: string, type: string, days: number) =>
     db.activity.create({ data: { organizationId: o, leadId, type, activityAt: daysBefore(NOW, days), bodyText: type === "Group" ? "Added to Hot" : null } });
@@ -100,12 +106,15 @@ describe("Pipeline table [brief §5.6]", () => {
     const r1 = t.rows[0];
     expect(r1.groups.map((g) => g.name)).toEqual(["Hot", "Nurture"]); // one row, both chips
     expect(r1).toMatchObject({
-      leadId: L.l1, address: "101 Example St", value: null, bestBuyer: null,
+      leadId: L.l1, address: "101 Example St", value: null,
+      bestBuyer: { name: "Agent Pipeline · Example Realty", score: 88, isTestData: true },
       lastContactAt: "2026-10-11T04:00:00.000Z",
       nextTask: { text: "Call back", dueDate: "2026-10-14T18:00:00.000Z" },
       inGroupSince: daysBefore(NOW, 100).toISOString(),
     });
     expect(t.rows.find((r) => r.leadId === L.l3)?.lastContactAt).toBeNull(); // Group entries never count
+    expect(t.rows.find((r) => r.leadId === L.l2)?.bestBuyer).toBeNull();
+    expect(JSON.stringify(t)).not.toMatch(/5550188/); // never a phone
     expect(t.filterOptions.propertyTypes).toEqual(["Apartment House (5+ Units)", "Duplex", "Single Family Residence", "Triplex"]);
     expect(t.filterOptions.boroughs).toEqual(["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]);
     expect(t.filterOptions.neighborhoods).toContain("Park Slope");
@@ -183,6 +192,7 @@ describe("Pipeline board [brief §5.6]", () => {
     expect(hot.cards.map((c) => c.displayName)).toEqual(["Pipeline owner 1", "Pipeline owner 2"]);
     expect(hot.cards[0]).toMatchObject({
       leadId: L.l1, rank: 2, value: null, alsoIn: [{ id: G.nurture, name: "Nurture" }],
+      bestBuyer: { name: "Agent Pipeline · Example Realty", score: 88, isTestData: true },
       inGroupSince: daysBefore(NOW, 100).toISOString(), lastContactAt: "2026-10-11T04:00:00.000Z",
       nextTask: { text: "Call back", dueDate: "2026-10-14T18:00:00.000Z" },
     });
@@ -239,6 +249,7 @@ describe("Pipeline query string [CONTRACT §6b]", () => {
       filters: { list: "l", folder: "f", borough: "Queens", neighborhood: "Park Slope", propertyType: "Duplex", units: "5+", tier: "warm", strongBuyer: "1", lastContact: "over30", taskDue: "week", timeInGroup: "60", multiGroup: "1", q: "ex" },
     });
     expect(parsePipelineQuery(new URLSearchParams(""))).toMatchObject({ view: "board", groups: undefined, page: 1, filters: {} });
+    expect(parsePipelineQuery(new URLSearchParams(`q=${"x".repeat(300)}`)).filters.q).toHaveLength(200); // like list pages
     for (const bad of ["view=list", "tier=scorching", "units=6", "lastContact=over5", "taskDue=tomorrow", "timeInGroup=10", "sort=priority", "dir=up", "borough=Jersey", "value=1000000"]) {
       expect(() => parsePipelineQuery(new URLSearchParams(bad))).toThrow();
     }

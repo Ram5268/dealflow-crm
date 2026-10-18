@@ -2,8 +2,8 @@
 // returns and the browser sends. Client-safe: no Prisma import, so client.ts
 // (browser) and the server share these. Dates travel as ISO strings.
 //
-// Nothing here contacts anyone. Folders, lists, groups and the Pipeline are
-// organization only [Ryan, 2026-09-24 and 2026-10-18].
+// Nothing here contacts anyone [Ryan, 2026-09-24: nothing contacts a lead]:
+// folders, lists, groups and the Pipeline only organize [brief §4].
 
 export const NAME_MAX = 60
 /** Leads per bulk add/remove request; the UI chunks bigger selections [engineering precaution]. */

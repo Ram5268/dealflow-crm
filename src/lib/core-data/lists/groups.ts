@@ -9,7 +9,8 @@ import { prisma } from '@/lib/prisma'
 import type { BulkAddResult, BulkRemoveResult, GroupColor, GroupDTO } from './types'
 import { COLOR_ERROR, isGroupColor } from './rules'
 import {
-  GROUP_SCOPE, STALE_ORDER, TX, badRequest, conflict, findClash, lockScope, notFound, sameSet, uniqueIds, utc, validName, type Tx,
+  GROUP_SCOPE, STALE_ORDER, TX, badRequest, conflict, deletedMeanwhile, findClash, lockScope, notFound, sameSet, uniqueIds, utc,
+  validName, type Tx,
 } from './sql'
 import { addedTo, removedByDelete, removedFrom, writeGroupEntries } from './timeline'
 
@@ -65,17 +66,23 @@ async function assertLead(db: Db, organizationId: string, leadId: string): Promi
 // that were really added (others were already in, or aren't this org's).
 async function insertMembers(tx: Tx, organizationId: string, groupId: string, leadIds: string[], addedBy: string, at: Date): Promise<{ valid: number; added: string[] }> {
   if (leadIds.length === 0) return { valid: 0, added: [] }
-  const rows = await tx.$queryRaw<{ leadId: string | null; valid: number }[]>`
-    WITH valid AS (
-      SELECT l.id FROM "Lead" l WHERE l.id = ANY(${leadIds}::text[]) AND l."organizationId" = ${organizationId}
-    ), ins AS (
-      INSERT INTO "LeadGroupMembership" ("groupId", "leadId", "addedAt", "addedBy")
-      SELECT ${groupId}, v.id, ${utc(at)}, ${addedBy} FROM valid v
-      ON CONFLICT DO NOTHING
-      RETURNING "leadId"
-    )
-    SELECT ins."leadId", (SELECT count(*)::int FROM valid) AS valid
-    FROM (SELECT 1) one LEFT JOIN ins ON true`
+  let rows: { leadId: string | null; valid: number }[]
+  try {
+    rows = await tx.$queryRaw<{ leadId: string | null; valid: number }[]>`
+      WITH valid AS (
+        SELECT l.id FROM "Lead" l WHERE l.id = ANY(${leadIds}::text[]) AND l."organizationId" = ${organizationId}
+      ), ins AS (
+        INSERT INTO "LeadGroupMembership" ("groupId", "leadId", "addedAt", "addedBy")
+        SELECT ${groupId}, v.id, ${utc(at)}, ${addedBy} FROM valid v
+        ON CONFLICT DO NOTHING
+        RETURNING "leadId"
+      )
+      SELECT ins."leadId", (SELECT count(*)::int FROM valid) AS valid
+      FROM (SELECT 1) one LEFT JOIN ins ON true`
+  } catch (err) {
+    // The group (or a lead) was deleted after this request checked it.
+    throw deletedMeanwhile(err, 'LeadGroupMembership', 'Group') ?? err
+  }
   return { valid: rows[0]?.valid ?? 0, added: rows.map((r) => r.leadId).filter((id): id is string => id !== null) }
 }
 

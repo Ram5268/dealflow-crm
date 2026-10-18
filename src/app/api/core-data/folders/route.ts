@@ -5,8 +5,8 @@ import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { createFolder } from '@/lib/core-data/lists/folders'
 import { parseFolderBody } from '@/lib/core-data/lists/route-helpers'
 
-// Brief 45: create a folder. A folder holds lists only, so the body is a name
-// and nothing else [Ryan, 2026-10-18].
+// Brief 45: create a folder. A folder holds lists only [Ryan, 2026-10-18], so
+// the body is a name and nothing else.
 const bodySchema = z.strictObject({ name: z.unknown() })
 
 export const POST = withRoute(async (req: NextRequest, { correlationId }) => {

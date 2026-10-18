@@ -11,6 +11,9 @@ import {
 import { addListMembers, removeListMembers, getLeadMemberships } from "@/lib/core-data/lists/memberships";
 import { getSidebar } from "@/lib/core-data/lists/sidebar";
 import { getRankedIds } from "@/lib/core-data/lists/ranked";
+import { compile, compileOrderBy } from "@/lib/core-data/query-dsl/compiler";
+import { execute } from "@/lib/core-data/query-dsl/executor";
+import type { SQuery } from "@/lib/core-data/query-dsl/schema";
 
 // Brief 45 PR A — folders, lists, groups and memberships against a real
 // Postgres (CI's db-suite), inside throwaway organizations. Made-up leads only.
@@ -46,7 +49,7 @@ afterAll(async () => {
   await db?.$disconnect();
 });
 
-describe("names [Ryan 2026-10-18; brief §5.1]", () => {
+describe("names [brief §5.1: the planner's design, approved by Ryan 2026-10-18]", () => {
   it("folder names are unique per org, case-insensitively and trimmed", async () => {
     const f = await createFolder(org, { name: "  Expireds  " }, db);
     expect(f.name).toBe("Expireds");
@@ -212,8 +215,8 @@ describe("leads are never deleted by list or group changes [brief §5.1]", () =>
   });
 });
 
-describe("memberships [Ryan 2026-10-18]", () => {
-  it("adding to or removing from a group never changes list membership", async () => {
+describe("memberships", () => {
+  it("adding to or removing from a group never changes list membership [Ryan 2026-10-18]", async () => {
     const [a, b] = await leads(2, "Call order");
     const list = await createList(org, { name: "Call order list", leadIds: [a, b] }, db);
     const g = await createGroup(org, { name: "Nurture" }, db);
@@ -231,7 +234,7 @@ describe("memberships [Ryan 2026-10-18]", () => {
     expect(await order()).toEqual(before);
   });
 
-  it("one lead on two lists and in two groups is one lead", async () => {
+  it("one lead on two lists and in two groups is one lead [Ryan 2026-10-18]", async () => {
     const [p] = await leads(1, "Twice listed");
     const l1 = await createList(org, { name: "First of two", leadIds: [p] }, db);
     const l2 = await createList(org, { name: "Second of two", leadIds: [p] }, db);
@@ -249,7 +252,7 @@ describe("memberships [Ryan 2026-10-18]", () => {
     expect(m.groupIds).toEqual([g1.group.id, g2.group.id]); // sidebar order
   });
 
-  it("single and bulk adds/removes are idempotent and report counts", async () => {
+  it("single and bulk adds/removes are idempotent and report counts [CONTRACT §2]", async () => {
     const ids = await leads(4, "Idempotent");
     const list = await createList(org, { name: "Idempotent list" }, db);
     expect(await addListMembers(org, list.list.id, [ids[0], ids[0], ids[1]], {}, db)).toEqual({ added: 2, alreadyIn: 0, notFound: 0 });
@@ -268,7 +271,7 @@ describe("memberships [Ryan 2026-10-18]", () => {
     expect(await db.leadGroupMembership.count({ where: { groupId: g.group.id } })).toBe(0);
   });
 
-  it("more than 5,000 ids in one request is refused", async () => {
+  it("more than 5,000 ids in one request is refused [engineering precaution]", async () => {
     const list = await createList(org, { name: "Bulk limit" }, db);
     const g = await createGroup(org, { name: "Bulk limit" }, db);
     const tooMany = Array.from({ length: 5_001 }, (_, i) => `x${i}`);
@@ -283,7 +286,7 @@ describe("memberships [Ryan 2026-10-18]", () => {
     expect(await addListMembers(org, list.list.id, exactly, {}, db)).toEqual({ added: 0, alreadyIn: 0, notFound: 5_000 });
   });
 
-  it("timeline entries are written only for real changes", async () => {
+  it("timeline entries are written only for real changes [brief §5.3]", async () => {
     const [p] = await leads(1, "Timeline");
     const hot = await createGroup(org, { name: "Timeline Hot" }, db);
     const nurture = await createGroup(org, { name: "Timeline Nurture" }, db);
@@ -466,6 +469,85 @@ describe("sidebar and lead memberships", () => {
         { id: l1.list.id, name: "Expireds – Oct 2026", folderName: "Expireds" },
         { id: l3.list.id, name: "Referrals", folderName: null },
       ]);
+    } finally {
+      await dropOrg(db, o);
+    }
+  });
+});
+
+describe("an add racing a delete is a plain 404, never a 500", () => {
+  // Delete inside a transaction that stays open until the other request is
+  // waiting on the deleted row's lock (it already checked the row exists),
+  // then commit: its insert then hits the foreign key (Postgres 23503).
+  async function racingDelete(remove: (tx: Prisma.TransactionClient) => Promise<unknown>, request: () => Promise<unknown>) {
+    let started!: () => void;
+    const deleted = new Promise<void>((r) => (started = r));
+    let pending: Promise<unknown> = Promise.resolve();
+    const t1 = db.$transaction(async (tx) => {
+      await remove(tx);
+      started();
+      for (let i = 0; i < 200; i++) {
+        const [w] = await db.$queryRaw<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        if (w.n > 0) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    }, { timeout: 20_000 });
+    await deleted;
+    pending = request();
+    pending.catch(() => undefined);
+    await t1;
+    return pending;
+  }
+
+  it("a chip click racing a group delete", async () => {
+    const [p] = await leads(1, "Race chip");
+    const g = await createGroup(org, { name: "Race delete group" }, db);
+    await expect(racingDelete((tx) => tx.leadGroup.delete({ where: { id: g.group.id } }), () => addLeadToGroup(org, g.group.id, p, db)))
+      .rejects.toEqual(err(404, "Group not found."));
+    expect(await db.leadGroupMembership.count({ where: { leadId: p } })).toBe(0);
+    expect(await db.activity.count({ where: { leadId: p, type: "Group" } })).toBe(0);
+  });
+
+  it("a bulk add racing a list delete", async () => {
+    const ids = await leads(2, "Race bulk");
+    const list = await createList(org, { name: "Race delete list" }, db);
+    await expect(racingDelete((tx) => tx.callList.delete({ where: { id: list.list.id } }), () => addListMembers(org, list.list.id, ids, {}, db)))
+      .rejects.toEqual(err(404, "List not found."));
+    expect(await db.listMembership.count({ where: { leadId: { in: ids } } })).toBe(0);
+  });
+
+  it("a bulk group add racing a group delete", async () => {
+    const ids = await leads(2, "Race group bulk");
+    const g = await createGroup(org, { name: "Race delete bulk group" }, db);
+    await expect(racingDelete((tx) => tx.leadGroup.delete({ where: { id: g.group.id } }), () => addGroupMembers(org, g.group.id, ids, db)))
+      .rejects.toEqual(err(404, "Group not found."));
+  });
+});
+
+describe("Smart Views: a group label is not activity [engineering precaution]", () => {
+  it("activity conditions skip 'Group' timeline entries", async () => {
+    const o = await makeOrg(db, `${TAG}_dsl`);
+    try {
+      const called = await makeLead(db, o, { displayName: "Dsl owner called" });
+      const grouped = await makeLead(db, o, { displayName: "Dsl owner grouped" });
+      await makeLead(db, o, { displayName: "Dsl owner quiet" });
+      await db.activity.create({ data: { organizationId: o, leadId: called, type: "Call", activityAt: new Date() } });
+      const g = await createGroup(o, { name: "Hot" }, db);
+      await addLeadToGroup(o, g.group.id, grouped, db); // writes a 'Group' timeline entry
+      expect(await db.activity.count({ where: { leadId: grouped, type: "Group" } })).toBe(1);
+      const run = async (sQuery: SQuery) =>
+        (await execute<{ id: string }>(compile(sQuery, { organizationId: o, customFieldTypes: {} }), db, {
+          organizationId: o, selectSql: "lead.id", orderBySql: compileOrderBy([]),
+        })).map((r) => r.id);
+      const typeIs = (value: string): SQuery => ({
+        type: "field_condition", field: { kind: "regular", table: "activity", column: "type" }, condition: { type: "text", mode: "exact", value },
+      });
+      expect(await run({ type: "object_type", object_type: "activity" })).toEqual([called]);
+      expect(await run(typeIs("Call"))).toEqual([called]);
+      expect(await run(typeIs("Group"))).toEqual([]);
+      expect(await run({ type: "has_related", object_type: "activity", query: typeIs("Group") })).toEqual([]);
+      expect(await run({ type: "has_related", object_type: "activity", query: { type: "match_all" } })).toEqual([called]);
     } finally {
       await dropOrg(db, o);
     }
