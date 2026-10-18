@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AlertTriangle, ChevronLeft, ChevronRight, Download, Search, Users, Zap } from 'lucide-react'
@@ -71,6 +71,7 @@ export function LeadsView({
   const [pending, startTransition] = useTransition()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [term, setTerm] = useState(q)
+  const sequencesOffId = useId()
 
   // Push a new query string; every filter/sort/page control funnels through
   // here so the URL stays the single source of truth and is shareable.
@@ -216,7 +217,7 @@ export function LeadsView({
                       menu shape does not change when it goes live. */}
                   <Tooltip content={sequencesOffReason ? null : 'Sequences ship in M4'} side="left">
                     <div>
-                      <DropdownItem disabled>
+                      <DropdownItem disabled aria-describedby={sequencesOffReason ? sequencesOffId : undefined}>
                         <span className="flex items-center gap-2">
                           <Zap size={13} className="text-subtle" />
                           Add to sequence
@@ -228,7 +229,9 @@ export function LeadsView({
                       sits under the greyed-out entry. Greyed out with the reason,
                       not hidden, is Ryan's decision of 2026-10-17. */}
                   {sequencesOffReason && (
-                    <p className="px-2 pb-1 text-xs text-subtle">{sequencesOffReason}</p>
+                    <p id={sequencesOffId} className="px-2 pb-1 text-xs text-subtle">
+                      {sequencesOffReason}
+                    </p>
                   )}
                   <DropdownItem onSelect={exportSelected}>
                     <span className="flex items-center gap-2">

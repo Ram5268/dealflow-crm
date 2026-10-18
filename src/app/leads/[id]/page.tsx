@@ -85,7 +85,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-start gap-2">
           {dialingEnabled() ? (
             <Button asChild>
               <Link href="/dialer">

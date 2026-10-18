@@ -89,13 +89,15 @@ export function EnrollButton({
   const noSequences = sequences.length === 0
 
   if (disabledReason) {
+    // The reason sits under the button and wraps to the button's width
+    // (`w-0 min-w-full`), so the header's buttons don't get any wider.
     return (
-      <span className="flex items-center gap-2">
+      <span className="flex flex-col items-end gap-1">
         <Button disabled aria-describedby={reasonId}>
           <Zap size={13} />
           Add to sequence
         </Button>
-        <span id={reasonId} className="text-xs text-muted">
+        <span id={reasonId} className="w-0 min-w-full text-right text-xs text-muted">
           {disabledReason}
         </span>
       </span>
