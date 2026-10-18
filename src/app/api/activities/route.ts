@@ -3,8 +3,10 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { withRoute, json, errorResponse } from '@/lib/shared/http'
 
-// Activities are append-only, written exclusively by event consumers (call /
-// message handlers). No user-facing create/update/delete — POST returns 405.
+// Activities are append-only, written by event consumers (call / message
+// handlers) and, since Brief 45, by group changes (type 'Group' timeline
+// entries, src/lib/core-data/lists/timeline.ts). Nobody creates, updates or
+// deletes them through this route — POST returns 405.
 
 export const GET = withRoute(async (req: NextRequest, { correlationId }) => {
   const organizationId = await getCurrentOrgId()

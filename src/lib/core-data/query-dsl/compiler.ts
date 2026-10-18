@@ -85,6 +85,12 @@ const LEAD_COLUMNS: Record<string, { col: string; kind: ColKind }> = {
   dealflowSignalSyncedAt: { col: 'lead."dealflowSignalSyncedAt"', kind: 'date' },
 }
 
+// Brief 45 [engineering precaution]: adding or removing a group label writes a
+// timeline entry of type 'Group' (src/lib/core-data/lists/timeline.ts). That is
+// a note about the label, not activity with the lead, so no Smart View counts
+// it: every `activity` reference skips those rows.
+export const NOT_A_GROUP_LABEL = `a."type" <> 'Group'`
+
 // Related tables addressable by a `regular` field ref with a non-lead `table`.
 const RELATED_TABLES: Record<string, RelatedTable> = {
   contact: {
@@ -131,7 +137,7 @@ const RELATED_TABLES: Record<string, RelatedTable> = {
   activity: {
     sql: '"Activity" a',
     alias: 'a',
-    correlation: 'a."leadId" = lead.id',
+    correlation: `a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL}`,
     columns: {
       type: { col: 'a."type"', kind: 'text' },
       activityAt: { col: 'a."activityAt"', kind: 'date' },
@@ -145,7 +151,7 @@ const OBJECT_TYPE_EXISTS: Record<DslObjectType, string | null> = {
   contact: 'EXISTS (SELECT 1 FROM "Contact" c WHERE c."leadId" = lead.id)',
   opportunity:
     'EXISTS (SELECT 1 FROM "Opportunity" o WHERE o."leadId" = lead.id)',
-  activity: 'EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id)',
+  activity: `EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL})`,
 }
 
 class ParamBag {

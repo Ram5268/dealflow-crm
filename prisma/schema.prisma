@@ -4,6 +4,10 @@
 // BulkScrubCheckpoint added, Message.providerDeliveryState added, Brief 32
 // property/motivation fields intentionally NOT mirrored (0% populated in real
 // DealFlow data — Zapier off; only add via new-CRM ingest paths).
+// Brief 45 (2026-10-18) is the planner's approval of one additive change:
+// Folder, CallList, ListMembership, LeadGroup, LeadGroupMembership, four
+// nullable ImportBatch columns, and their back-relations (migration
+// 20261018150000_brief45_lists_groups). Nothing existing is altered.
 
 generator client {
   provider = "prisma-client-js"
@@ -31,6 +35,9 @@ model Organization {
   messages         Message[]
   savedViews       SavedView[]
   oauthCredentials OAuthCredential[]
+  folders          Folder[]    // Brief 45 back-relation (no column)
+  callLists        CallList[]  // Brief 45 back-relation (no column)
+  leadGroups       LeadGroup[] // Brief 45 back-relation (no column)
 }
 
 model User {
@@ -87,6 +94,8 @@ model Lead {
   tasks         Task[]
   activities    Activity[]
   customValues  CustomFieldValue[]
+  listMemberships  ListMembership[]      // Brief 45 back-relation (no column)
+  groupMemberships LeadGroupMembership[] // Brief 45 back-relation (no column)
 
   @@index([organizationId])
   @@index([organizationId, priorityScore(sort: Desc)])
@@ -333,8 +342,107 @@ model ImportBatch {
   errorLog       Json      @default("[]")
   createdAt      DateTime  @default(now())
   completedAt    DateTime?
+  // Brief 45: the list an upload fills, and the one-time handshake that has
+  // DealFlow score the import's new leads. All nullable; nothing reads them
+  // until Brief 45 PR F.
+  targetListId           String?
+  dealflowScoreTokenHash String?   // SHA-256 hex of the current one-time token, never the token
+  dealflowScoredAt       DateTime?
+  dealflowScoreError     String?   // plain-English reason the scoring step stopped
+
+  targetList CallList? @relation(fields: [targetListId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt(sort: Desc)])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Brief 45 — folders, lists and groups (Mojo-style). Organization only:
+// nothing here contacts anyone. Ryan creates every folder, list and group
+// himself [Ryan, 2026-10-18]. Name uniqueness is enforced in the app
+// (src/lib/core-data/lists), not by an index: a nullable folderId makes a
+// unique index leaky.
+// ═══════════════════════════════════════════════════════════════════
+
+// Holds lists only. There is no parent column, so a folder can never sit in
+// another folder [Ryan, 2026-10-18].
+model Folder {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  lists        CallList[]
+
+  @@index([organizationId, sortOrder])
+}
+
+// A list of leads, always shown ranked (computed on read, never stored).
+// folderId null = the list sits outside any folder [Ryan, 2026-10-18].
+// Restrict: a folder that still has lists can't be deleted.
+model CallList {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  folderId       String?
+  source         String    @default("manual") // 'manual' | 'upload:<importBatchId>'
+  sortOrder      Int       @default(0)
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization  Organization     @relation(fields: [organizationId], references: [id])
+  folder        Folder?          @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  memberships   ListMembership[]
+  importBatches ImportBatch[]
+
+  @@index([organizationId, folderId, sortOrder])
+}
+
+// One lead on one list. Deleting a list (or a lead) removes only these rows,
+// never a lead [brief §5.1].
+model ListMembership {
+  listId  String
+  leadId  String
+  addedAt DateTime @default(now())
+  addedBy String // 'import:<id>' | 'manual' | 'bulk'
+
+  list CallList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  lead Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@id([listId, leadId])
+  @@index([leadId])
+}
+
+// A label clicked onto a lead (Hot, Nurture, ...). Not `Group`: a reserved word.
+model LeadGroup {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  color          String   @default("gray") // one of GROUP_COLORS (src/lib/core-data/lists/types.ts)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id])
+  memberships  LeadGroupMembership[]
+
+  @@index([organizationId, sortOrder])
+}
+
+model LeadGroupMembership {
+  groupId String
+  leadId  String
+  addedAt DateTime @default(now())
+  addedBy String // 'manual' | 'bulk' | 'pipeline'
+
+  group LeadGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  lead  Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, leadId])
+  @@index([leadId])
 }
 
 model DealFlowDerivedSignal {

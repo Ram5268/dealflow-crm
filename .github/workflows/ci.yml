@@ -94,6 +94,24 @@ jobs:
       - name: Prisma generate
         run: corepack pnpm@9 exec prisma generate
 
+      - name: Migrations from zero build the schema
+        # Brief 45 (PR A): `db push` (the next steps, and the suite's
+        # globalSetup) never runs prisma/migrations, so nothing proved that a
+        # hand-written migration builds the schema the code expects. Apply
+        # every migration to a fresh, empty database, then diff that database
+        # against schema.prisma. The only difference allowed is the four
+        # cosmetic `id` defaults in docs/known-drift.md. The live-database
+        # guard runs first, as in the setup step below.
+        env:
+          DATABASE_URL_MIGRATE: postgresql://crm:crm@localhost:5432/dealflow_crm_migrate_test
+          PRISMA_HIDE_UPDATE_MESSAGE: '1'
+        run: |
+          corepack pnpm@9 exec tsx scripts/assert-test-db.ts DATABASE_URL_MIGRATE db-suite-migrate-check
+          psql "$DATABASE_URL_PERF" -c 'CREATE DATABASE dealflow_crm_migrate_test'
+          DATABASE_URL_MAIN="$DATABASE_URL_MIGRATE" corepack pnpm@9 exec prisma migrate deploy
+          DATABASE_URL_MAIN="$DATABASE_URL_MIGRATE" corepack pnpm@9 exec prisma migrate diff --from-url "$DATABASE_URL_MIGRATE" --to-schema-datamodel prisma/schema.prisma --script > "$RUNNER_TEMP/migrate-diff.sql"
+          corepack pnpm@9 exec tsx scripts/check-known-drift.ts "$RUNNER_TEMP/migrate-diff.sql"
+
       - name: Create the integration-local database
         run: psql "$DATABASE_URL_PERF" -c 'CREATE DATABASE dealflow_crm_main_test'
 
