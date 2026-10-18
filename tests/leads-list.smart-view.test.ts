@@ -160,10 +160,13 @@ describe("Leads page with a Smart View (Brief 41, H1)", () => {
     expect(r.rows.every((row) => row.displayName.includes(term) && row.priorityScore != null)).toBe(true);
   });
 
-  it("without a view, lists every lead in the organization, most recently updated first", async () => {
+  // Brief 45 PR B: without a view (and without a column) All leads is in the
+  // lists' rank order (CONTRACT §3), no longer most recently updated first.
+  it("without a view, lists every lead in the organization, in rank order", async () => {
     const r = await listLeads({ organizationId: org, pageSize: 50 }, db);
     expect(r.total).toBe(RANKED + UNRANKED);
-    expect(r.sort).toEqual({ key: "updatedAt", dir: "desc", fromView: false });
+    expect(r.sort).toEqual({ key: null, dir: "asc", fromView: false, ranked: true });
+    expect(r.rows[0].rank).toBe(1);
   });
 
   it("a view that cannot be applied falls back to all leads and says why", async () => {
