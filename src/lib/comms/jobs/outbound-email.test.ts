@@ -5,6 +5,7 @@ vi.mock('../email/send', () => send)
 
 import { handleSendEmailJob } from './outbound-email'
 import { EmailDisabledError } from '../email/config'
+import { GraphDisabledError } from '../graph-switch'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -30,6 +31,14 @@ describe('handleSendEmailJob', () => {
 describe('Brief 37: email off', () => {
   it('drops the job instead of retrying, so nothing goes out later', async () => {
     send.sendEmailMessage.mockRejectedValue(new EmailDisabledError())
+    await expect(handleSendEmailJob([{ data: { messageId: 'a' } }, { data: { messageId: 'b' } }])).resolves.toBeUndefined()
+    expect(send.sendEmailMessage).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('Brief 41.2: Outlook paused', () => {
+  it('drops a send that would go out through Outlook, so it cannot go out once the pause lifts', async () => {
+    send.sendEmailMessage.mockRejectedValue(new GraphDisabledError())
     await expect(handleSendEmailJob([{ data: { messageId: 'a' } }, { data: { messageId: 'b' } }])).resolves.toBeUndefined()
     expect(send.sendEmailMessage).toHaveBeenCalledTimes(2)
   })

@@ -5,8 +5,11 @@ import { useState } from 'react'
 import { Badge, Button, useToast } from '@/components/ui'
 import { SettingsCard, SettingsRow, NotSet } from '@/components/settings/SettingsPanel'
 import { shortStamp } from '@/lib/ui/time'
+import type { MailboxCardActions } from '@/lib/settings/format'
 
-export interface MailboxCardAccount {
+// Brief 41.2: pausedNote / connect / disconnect are decided on the server
+// (mailboxCardActions), so a paused Outlook card gets no Connect link at all.
+export interface MailboxCardAccount extends MailboxCardActions {
   key: 'gmail' | 'outlook'
   label: string
   connected: boolean
@@ -14,7 +17,6 @@ export interface MailboxCardAccount {
   status: string | null
   updatedAt: string | null
   hasSyncCursor: boolean
-  authorizeHref: string
   remoteRevocation: boolean
 }
 
@@ -94,18 +96,28 @@ export function MailboxCard({ account }: { account: MailboxCardAccount }) {
         />
       </dl>
 
-      <div className="mt-2 flex gap-2">
-        {account.connected ? (
-          <Button variant="secondary" size="sm" onClick={disconnect} disabled={busy}>
-            {busy ? 'Disconnecting…' : 'Disconnect'}
-          </Button>
-        ) : null}
-        {/* A plain link, not fetch: the authorize route 302s to the provider's
-            consent screen, which cannot be followed from XHR. */}
-        <Button asChild variant={account.connected ? 'ghost' : 'primary'} size="sm">
-          <a href={account.authorizeHref}>{account.connected ? 'Reconnect' : 'Connect'}</a>
-        </Button>
-      </div>
+      {account.pausedNote ? (
+        <p role="status" className="mt-2 rounded-md bg-warning-subtle px-2 py-1.5 text-sm text-warning">
+          {account.pausedNote}
+        </p>
+      ) : null}
+
+      {account.disconnect || account.connect ? (
+        <div className="mt-2 flex gap-2">
+          {account.disconnect ? (
+            <Button variant="secondary" size="sm" onClick={disconnect} disabled={busy}>
+              {busy ? 'Disconnecting…' : 'Disconnect'}
+            </Button>
+          ) : null}
+          {/* A plain link, not fetch: the authorize route 302s to the provider's
+              consent screen, which cannot be followed from XHR. */}
+          {account.connect ? (
+            <Button asChild variant={account.connected ? 'ghost' : 'primary'} size="sm">
+              <a href={account.connect.href}>{account.connect.label}</a>
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </SettingsCard>
   )
 }

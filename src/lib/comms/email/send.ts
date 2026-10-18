@@ -11,6 +11,7 @@ import { refreshAccessToken as graphRefresh } from '../oauth/graph'
 import { GmailClient } from './gmail-client'
 import { GraphClient, type GraphSendMessage } from './graph-client'
 import { emailEnabled, EmailDisabledError } from './config'
+import { graphEnabled, GraphDisabledError } from '../graph-switch'
 
 /**
  * Outbound email send (brief §3.5 + §M5 provider routing).
@@ -88,6 +89,12 @@ export async function resolveSendCredential(
     (fromAddress && creds.find((c) => c.emailAddress === fromAddress)) ||
     creds.find((c) => c.provider === 'gmail') ||
     creds[0]
+
+  // Brief 41.2: Outlook is paused (Ryan's instruction), even with EMAIL_ENABLED
+  // on. Anything not Gmail goes through Graph, so it's refused here, before the
+  // token is decrypted or refreshed. It doesn't quietly send from another
+  // mailbox instead (an engineering precaution: the sender stays the chosen one).
+  if (cred.provider !== 'gmail' && !graphEnabled()) throw new GraphDisabledError()
 
   let accessToken = getDecryptedAccessToken(cred)
   const refreshToken = getDecryptedRefreshToken(cred)

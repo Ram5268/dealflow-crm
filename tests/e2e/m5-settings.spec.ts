@@ -77,10 +77,19 @@ test.describe('M5 settings', () => {
       'href',
       '/api/comms/oauth/gmail/authorize',
     )
-    await expect(outlook.getByRole('link')).toHaveAttribute(
-      'href',
-      '/api/comms/oauth/msft/authorize',
-    )
+    // Brief 41.2: Outlook is paused (Ryan's instruction); only GRAPH_ENABLED
+    // exactly 'true' turns it on (engineering precaution). While it's paused,
+    // its card says so and carries no link.
+    const health = await (await page.request.get('/api/comms/health')).json()
+    if (health.checks.graphEnabled) {
+      await expect(outlook.getByRole('link')).toHaveAttribute(
+        'href',
+        '/api/comms/oauth/msft/authorize',
+      )
+    } else {
+      await expect(outlook.getByText(/^Outlook is paused/)).toBeVisible()
+      await expect(outlook.getByRole('link')).toHaveCount(0)
+    }
 
     // Outlook's local-only revocation is disclosed wherever it is connected.
     if (await outlook.getByRole('button', { name: 'Disconnect' }).isVisible()) {
