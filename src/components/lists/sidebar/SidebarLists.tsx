@@ -28,6 +28,7 @@ import type { ListDTO } from '@/lib/core-data/lists/types'
 import { peopleCount } from '../format'
 import { downloadUrl, messageOf } from '../browser'
 import { SidebarTree, SidebarUiContext, menuKey, type DropTarget, type ItemRef, type MenuAction, type SidebarUi } from './SidebarTree'
+import { activeSidebarItems } from './active'
 import { dropAction, dropPosition, planMove, type ApiCall, type MoveAction } from './tree'
 import { IDLE_MOVES, movesBase, movesReducer, type MovesEvent, type MovesState } from './optimistic'
 import { useSidebarPrefs } from './prefs'
@@ -99,7 +100,8 @@ export function SidebarLists({
   const archived = useArchivedLists(prefs.archivedOpen)
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const activeGroupId = pathname === '/leads' ? (searchParams?.get('group') ?? null) : null
+  // The group or saved workflow on screen (a group opens the Pipeline on it; PR D).
+  const { groupId: activeGroupId, workflowId: activeWorkflowId } = activeSidebarItems(pathname, searchParams)
   const router = useRouter()
   const { toast } = useToast()
   const now = useNow()
@@ -365,7 +367,7 @@ export function SidebarLists({
       } else {
         const r = await deleteGroup(confirm.id)
         toast({ title: `Deleted the group “${confirm.name}”`, description: `Nobody was deleted. The label came off ${peopleCount(r.membershipsRemoved)}.` })
-        if (activeGroupId === confirm.id) router.push('/leads')
+        if (activeGroupId === confirm.id) router.push(pathname === '/pipeline' ? '/pipeline' : '/leads')
       }
       focusCreate(confirm.kind)
       setConfirm(null)
@@ -498,6 +500,7 @@ export function SidebarLists({
           now={now}
           pathname={pathname}
           activeGroupId={activeGroupId}
+          activeWorkflowId={activeWorkflowId}
           collapsedFolderIds={prefs.collapsed}
           archivedOpen={prefs.archivedOpen}
           archivedLists={archived.lists}

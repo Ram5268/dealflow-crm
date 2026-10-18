@@ -31,3 +31,7 @@ coverage-comms/
 
 # Playwright MCP scratch: page snapshots contain live Close content. Never commit.
 .playwright-mcp/
+
+# Playwright output (tests/e2e)
+test-results/
+playwright-report/

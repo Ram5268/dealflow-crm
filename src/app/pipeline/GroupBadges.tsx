@@ -1,11 +1,14 @@
 import type { GroupChipDTO } from '@/lib/core-data/lists/types'
+import { cn } from '@/lib/ui/cn'
+import { groupColorStyle } from '@/lib/ui/groupColors'
 
 /**
- * A card's or row's groups, read-only, in sidebar order.
+ * A card's or row's groups, read-only, in sidebar order, each with its color
+ * (PR B's tokens, both themes).
  *
  * Integration seam (Brief 45 PR C): once PR C merges, these labels become
  * `<GroupChips compact leadId memberOf onChange>` (CONTRACT §8), so a click
- * on a card adds or removes a group. Group colors come with PR B's tokens.
+ * on a card adds or removes a group.
  */
 export function GroupBadges({ groups }: { groups: GroupChipDTO[] }) {
   return (
@@ -14,8 +17,9 @@ export function GroupBadges({ groups }: { groups: GroupChipDTO[] }) {
         <span
           key={g.id}
           data-group-id={g.id}
-          className="inline-flex h-5 max-w-full items-center truncate rounded-full bg-active px-2 text-xs font-medium text-fg"
+          className="inline-flex h-5 max-w-full items-center gap-1 truncate rounded-full bg-active px-2 text-xs font-medium text-fg"
         >
+          <span aria-hidden="true" className={cn('h-1.5 w-1.5 shrink-0 rounded-full', groupColorStyle(g.color).dot)} />
           {g.name}
         </span>
       ))}

@@ -241,8 +241,15 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     const wf = workflows.find((w) => w.name === `E2E nurtures ${STAMP}`)!
     expect(wf).toMatchObject({ groupIds: [G.a, G.b, G.c], filters: { multiGroup: '1' } })
 
-    await page.goto(`/pipeline?wf=${wf.id}`)
+    // The sidebar lists it under Groups ("Workflows") at once, and it opens the tab.
+    const tabs = page.getByTestId('workflow-tabs')
+    const inSidebar = page.locator('aside').first().getByRole('link', { name: `E2E nurtures ${STAMP}` })
+    await expect(inSidebar).toHaveAttribute('href', `/pipeline?wf=${wf.id}`)
+    await page.goto('/leads')
+    await page.locator('aside').first().getByRole('link', { name: `E2E nurtures ${STAMP}` }).click()
+    await expect(page).toHaveURL(new RegExp(`/pipeline\\?wf=${wf.id}$`))
     await expect(page.locator('nav[aria-label="Saved workflows"] a[aria-current="page"]')).toHaveText(`E2E nurtures ${STAMP}`)
+    await expect(page.locator('aside').first().getByRole('link', { name: `E2E nurtures ${STAMP}` })).toHaveAttribute('aria-current', 'page')
     await expect(page.getByRole('button', { name: 'Remove filter: In more than one group' })).toBeVisible()
     await expect(page.locator('[data-column]')).toHaveCount(3)
 
@@ -250,15 +257,34 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     await page.getByRole('menuitem', { name: /Rename/ }).click()
     await page.getByLabel('Name', { exact: true }).fill(`E2E renamed ${STAMP}`)
     await page.getByRole('button', { name: 'Rename', exact: true }).click()
-    await expect(page.getByRole('link', { name: `E2E renamed ${STAMP}` })).toBeVisible()
+    await expect(tabs.getByRole('link', { name: `E2E renamed ${STAMP}` })).toBeVisible()
+    await expect(page.locator('aside').first().getByRole('link', { name: `E2E renamed ${STAMP}` })).toBeVisible() // the sidebar too
 
     await page.getByRole('button', { name: `Options for “E2E renamed ${STAMP}”` }).click()
     await page.getByRole('menuitem', { name: /Delete/ }).click()
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(page).not.toHaveURL(/wf=/)
-    await expect(page.getByRole('link', { name: `E2E renamed ${STAMP}` })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: `E2E renamed ${STAMP}` })).toHaveCount(0) // tab and sidebar row both gone
     const after = await getJson<{ workflows: { id: string }[] }>(request, '/api/core-data/workflows')
     expect(after.workflows.some((w) => w.id === wf.id)).toBe(false)
+  })
+
+  test('a group in the sidebar, or ⌘K "Go to group…", opens the Pipeline on that group, marked open', async ({ page }) => {
+    await page.goto('/leads')
+    const aside = page.locator('aside').first()
+    await aside.locator(`a[data-sidebar-item="${G.b}"]`).click()
+    await expect(page).toHaveURL(new RegExp(`/pipeline\\?groups=${G.b}$`))
+    await expect(page.locator('[data-column]')).toHaveCount(1)
+    await expect(page.locator('[data-column]')).toHaveAttribute('data-column', G.b)
+    await expect(aside.locator(`a[data-sidebar-item="${G.b}"]`)).toHaveAttribute('aria-current', 'page')
+
+    await page.goto('/leads', { waitUntil: 'networkidle' }) // the palette's keys work once the page is live
+    await page.keyboard.press('ControlOrMeta+k')
+    await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible()
+    await page.getByRole('option', { name: 'Go to group…' }).click()
+    await page.getByRole('option', { name: new RegExp(`E2E C ${STAMP}`) }).click()
+    await expect(page).toHaveURL(new RegExp(`/pipeline\\?groups=${G.c}$`))
+    await expect(page.locator('[data-column]')).toHaveAttribute('data-column', G.c)
   })
 
   test('the table: one row per person, sorted by name from the URL', async ({ page }) => {

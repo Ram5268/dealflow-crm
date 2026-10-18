@@ -15,7 +15,7 @@ empty. There are no blank pages.
 | `/leads` | Lead list with saved views, search, sorting, pagination |
 | `/leads?new=1` | Create-lead form (modal over the list) |
 | `/leads/[id]` | Lead detail — details rail, activity timeline, enrol-in-sequence |
-| `/pipeline` | **Pipeline** (Brief 45) — one column per group (or a table), filters in the URL, saved workflows as tabs; drag or `[` `]` / `M` to move a card between groups. "Create a group to start your pipeline" while there are no groups |
+| `/pipeline` | **Pipeline** (Brief 45) — one column per group (or a table), filters in the URL, saved workflows as tabs; drag or `[` `]` / `M` to move a card between groups. "Create a group to start your pipeline" while there are no groups. A group in the sidebar or ⌘K "Go to group…" opens `/pipeline?groups=<id>`; the sidebar's Workflows open `/pipeline?wf=<id>` |
 | `/sequences` | Sequence list |
 | `/sequences/new`, `/sequences/[id]`, `/sequences/[id]/edit` | Sequence editor and detail (Steps / Enrollment / Stats) |
 | `/templates`, `/templates/new`, `/templates/[id]` | Message templates with merge-tag inserter and live preview |

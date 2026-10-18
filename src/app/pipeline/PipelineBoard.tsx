@@ -10,6 +10,7 @@ import {
 import type { GroupDTO, PipelineBoard as Board, PipelineCard } from '@/lib/core-data/lists/types'
 import { isEditableTarget } from '@/lib/ui/hotkeys'
 import { cn } from '@/lib/ui/cn'
+import { groupColorStyle } from '@/lib/ui/groupColors'
 import { neighborGroup } from './board-state'
 import { cardKeyAction } from './keys'
 import { dueText, inGroupText, lastContactText, type DueTone } from './format'
@@ -196,7 +197,7 @@ export function PipelineBoard({
             }}
           >
             <header data-column-header={groupId} className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-              {/* Integration seam (Brief 45 PR B): the group's color dot (src/lib/ui/groupColors.ts). */}
+              <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', groupColorStyle(col.group.color).dot)} />
               <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg-strong">{col.group.name}</h2>
               <span className="shrink-0 rounded-full bg-active px-1.5 text-xs font-medium tabular-nums text-muted">{col.count}</span>
             </header>
