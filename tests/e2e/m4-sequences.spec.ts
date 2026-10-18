@@ -135,7 +135,16 @@ test.describe('M4 sequences + templates', () => {
     await page.getByRole('link', { name: 'Dana Whitfield' }).first().click()
     await expect(page).toHaveURL(/\/leads\/[^/]+$/)
 
-    await page.getByRole('button', { name: 'Add to sequence' }).click()
+    // Brief 41.2 (PR E): while email and texting are off (EMAIL_ENABLED and
+    // SMS_ENABLED unset) the button is greyed out with its reason, and the
+    // route would refuse the enrollment anyway.
+    const addToSequence = page.getByRole('button', { name: 'Add to sequence' })
+    if (await addToSequence.isDisabled()) {
+      await expect(page.getByText("Email and texting are off, so sequences can't start.")).toBeVisible()
+      await shot(page, 'sequence-enrollment')
+      return
+    }
+    await addToSequence.click()
     const modal = page.getByRole('dialog')
     await expect(modal).toBeVisible()
     await modal.getByLabel('Sequence').click()

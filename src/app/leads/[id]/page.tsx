@@ -9,6 +9,7 @@ import { listSequenceRows } from '@/lib/sequences/queries'
 import { ActivityTimeline } from './ActivityTimeline'
 import { EnrollButton } from './EnrollButton'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
+import { sequencesOffReason } from '@/lib/comms/sequences/channel-gate'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
 import { pickPrimaryContact } from '@/lib/core-data/smart-view/queue-service'
 import { getLeadBuyers } from '@/lib/core-data/dealflow-sync/buyer-lookup'
@@ -116,6 +117,9 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           <EnrollButton
             sequences={sequences.map((s) => ({ id: s.id, name: s.name, stepCount: s.stepCount }))}
             contacts={lead.contacts.map((c) => ({ id: c.id, displayName: c.displayName }))}
+            // Brief 41.2 (PR E): greyed out with its reason while email and texting
+            // are off (Ryan's decision, 2026-10-17: greyed out, not hidden).
+            disabledReason={sequencesOffReason()}
           />
         </div>
       </header>

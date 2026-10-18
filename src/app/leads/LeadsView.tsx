@@ -52,6 +52,7 @@ export function LeadsView({
   viewId,
   views,
   viewError,
+  sequencesOffReason,
 }: {
   rows: LeadRow[]
   total: number
@@ -62,6 +63,8 @@ export function LeadsView({
   viewId: string
   views: { id: string; name: string }[]
   viewError?: string
+  /** Brief 41.2 (PR E): why "Add to sequence" is greyed out (email and texting off). */
+  sequencesOffReason?: string | null
 }) {
   const router = useRouter()
   const { toast } = useToast()
@@ -211,7 +214,7 @@ export function LeadsView({
                 <DropdownContent>
                   {/* Sequences ship in M4; the entry is visible but inert so the
                       menu shape does not change when it goes live. */}
-                  <Tooltip content="Sequences ship in M4" side="left">
+                  <Tooltip content={sequencesOffReason ? null : 'Sequences ship in M4'} side="left">
                     <div>
                       <DropdownItem disabled>
                         <span className="flex items-center gap-2">
@@ -221,6 +224,12 @@ export function LeadsView({
                       </DropdownItem>
                     </div>
                   </Tooltip>
+                  {/* Brief 41.2 (PR E): while email and texting are off, the reason
+                      sits under the greyed-out entry. Greyed out with the reason,
+                      not hidden, is Ryan's decision of 2026-10-17. */}
+                  {sequencesOffReason && (
+                    <p className="px-2 pb-1 text-xs text-subtle">{sequencesOffReason}</p>
+                  )}
                   <DropdownItem onSelect={exportSelected}>
                     <span className="flex items-center gap-2">
                       <Download size={13} className="text-subtle" />

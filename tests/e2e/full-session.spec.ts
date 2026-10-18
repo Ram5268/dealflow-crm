@@ -155,7 +155,16 @@ test.describe('full session', () => {
     await page.waitForLoadState('networkidle')
     await expect(page.getByText(fixture.leadName).first()).toBeVisible()
 
-    await page.getByRole('button', { name: 'Add to sequence' }).click()
+    // Brief 41.2 (PR E): while email and texting are off (EMAIL_ENABLED and
+    // SMS_ENABLED unset) the button is greyed out with its reason, and the
+    // route would refuse the enrollment anyway.
+    const addToSequence = page.getByRole('button', { name: 'Add to sequence' })
+    if (await addToSequence.isDisabled()) {
+      await expect(page.getByText("Email and texting are off, so sequences can't start.")).toBeVisible()
+      await shot(page, 'session-6-enrolled')
+      return
+    }
+    await addToSequence.click()
     const modal = page.getByRole('dialog')
     await expect(modal).toBeVisible()
     await modal.getByLabel('Sequence').click()

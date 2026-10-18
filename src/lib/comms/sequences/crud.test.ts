@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const db: any = vi.hoisted(() => {
   const d: any = {
@@ -49,8 +49,27 @@ describe('createSequence', () => {
 })
 
 describe('enrollContact', () => {
+  // Brief 41.2 (PR E): enrolling needs every channel the sequence uses to be on.
+  // These cases are about what happens once it is (mocked, this process only);
+  // enroll-switch.test.ts covers the refusals.
+  const savedEmail = process.env.EMAIL_ENABLED
+  beforeEach(() => {
+    process.env.EMAIL_ENABLED = 'true'
+  })
+  afterEach(() => {
+    if (savedEmail === undefined) delete process.env.EMAIL_ENABLED
+    else process.env.EMAIL_ENABLED = savedEmail
+  })
+
   it('creates an enrollment starting at the first step', async () => {
-    db.sequence.findFirst.mockResolvedValue({ id: 's', steps: [{ id: 'st1' }, { id: 'st2' }] })
+    db.sequence.findFirst.mockResolvedValue({
+      id: 's',
+      channel: 'email',
+      steps: [
+        { id: 'st1', channel: 'email' },
+        { id: 'st2', channel: 'email' },
+      ],
+    })
     db.contact.findFirst.mockResolvedValue({ id: 'c' })
     db.sequenceEnrollment.findFirst.mockResolvedValue(null)
     db.sequenceEnrollment.create.mockImplementation(async (a: any) => ({ id: 'e', ...a.data }))
@@ -59,7 +78,7 @@ describe('enrollContact', () => {
   })
 
   it('blocks a duplicate active enrollment', async () => {
-    db.sequence.findFirst.mockResolvedValue({ id: 's', steps: [] })
+    db.sequence.findFirst.mockResolvedValue({ id: 's', channel: 'email', steps: [] })
     db.contact.findFirst.mockResolvedValue({ id: 'c' })
     db.sequenceEnrollment.findFirst.mockResolvedValue({ id: 'existing' })
     await expect(enrollContact('o', { sequenceId: 's', contactId: 'c' })).rejects.toBeInstanceOf(

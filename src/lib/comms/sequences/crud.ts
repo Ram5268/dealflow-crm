@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma'
+import { assertSequenceCanStart } from './channel-gate'
 
 /** Sequence + step CRUD and enrollment (brief §3.3). */
 export const stepInputSchema = z.object({
@@ -189,6 +190,11 @@ export async function enrollContact(orgId: string, input: unknown) {
     include: { steps: { orderBy: { ordinal: 'asc' } } },
   })
   if (!seq) throw new Error('enrollContact: sequence not found')
+
+  // Brief 41.2 (PR E): no enrollment while a channel this sequence uses is off,
+  // refused before anything is written. Every enrollment is created here, so
+  // every caller gets it. Engineering precaution (audit H15); see channel-gate.
+  assertSequenceCanStart(seq)
 
   const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId: orgId } })
   if (!contact) throw new Error('enrollContact: contact not found')
