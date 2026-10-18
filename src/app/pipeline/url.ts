@@ -8,7 +8,7 @@
 // opens, without it, and says so in plain English (the API, by contrast,
 // answers 400). Client-safe: no Prisma.
 import {
-  BOROUGHS, PIPELINE_FILTER_KEYS, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
+  BOROUGHS, MAX_PAGE, PIPELINE_FILTER_KEYS, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
   type PipelineFilters, type PipelineQuery, type SortDir,
 } from '@/lib/core-data/lists/types'
 import { NEIGHBORHOODS, cleanText } from '@/lib/core-data/lists/geo'
@@ -36,7 +36,8 @@ const STATE_KEYS: readonly string[] = ['view', 'groups', ...PIPELINE_FILTER_KEYS
 
 // How each parameter is named in a "this link had …" note.
 const WHAT: Record<string, string> = {
-  view: 'a view', list: 'a list', folder: 'a folder', borough: 'a borough', neighborhood: 'a neighborhood',
+  view: 'a view', groups: 'a group', wf: 'a saved workflow', page: 'a page number',
+  list: 'a list', folder: 'a folder', borough: 'a borough', neighborhood: 'a neighborhood',
   propertyType: 'a property type', units: 'a unit count', tier: 'a DealFlow tier', strongBuyer: 'a strong-buyer setting',
   lastContact: 'a last-contact filter', taskDue: 'a task filter', timeInGroup: 'a time-in-group filter',
   multiGroup: 'a multi-group setting', sort: 'a sort', dir: 'a sort direction',
@@ -108,7 +109,10 @@ export function parsePipelineUrl(input: Search): ParsedPipelineUrl {
   }
 
   const view = oneOf('view', PIPELINE_VIEWS) ?? 'board'
-  const groups = get('groups')?.split(',').map((g) => g.trim()).filter((g) => ID.test(g))
+  const asked = get('groups')?.split(',').map((g) => g.trim()).filter(Boolean)
+  const groups = asked?.filter((g) => ID.test(g))
+  const badGroups = asked?.filter((g) => !ID.test(g)) ?? []
+  if (badGroups.length > 0) ignored.push(ignoredNote('groups', badGroups.join(', ')))
   const filters: PipelineFilters = {
     list: id('list'),
     folder: id('folder'),
@@ -132,12 +136,18 @@ export function parsePipelineUrl(input: Search): ParsedPipelineUrl {
   } satisfies PipelineFilters)
   const sort = oneOf('sort', PIPELINE_SORT_KEYS)
   const dir = oneOf<SortDir>('dir', ['asc', 'desc'])
-  const page = Number.parseInt(get('page') ?? '', 10)
+  // A whole number from 1 to MAX_PAGE (a bigger one would overflow the
+  // database's OFFSET [engineering precaution]).
+  const rawPage = get('page')
+  const page = rawPage !== undefined && /^[0-9]+$/.test(rawPage) ? Number(rawPage) : NaN
+  const pageOk = Number.isSafeInteger(page) && page >= 1 && page <= MAX_PAGE
+  if (rawPage !== undefined && !pageOk) ignored.push(ignoredNote('page', rawPage))
   if (VALUE_KEYS.some((k) => sp.has(k))) ignored.push(VALUE_FILTER_NOTE)
 
   const wf = get('wf')
+  if (wf !== undefined && !ID.test(wf)) ignored.push(ignoredNote('wf', wf))
   return {
-    query: normalizeQuery({ view, groups, filters, sort, dir, page: Number.isInteger(page) ? page : undefined }),
+    query: normalizeQuery({ view, groups, filters, sort, dir, page: pageOk ? page : undefined }),
     workflowId: wf && ID.test(wf) ? wf : null,
     explicit: STATE_KEYS.some((k) => sp.has(k)),
     ignored,

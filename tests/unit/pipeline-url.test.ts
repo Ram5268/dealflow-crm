@@ -83,6 +83,35 @@ describe('the Pipeline URL', () => {
     expect(bad.ignored.join(' ')).not.toMatch(/utm_source/) // other parameters are none of the Pipeline's business
   })
 
+  it('a malformed group id or workflow id is ignored with the same plain note', () => {
+    const r = parse('?groups=g_hot,not%20an%20id!,g_nurture&wf=%3Cscript%3E')
+    expect(r.query.groups).toEqual(['g_hot', 'g_nurture'])
+    expect(r.workflowId).toBeNull()
+    expect(r.ignored).toEqual([
+      "This link had a group the Pipeline doesn't know (not an id!), so it was ignored.",
+      "This link had a saved workflow the Pipeline doesn't know (<script>), so it was ignored.",
+    ])
+  })
+
+  it('page numbers: whole numbers from 1 to 1,000,000; anything else is ignored with a note', () => {
+    expect(parse('?view=table&page=1000000').query.page).toBe(1_000_000)
+    expect(parse('?view=table&page=3')).toMatchObject({ query: { page: 3 }, ignored: [] })
+    for (const bad of ['12345678901234567890', '1000001', '9007199254740993', '0', '-2', '2.5', '3abc']) {
+      const r = parse(`?view=table&page=${bad}`)
+      expect(r.query.page, bad).toBeUndefined()
+      expect(r.ignored, bad).toEqual([`This link had a page number the Pipeline doesn't know (${bad}), so it was ignored.`])
+    }
+  })
+
+  it("PR A's API parser: a page number too big for the database reads as page 1 (it used to answer 500)", () => {
+    const page = (p: string) => parsePipelineQuery(new URLSearchParams(`view=table&page=${p}`)).page
+    expect(page('12345678901234567890')).toBe(1)
+    expect(page('9007199254740993')).toBe(1)
+    expect(page('1000001')).toBe(1)
+    expect(page('1000000')).toBe(1_000_000)
+    expect(page('7')).toBe(7)
+  })
+
   it('value filters are not offered yet: the link loads without them and says why', () => {
     const r = parse('?value=1000000&valueMin=1&borough=Queens')
     expect(r.query.filters).toEqual({ borough: 'Queens' })

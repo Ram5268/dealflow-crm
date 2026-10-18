@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic'
 // Brief 45 PR D: the Pipeline page [brief §5.6] — every group as a column
 // (or one table), filters in the URL, saved workflows as tabs. The server
 // reads (load.ts, through PR A's query); PipelineView moves cards and saves
-// workflows through PR A's API. Organization only: nothing here contacts
-// anyone [Ryan, 2026-09-24].
+// workflows through PR A's API. Nothing here contacts anyone [Ryan,
+// 2026-09-24: nothing contacts a lead]: the Pipeline only organizes [brief §4].
 export default async function PipelinePage({
   searchParams,
 }: {

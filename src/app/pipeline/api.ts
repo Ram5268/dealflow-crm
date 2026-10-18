@@ -1,7 +1,8 @@
 // Brief 45 PR D — the Pipeline page's calls to PR A's API (through its
 // browser layer, client.ts). Every error carries the API's plain-English
-// message, ready for a toast. Nothing here contacts anyone: moving a card or
-// saving a workflow only organizes [Ryan, 2026-09-24 and 2026-10-18].
+// message, ready for a toast. Nothing here contacts anyone [Ryan, 2026-09-24:
+// nothing contacts a lead]: moving a card or saving a workflow only organizes
+// [brief §4].
 import {
   ListsApiError, createGroup, createWorkflow, deleteWorkflow, getPipeline, moveLeadBetweenGroups, updateWorkflow,
 } from '@/lib/core-data/lists/client'

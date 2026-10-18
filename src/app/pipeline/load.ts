@@ -24,15 +24,21 @@ export const WORKFLOW_GONE = 'That saved workflow no longer exists.'
 export const LIST_GONE = 'The list in this view was deleted, so that filter was removed.'
 export const FOLDER_GONE = 'The folder in this view was deleted, so that filter was removed.'
 
-/** The note when some (or all) of the groups asked for no longer exist. */
-export function groupsNotice(missing: number, kept: number, from: 'workflow' | 'link'): string {
+/**
+ * The note when some (or all) of the groups asked for no longer exist.
+ * `othersExist`: the organization still has groups to show instead (when it
+ * has none, the page shows "Create a group…", so there's no "every group").
+ */
+export function groupsNotice(missing: number, kept: number, from: 'workflow' | 'link', othersExist: boolean): string {
   const one = missing === 1
   if (from === 'workflow') {
     if (kept > 0) return one ? 'A group this workflow showed was deleted, so its column is gone.' : `${missing} groups this workflow showed were deleted, so their columns are gone.`
-    return `${one ? 'The group this workflow showed was' : 'The groups this workflow showed were'} deleted, so it shows every group now.`
+    const gone = one ? 'The group this workflow showed was deleted' : 'The groups this workflow showed were deleted'
+    return othersExist ? `${gone}, so it shows every group now.` : `${gone}.`
   }
   if (kept > 0) return one ? 'A group in this link no longer exists, so its column is left out.' : `${missing} groups in this link no longer exist, so their columns are left out.`
-  return `${one ? 'The group in this link no longer exists' : 'The groups in this link no longer exist'}, so every group is shown.`
+  const gone = one ? 'The group in this link no longer exists' : 'The groups in this link no longer exist'
+  return othersExist ? `${gone}, so every group is shown.` : `${gone}.`
 }
 
 export async function loadPipelinePage(
@@ -64,12 +70,12 @@ export async function loadPipelinePage(
   if (workflow && !parsed.explicit) {
     const saved = workflowToQuery(workflow, groups)
     query = saved.query
-    if (saved.missingGroups > 0) notices.push(groupsNotice(saved.missingGroups, query.groups?.length ?? 0, 'workflow'))
+    if (saved.missingGroups > 0) notices.push(groupsNotice(saved.missingGroups, query.groups?.length ?? 0, 'workflow', groups.length > 0))
   } else if (query.groups) {
     const known = new Set(groups.map((g) => g.id))
     const kept = query.groups.filter((id) => known.has(id))
     if (kept.length < query.groups.length) {
-      notices.push(groupsNotice(query.groups.length - kept.length, kept.length, 'link'))
+      notices.push(groupsNotice(query.groups.length - kept.length, kept.length, 'link', groups.length > 0))
       query = normalizeQuery({ ...query, groups: kept })
     }
   }

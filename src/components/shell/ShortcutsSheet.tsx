@@ -58,8 +58,9 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ['↑', '↓', '←', '→'], label: 'Move between cards' },
       { keys: ['['], label: 'Move the card to the column on the left' },
       { keys: [']'], label: 'Move the card to the column on the right' },
-      { keys: ['M'], label: 'Move the card to any group…' },
+      { keys: ['M'], label: 'Move the card to any group… (or ⇧F10)' },
       { keys: ['Enter'], label: 'Open the lead' },
+      { keys: ['F2'], label: 'Rename the focused workflow tab' },
     ],
   },
 ]

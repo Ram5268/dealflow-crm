@@ -70,6 +70,9 @@ describe("loadPipelinePage", () => {
   it("no groups yet: nothing to query, the page shows the empty state", async () => {
     const r = await load("", () => empty);
     expect(r).toMatchObject({ groups: [], result: null, workflows: [], notices: [], workflowId: null, now: NOW.toISOString() });
+    // An old link to a group, with no groups left at all: no promise of "every group".
+    const old = await load("groups=g_long_gone", () => empty);
+    expect(old).toMatchObject({ result: null, notices: ["The group in this link no longer exists."] });
   });
 
   it("the default view: every group as a column, in sidebar order, from PR A's query", async () => {

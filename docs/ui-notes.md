@@ -54,6 +54,9 @@ Pipeline board only (a card has focus):
 | `[` / `]` | Move the card to the column on the left / right (out of one group, into the other) |
 | `M` (or Shift+F10) | "Move to group…": any group, including ones not shown as columns |
 | `Enter` | Open the lead |
+| `F2` (a focused workflow tab) | Rename the workflow |
+
+The board's moves are covered end to end by `tests/e2e/pipeline.spec.ts` (local dev server only).
 
 Hotkeys are suppressed while focus is in a text field, except `Esc` — so you can
 always dismiss a composer you are typing in. The handler lives in

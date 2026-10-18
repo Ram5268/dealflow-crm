@@ -249,10 +249,12 @@ describe('getting there and the keys', () => {
     expect(PALETTE_ACTIONS.find((a) => a.label === 'Open Pipeline')).toMatchObject({ href: '/pipeline' })
   })
 
-  it('the shortcuts sheet lists every Pipeline key', () => {
+  it('the shortcuts sheet lists every Pipeline key, F2 and Shift+F10 included', () => {
     const pipeline = SHORTCUT_GROUPS.find((g) => g.title === 'Pipeline')!
     const keys = pipeline.items.map((i) => i.keys.join(' '))
-    expect(keys).toEqual(expect.arrayContaining(['↑ ↓ ← →', '[', ']', 'M', 'Enter']))
+    expect(keys).toEqual(expect.arrayContaining(['↑ ↓ ← →', '[', ']', 'M', 'Enter', 'F2']))
+    expect(pipeline.items).toContainEqual({ keys: ['M'], label: 'Move the card to any group… (or ⇧F10)' })
+    expect(pipeline.items).toContainEqual({ keys: ['F2'], label: 'Rename the focused workflow tab' })
     expect(SHORTCUT_GROUPS.find((g) => g.title === 'Go to')!.items).toContainEqual({ keys: ['g', 'p'], label: 'Pipeline' })
   })
 

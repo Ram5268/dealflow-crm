@@ -13,6 +13,7 @@ import {
   appendColumnPage, applyMove, boardWithPending, replaceColumn, type BoardContext, type PendingMove,
 } from './board-state'
 import { fetchColumnPage, moveCard, moveFailure, problemText, removeWorkflow, renameWorkflow, saveOverWorkflow, saveWorkflow } from './api'
+import { createMoveQueue, type MoveQueue } from './move-queue'
 import {
   DEFAULT_QUERY, PIPELINE_PATH, normalizeQuery, panelFilterCount, pipelineHref, pipelineSearch, sameQuery, withFilter, withFilters,
 } from './url'
@@ -37,8 +38,8 @@ import { EmptyPipeline } from './EmptyPipeline'
  * server sends a new board. Changes made elsewhere (the sidebar, a card's
  * group chips) reload it.
  *
- * Nothing here contacts anyone: groups, workflows and the board only
- * organize [Ryan, 2026-09-24 and 2026-10-18].
+ * Nothing here contacts anyone [Ryan, 2026-09-24: nothing contacts a lead]:
+ * groups, workflows and the board only organize [brief §4].
  */
 export function PipelineView(props: PipelinePageData) {
   const { query, workflowId, groups, workflows, now } = props
@@ -132,14 +133,18 @@ export function PipelineView(props: PipelinePageData) {
   )
 
   const moveSeq = useRef(0)
+  // One person's moves reach the server one at a time (move-queue.ts).
+  const sendMove = useRef<MoveQueue | null>(null)
+  if (!sendMove.current) sendMove.current = createMoveQueue(moveCard)
+  /** Resolves true when the server took the move, false when it was rolled back. */
   const move = useCallback(
-    async (card: PipelineCard, fromGroupId: string, toGroupId: string) => {
-      if (fromGroupId === toGroupId) return
+    async (card: PipelineCard, fromGroupId: string, toGroupId: string): Promise<boolean> => {
+      if (fromGroupId === toGroupId) return false
       const m: PendingMove = { id: ++moveSeq.current, leadId: card.leadId, fromGroupId, toGroupId, at: new Date().toISOString(), card }
       const moveCtx = ctx
       setPending((p) => [...p, m])
-      try {
-        await moveCard({ leadId: card.leadId, fromGroupId, toGroupId })
+      const settled = await sendMove.current!(m)
+      if (settled.ok) {
         const current = latest.current
         const longer = current?.view === 'board'
           ? current.columns.filter((c) => (c.group.id === fromGroupId || c.group.id === toGroupId) && (c.hasMore || c.page > 1))
@@ -149,12 +154,14 @@ export function PipelineView(props: PipelinePageData) {
         setAnnouncement(`Moved ${card.displayName} to ${groupName(toGroupId)}.`)
         notifyOwn()
         for (const c of longer) void reloadColumn(c.group.id, c.page)
-      } catch (err) {
-        // Rollback: drop the move, so the card is back where it was.
-        setPending((p) => p.filter((x) => x.id !== m.id))
-        toast(moveFailure(card.displayName, groupName(toGroupId), err))
-        setAnnouncement(`${card.displayName} was not moved.`)
+        return true
       }
+      // Rollback: drop the move, so the card is back where it was. A move
+      // skipped because an earlier one was refused needs no second toast.
+      setPending((p) => p.filter((x) => x.id !== m.id))
+      if (!settled.skipped) toast(moveFailure(card.displayName, groupName(toGroupId), settled.error))
+      setAnnouncement(`${card.displayName} was not moved.`)
+      return false
     },
     [ctx, groupName, notifyOwn, reloadColumn, toast],
   )
@@ -274,7 +281,7 @@ export function PipelineView(props: PipelinePageData) {
             now={now}
             filtersActive={filtersActive}
             loadingColumns={loadingColumns}
-            onMove={(card, from, to) => void move(card, from, to)}
+            onMove={(card, from, to) => move(card, from, to)}
             onLoadMore={(groupId) => void loadMore(groupId)}
             onAnnounce={setAnnouncement}
           />

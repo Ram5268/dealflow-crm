@@ -46,7 +46,8 @@ export function PipelineBoard({
   now: string
   filtersActive: boolean
   loadingColumns: ReadonlySet<string>
-  onMove: (card: PipelineCard, fromGroupId: string, toGroupId: string) => void
+  /** Resolves false when the move was refused and rolled back. */
+  onMove: (card: PipelineCard, fromGroupId: string, toGroupId: string) => Promise<boolean>
   onLoadMore: (groupId: string) => void
   onAnnounce: (text: string) => void
 }) {
@@ -89,14 +90,26 @@ export function PipelineBoard({
 
   const move = (card: PipelineCard, from: string, to: string, followFocus: boolean) => {
     if (from === to) return
+    let candidates: string[] = []
     if (followFocus) {
       const cards = board.columns.find((c) => c.group.id === from)?.cards ?? []
       const i = cards.findIndex((c) => c.leadId === card.leadId)
       const rest = cards.filter((c) => c.leadId !== card.leadId)
       const stay = rest[Math.min(Math.max(i, 0), rest.length - 1)]
-      wantFocus.current = [keyOf(to, card.leadId), ...(stay ? [keyOf(from, stay.leadId)] : [])]
+      candidates = [keyOf(to, card.leadId), ...(stay ? [keyOf(from, stay.leadId)] : [])]
+      wantFocus.current = candidates
     }
-    onMove(card, from, to)
+    void onMove(card, from, to).then((moved) => {
+      // Refused: the card is back in its column. If focus is still where the
+      // move put it (or fell to the page when that card went away), it goes
+      // back to the card; if the person has moved on, it stays put.
+      if (moved || !followFocus) return
+      setTimeout(() => {
+        const active = document.activeElement
+        const at = active instanceof HTMLElement ? active.getAttribute('data-card-key') : null
+        if (!active || active === document.body || (at !== null && candidates.includes(at))) focusFirstOf([keyOf(from, card.leadId)])
+      }, 30)
+    })
   }
 
   const focusNeighbor = (groupId: string, leadId: string, within: 'column' | 'row', delta: -1 | 1) => {
@@ -119,6 +132,9 @@ export function PipelineBoard({
   }
 
   const onCardKeyDown = (e: React.KeyboardEvent<HTMLElement>, card: PipelineCard, groupId: string) => {
+    // React passes key presses up through portals: keys typed in the card's
+    // "Move to…" menu (rendered elsewhere in the page) aren't the card's.
+    if (!e.currentTarget.contains(e.target as Node)) return
     const action = cardKeyAction(e, { onCard: e.target === e.currentTarget, editable: isEditableTarget(e.target) })
     if (!action) return
     e.preventDefault()
