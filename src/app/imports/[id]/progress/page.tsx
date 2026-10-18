@@ -1,13 +1,24 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { use, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/Button'
+import { notifyListsChanged } from '@/lib/core-data/lists/client'
 import { progressView, type ImportStatusView } from '@/lib/core-data/importer/progress-view'
+import type { ImportSummaryDTO } from '@/lib/core-data/importer/summary-view'
+import { ImportSummary } from './ImportSummary'
+import { useImportScoring } from './useImportScoring'
+
+// Brief 45 PR F: GET /api/imports/:id also carries the summary (the list the
+// upload fills, people new and already in the CRM, where the new people's
+// ranking stands); null fields before the import has completed.
+type ImportStatus = ImportStatusView & Partial<ImportSummaryDTO>
 
 export default function ProgressPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const [batch, setBatch] = useState<ImportStatusView | null>(null)
+  const [batch, setBatch] = useState<ImportStatus | null>(null)
+  // Bumped to read the import once more (after the ranking run ends).
+  const [reads, setReads] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -22,7 +33,7 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
         return
       }
       misses = 0
-      const b = (await res.json()) as ImportStatusView
+      const b = (await res.json()) as ImportStatus
       if (!active) return
       setBatch(b)
       // Brief 41.1: keeps checking after a failure too (see progressView).
@@ -34,9 +45,18 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
       active = false
       clearTimeout(timer)
     }
-  }, [id])
+  }, [id, reads])
 
   const view = batch ? progressView(batch) : null
+  const rereadStatus = useCallback(() => setReads((n) => n + 1), [])
+  // The list's count changed: every open sidebar reloads (Brief 45).
+  const completed = batch?.status === 'completed'
+  useEffect(() => {
+    if (completed) notifyListsChanged()
+  }, [completed])
+  // Brief 45 PR F (CONTRACT §7): rank the new people within minutes.
+  const live = useImportScoring(id, batch?.status === 'completed' && batch.scoring?.state === 'pending', rereadStatus)
+  const list = batch?.targetList ?? null
 
   // A <div>, not <main>: AppShell already renders the page's <main>, and a
   // nested one is invalid HTML the browser hoists out of place, producing a
@@ -48,6 +68,11 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
         {/* AppShell's top bar already renders this page's title. */}
         <header className="mb-4">
           <h2 className="text-3xl font-bold text-fg">Import progress</h2>
+          {list && view?.action !== 'leads' && (
+            <p className="mt-1 text-base text-muted">
+              Into the list <span className="font-medium text-fg">{list.name}</span>
+            </p>
+          )}
         </header>
         {!batch && <p className="text-base text-muted">Loading…</p>}
         {batch && view && (
@@ -86,11 +111,29 @@ export default function ProgressPage({ params }: { params: Promise<{ id: string 
               </Button>
             )}
             {view.action === 'leads' && (
-              <Button asChild variant="primary">
-                <Link href="/leads" data-testid="view-leads">
-                  View leads
-                </Link>
-              </Button>
+              <>
+                {batch.people && (
+                  <ImportSummary
+                    summary={{ targetList: list, people: batch.people, scoring: batch.scoring ?? null }}
+                    totalRows={batch.totalRows}
+                    live={live}
+                  />
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {list && (
+                    <Button asChild variant="primary">
+                      <Link href={`/lists/${list.id}`} data-testid="view-list">
+                        Open the list
+                      </Link>
+                    </Button>
+                  )}
+                  <Button asChild variant={list ? 'secondary' : 'primary'}>
+                    <Link href="/leads" data-testid="view-leads">
+                      View leads
+                    </Link>
+                  </Button>
+                </div>
+              </>
             )}
           </>
         )}

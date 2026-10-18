@@ -58,3 +58,16 @@ Headings: one `H1` (top bar) + one `H2`.
 ## Explicitly NOT touched
 The import flow, its API calls, the duplicate/merge strategy, and the
 `data-testid="view-leads"` hook the e2e suite depends on are unchanged.
+
+## Brief 45 (PR F): uploads go into a list
+- `/imports` opens with **"Where should these people go?"**: an existing list
+  (a native `<select>` grouped by folder with `<optgroup>`, archived lists left
+  out) or a new list (name, and a folder or "No folder"). Native selects
+  because the kit's `Select` has no groups; styled with `controlBase` like the
+  page's other inputs. The choice is checked (`POST /api/imports/destination`)
+  before the file is sent, with the lists API's own words.
+- The mapping-review step is unchanged.
+- The progress page adds a summary card under a finished import ("412 rows →
+  380 new people, 32 already in your CRM (added to this list too)", the list,
+  then "Ranked: done" / "Scoring the 380 new people…" / the morning fallback)
+  and an **Open the list** button beside `view-leads`.

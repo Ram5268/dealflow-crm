@@ -456,6 +456,15 @@ export async function cleanImportedLeads(): Promise<void> {
   await prisma.lead.deleteMany({ where: { id: { in: leadIds } } })
 }
 
+/** Brief 45 PR F: the list the import spec uploads into (named with this marker). */
+export const MARK_IMPORT_LIST = '[E2E_IMPORT]'
+
+export async function cleanImportLists(): Promise<void> {
+  const org = await orgId()
+  // Its memberships go with it; the leads are removed by cleanImportedLeads.
+  await prisma.callList.deleteMany({ where: { organizationId: org, name: { startsWith: MARK_IMPORT_LIST } } })
+}
+
 /* -------------------------------------------------------------- residue --- */
 
 /** Counts of everything the fixtures can create. Every value must be 0 after
@@ -472,6 +481,9 @@ export async function fixtureResidue(): Promise<Record<string, number>> {
     leadFixtures: await prisma.lead.count({ where: { source: MARK_LEAD } }),
     importedLeads: await prisma.lead.count({
       where: { organizationId: org, source: { startsWith: 'import:' } },
+    }),
+    importLists: await prisma.callList.count({
+      where: { organizationId: org, name: { startsWith: MARK_IMPORT_LIST } },
     }),
     fixtureThreads: await prisma.message.count({
       where: { organizationId: org, threadId: { startsWith: 'e2e_' } },

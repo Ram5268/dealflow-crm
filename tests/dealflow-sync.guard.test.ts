@@ -44,20 +44,24 @@ describe("the 7:00 copy keeps what an upload's scoring wrote after DealFlow made
     const scoredLater = await makeLead(db, org, { displayName: "Test Owner Later", mojoId: `${TAG}_later`, ...ranked, dealflowSignalSyncedAt: after });
     const scoredEarlier = await makeLead(db, org, { displayName: "Test Owner Earlier", mojoId: `${TAG}_earlier`, ...ranked, dealflowSignalSyncedAt: before });
     const neverStamped = await makeLead(db, org, { displayName: "Test Owner Unstamped", mojoId: `${TAG}_unstamped`, ...ranked, dealflowSignalSyncedAt: null });
+    // Written in the very millisecond DealFlow made the list: not "after" it, so cleared as before.
+    const tie = await makeLead(db, org, { displayName: "Test Owner Tie", mojoId: `${TAG}_tie`, ...ranked, dealflowSignalSyncedAt: generatedAt });
     const inBatch = await makeLead(db, org, { displayName: "Test Owner Listed", mojoId: `${TAG}_listed` });
     await db.dealFlowDerivedSignal.create({ data: { organizationId: org, mojoId: `${TAG}_later`, priorityScore: 77, syncedAt: after, dealflowRawJson: { source: "import-scoring" } } });
     await db.dealFlowDerivedSignal.create({ data: { organizationId: org, mojoId: `${TAG}_earlier`, priorityScore: 77, syncedAt: before, dealflowRawJson: {} } });
+    await db.dealFlowDerivedSignal.create({ data: { organizationId: org, mojoId: `${TAG}_tie`, priorityScore: 77, syncedAt: generatedAt, dealflowRawJson: {} } });
     const keptBefore = await fields(scoredLater);
 
     const r = await applySync(org, buildSignals({ includeTestBuyers: false, rows: [row({ mojo_id: `${TAG}_listed`, crm_lead_id: inBatch, generated_at: generatedAt.toISOString() })] }), db);
-    expect(r).toMatchObject({ signalsUpserted: 1, signalsRemoved: 1, leadsUpdated: 1, leadsCleared: 2 });
+    expect(r).toMatchObject({ signalsUpserted: 1, signalsRemoved: 2, leadsUpdated: 1, leadsCleared: 3 });
 
     expect(await fields(scoredLater)).toEqual(keptBefore);
     expect(await db.dealFlowDerivedSignal.findUnique({ where: { mojoId: `${TAG}_later` } })).not.toBeNull();
-    for (const id of [scoredEarlier, neverStamped]) {
+    for (const id of [scoredEarlier, neverStamped, tie]) {
       expect(await fields(id)).toEqual({ priorityScore: null, topMatchFit: null, captureStatus: null, matchReason: null, dealflowDeepLink: null, dealflowSignalSyncedAt: null });
     }
     expect(await db.dealFlowDerivedSignal.findUnique({ where: { mojoId: `${TAG}_earlier` } })).toBeNull();
+    expect(await db.dealFlowDerivedSignal.findUnique({ where: { mojoId: `${TAG}_tie` } })).toBeNull();
     expect(await fields(inBatch)).toMatchObject({ priorityScore: 80, topMatchFit: 84 });
   });
 

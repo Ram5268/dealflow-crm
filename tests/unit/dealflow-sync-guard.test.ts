@@ -50,11 +50,12 @@ describe('the morning sync is unchanged apart from the guard', () => {
     expect(sha(REMOVE_STALE_SIGNALS_SQL.slice(0, -MORNING_GUARD_SIGNALS_SQL.length))).toBe(ON_MAIN.REMOVE_STALE_SIGNALS_SQL)
   })
 
-  it('the condition keeps what was written after DealFlow generated the batch, and is off without a batch time', () => {
+  it('the condition keeps only what was written after DealFlow generated the batch, and is off without a batch time', () => {
+    // A tie (the same millisecond) is cleared, as before: only "after" is kept.
     expect(flat(MORNING_GUARD_LEADS_SQL)).toBe(
-      `AND ($3::timestamptz IS NULL OR l."dealflowSignalSyncedAt" IS NULL OR l."dealflowSignalSyncedAt" < ($3::timestamptz AT TIME ZONE 'UTC'))`,
+      `AND ($3::timestamptz IS NULL OR l."dealflowSignalSyncedAt" IS NULL OR l."dealflowSignalSyncedAt" <= ($3::timestamptz AT TIME ZONE 'UTC'))`,
     )
-    expect(flat(MORNING_GUARD_SIGNALS_SQL)).toBe(`AND ($3::timestamptz IS NULL OR "syncedAt" < ($3::timestamptz AT TIME ZONE 'UTC'))`)
+    expect(flat(MORNING_GUARD_SIGNALS_SQL)).toBe(`AND ($3::timestamptz IS NULL OR "syncedAt" <= ($3::timestamptz AT TIME ZONE 'UTC'))`)
   })
 })
 

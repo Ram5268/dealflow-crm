@@ -6,6 +6,7 @@ import { HttpError } from '@/lib/shared/http'
 import { buyerName, toBuyers } from '@/lib/core-data/dealflow-sync/buyers'
 import { nameProblem, normalizeName, ATTEMPTS_PATTERN_SQL } from './rules'
 import { BULK_MAX, type BestBuyerDTO } from './types'
+import { IMPORT_SCORING_SOURCE } from '@/lib/core-data/dealflow-score/marker'
 import {
   CITY_BOROUGH, NYC_ZIP_NEIGHBORHOODS, PROPERTY_TYPE_UNITS, SINGLE_FAMILY_PATTERN, ZIP3_BOROUGH, ZIP5_BOROUGH,
 } from './geo'
@@ -265,11 +266,26 @@ export function bestBuyerDTO(raw: unknown): BestBuyerDTO | null {
   return b ? { name: buyerName(b), score: b.score, isTestData: b.isTestData } : null
 }
 
-/** max(syncedAt) and the newest DealFlow batch's generatedAt for the org [CONTRACT §3]. */
+/**
+ * A signal the morning sync copied, not one an upload's scoring wrote
+ * (Brief 45 PR F, dealflow-score/marker.ts).
+ */
+export function morningSignal(alias: string): Prisma.Sql {
+  return Prisma.sql`(${Prisma.raw(alias)}."dealflowRawJson"->>'source') IS DISTINCT FROM ${IMPORT_SCORING_SOURCE}`
+}
+
+/**
+ * max(syncedAt) and the newest DealFlow batch's generatedAt for the org
+ * [CONTRACT §3]. Both are the morning update's clocks, so rows an upload's
+ * scoring wrote at other times of day are left out: "ranked 7:02" stays the
+ * morning's, and a lead that arrived since the morning still shows
+ * "scoring…" until it is scored [Brief 45 PR F; engineering precaution].
+ */
 export function rankingTimesSql(organizationId: string): Prisma.Sql {
   return Prisma.sql`
-    (SELECT max(s."syncedAt") FROM "DealFlowDerivedSignal" s WHERE s."organizationId" = ${organizationId}) AS "rankedAt",
+    (SELECT max(s."syncedAt") FROM "DealFlowDerivedSignal" s
+       WHERE s."organizationId" = ${organizationId} AND ${morningSignal('s')}) AS "rankedAt",
     (SELECT max(CASE WHEN s."dealflowRawJson"->>'generatedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
                      THEN (s."dealflowRawJson"->>'generatedAt')::timestamptz END)
-       FROM "DealFlowDerivedSignal" s WHERE s."organizationId" = ${organizationId}) AS "rankingCutoff"`
+       FROM "DealFlowDerivedSignal" s WHERE s."organizationId" = ${organizationId} AND ${morningSignal('s')}) AS "rankingCutoff"`
 }

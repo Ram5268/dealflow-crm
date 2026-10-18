@@ -17,6 +17,7 @@ import {
   type ResumeState,
 } from './batch'
 import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict } from './names'
+import { addImportLeadsToList } from './list-membership'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +39,11 @@ import type { MappingProposal, ColumnMapping } from './ai-mapping'
 // (its run id), so a stopped run can never reopen or overwrite a newer run; a
 // phone match whose names disagree is a different person; a row whose event
 // fails is counted once.
+//
+// Brief 45 (PR F): an upload aimed at a list (ImportBatch.targetListId) puts
+// every row's lead on it, new or merged, as it goes and once more at the end
+// (list-membership.ts). Which lead a row is stays decided by the merge below,
+// unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DuplicateStrategy = 'skip' | 'merge' | 'add-anyway'
@@ -437,6 +443,24 @@ export async function commitImport(
     }
     if (!(await writeHeld({ totalRows: result.totalRows, mappingJson: beat() }, ['importing']))) stopped ??= 'lost'
 
+    // Brief 45 (PR F): the leads this run wrote, waiting to go on the upload's
+    // list. Added with each progress write (best effort) and at the end, where
+    // every lead the import stamped is added too, so rows done before a stop
+    // and a re-run are on the list as well.
+    const listId = batch.targetListId ?? null
+    const listLeads = new Set<string>()
+    const addToList = async (final: boolean) => {
+      if (!listId) return
+      const ids = [...listLeads]
+      listLeads.clear()
+      try {
+        await addImportLeadsToList(db, organizationId, listId, importBatchId, ids, { everyImportedLead: final })
+      } catch (err) {
+        for (const id of ids) listLeads.add(id)
+        if (final) throw err
+      }
+    }
+
     // Counts and a heartbeat are written every PROGRESS_EVERY rows so the
     // progress page moves.
     let processed = done.reduce((n, d) => n + d, 0)
@@ -448,6 +472,7 @@ export async function commitImport(
       // import is no longer this run's (or its watchdog fired): stop.
       const held = await writeHeld({ ...counts(result), mappingJson: beat() }, ['importing']).catch(() => true)
       if (!held) stopped ??= 'lost'
+      await addToList(false)
     }
 
     // Some row was not started (time limit, watchdog or lost claim).
@@ -479,6 +504,7 @@ export async function commitImport(
             if (outcome.merged) result.duplicateRows++
             counted()
             leadId = outcome.leadId
+            if (listId) listLeads.add(leadId)
           }
         } catch (err) {
           result.errorRows++
@@ -514,6 +540,9 @@ export async function commitImport(
       }
     })
     if (cutShort) throw new ImportStopped(stopped ?? 'time', processed, result.totalRows, resumeNow() ?? { next: 0, partial: [] })
+    // Every row's lead on the list before the import reads as completed (a
+    // failure here marks it failed; the re-run adds them).
+    await addToList(true)
 
     settled = true
     // Every row is done. This may replace the run's own watchdog failure (the

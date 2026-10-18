@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import type { PrismaClient } from "@prisma/client";
-import { prismaPerf } from "./setup/pg";
+import { PrismaClient } from "@prisma/client";
+import { perfConnectionString, prismaPerf } from "./setup/pg";
 import { makeOrg, dropOrg, makeLead } from "./setup/b45";
 import { scoreNextChunk, type ScoreChunkResult } from "@/lib/core-data/dealflow-score/driver";
 import { SCORE_ERROR } from "@/lib/core-data/dealflow-score/messages";
@@ -369,6 +369,35 @@ describe("when DealFlow can't rank them: the import stays completed and the reas
     });
     expect(await scoreNextChunk(org, s.importId, null, deps(fetch))).toMatchObject({ done: true, error: SCORE_ERROR.save });
     expect(await leadState(s.newIds)).toEqual(before);
+  });
+});
+
+describe("speed: the CRM's own part of a full 500-person chunk (logged, not gated)", () => {
+  it("one chunk of 500 new people: the CRM side's time and database round trips", async () => {
+    const timed = new PrismaClient({ datasourceUrl: new URL(perfConnectionString()).toString(), log: [{ emit: "event", level: "query" }] });
+    let queries = 0;
+    timed.$on("query", () => { queries++; });
+    try {
+      const batch = await db.importBatch.create({
+        data: { organizationId: org, userId: "user_test", sourceLabel: TAG, filename: "big.csv", storageKey: "none", status: "completed",
+          createdAt: new Date(Date.now() - 10 * MIN), completedAt: new Date(Date.now() - 5 * MIN) },
+      });
+      await db.lead.createMany({
+        data: Array.from({ length: 500 }, (_, i) => ({
+          id: `${TAG}_big_${String(i).padStart(3, "0")}`, organizationId: org, displayName: `Test Owner Big ${i}`, mojoId: `${TAG}_bigm_${i}`,
+          source: `import:${batch.id}`, createdAt: new Date(Date.now() - 9 * MIN),
+        })),
+      });
+      const { fetch } = dealflow();
+      const t0 = performance.now();
+      const r = await scoreNextChunk(org, batch.id, null, { db: timed, fetch, baseUrl: BASE });
+      const ms = Math.round(performance.now() - t0);
+      expect(r).toMatchObject({ done: true, scored: 500 });
+      // The stub DealFlow reads this database too; only the CRM's own client is counted.
+      console.log(`[brief45 F] one 500-lead chunk, CRM side incl. a local stub DealFlow: ${ms} ms, ${queries} CRM queries`);
+    } finally {
+      await timed.$disconnect();
+    }
   });
 });
 

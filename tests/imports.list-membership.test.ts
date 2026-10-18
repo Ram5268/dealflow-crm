@@ -103,6 +103,20 @@ describe("every row's lead goes on the target list [brief §5.7]", () => {
     });
   });
 
+  it("an upload's counts stay the same when a later upload merges the same people", async () => {
+    const listA = await listFor("First upload");
+    const idA = await batchFor(`MojoID,Name,Phone\n${TAG}_s1,Test Owner S1,212-555-0124\n${TAG}_s2,Test Owner S2,212-555-0125\n`, listA);
+    await commitImport(idA, "merge", mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name"), col("Phone", "ContactPhone.phone")), "c", { emit, db });
+    const before = await getImportSummary(db, org, idA);
+    expect(before?.people).toEqual({ new: 2, existing: 0, newWithoutMojoId: 0 });
+    // A second upload merges one of them (and re-stamps its source).
+    const idB = await batchFor(`MojoID,Name\n${TAG}_s1,Test Owner S1\n`, await listFor("Second upload"));
+    await commitImport(idB, "merge", mapping(col("MojoID", "Lead.mojoId"), col("Name", "Lead.name")), "c", { emit, db });
+    expect(await db.lead.count({ where: { organizationId: org, source: `import:${idA}` } })).toBe(1);
+    expect(await getImportSummary(db, org, idA)).toEqual(before);
+    expect((await getImportSummary(db, org, idB))?.people).toEqual({ new: 0, existing: 1, newWithoutMojoId: 0 });
+  });
+
   it("a completed import run again changes nothing (no duplicate memberships)", async () => {
     const listId = await listFor("Run twice");
     const id = await batchFor("Phone\n212-555-0121\n212-555-0122\n", listId);
