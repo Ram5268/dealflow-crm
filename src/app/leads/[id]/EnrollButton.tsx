@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Zap } from 'lucide-react'
@@ -27,16 +27,25 @@ export interface EnrollableContact {
  *
  * The brief also named `POST /api/comms/sequences/[id]/enroll`. That route does
  * not exist; the real one is `POST /api/comms/enrollments`.
+ *
+ * Brief 41.2 (PR E): with `disabledReason` (email and texting both off) the
+ * button is greyed out with that one-line reason beside it. Greyed out with the
+ * reason, not hidden, is Ryan's decision of 2026-10-17. The route refuses the
+ * enrollment anyway (engineering precaution, audit H15), and with one switch on
+ * it refuses a sequence that needs the other; the toast shows its reason.
  */
 export function EnrollButton({
   sequences,
   contacts,
+  disabledReason,
 }: {
   sequences: EnrollableSequence[]
   contacts: EnrollableContact[]
+  disabledReason?: string | null
 }) {
   const router = useRouter()
   const { toast } = useToast()
+  const reasonId = useId()
   const [open, setOpen] = useState(false)
   const [sequenceId, setSequenceId] = useState<string | undefined>(undefined)
   const [contactId, setContactId] = useState<string | undefined>(contacts[0]?.id)
@@ -56,6 +65,12 @@ export function EnrollButton({
         setOpen(false)
         return
       }
+      if (res.status === 403) {
+        // A channel this sequence uses is off; nothing was saved.
+        const body = (await res.json().catch(() => null)) as { message?: string } | null
+        toast({ tone: 'danger', title: 'Could not enroll', description: body?.message })
+        return
+      }
       if (!res.ok) {
         toast({ tone: 'danger', title: 'Could not enroll' })
         return
@@ -72,6 +87,22 @@ export function EnrollButton({
 
   const noContacts = contacts.length === 0
   const noSequences = sequences.length === 0
+
+  if (disabledReason) {
+    // The reason sits under the button and wraps to the button's width
+    // (`w-0 min-w-full`), so the header's buttons don't get any wider.
+    return (
+      <span className="flex flex-col items-end gap-1">
+        <Button disabled aria-describedby={reasonId}>
+          <Zap size={13} />
+          Add to sequence
+        </Button>
+        <span id={reasonId} className="w-0 min-w-full text-right text-xs text-muted">
+          {disabledReason}
+        </span>
+      </span>
+    )
+  }
 
   return (
     <>

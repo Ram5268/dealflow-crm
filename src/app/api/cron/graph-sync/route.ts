@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { isAuthorizedCron } from '@/lib/compliance/cronAuth'
 import { prisma } from '@/lib/prisma'
+import { graphEnabled } from '@/lib/comms/graph-switch'
 import { getBoss } from '@/lib/comms/jobs/boss'
 import { QUEUES } from '@/lib/comms/jobs/queues'
 
@@ -15,6 +16,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const start = Date.now()
+  // Brief 41.2: Outlook is paused (Ryan's instruction). Nothing is read or
+  // queued, so no Outlook mailbox is synced.
+  if (!graphEnabled()) return NextResponse.json({ ran: false, reason: 'outlook paused' })
 
   const creds = await prisma.oAuthCredential.findMany({
     where: { provider: 'msft-graph', status: 'active' },

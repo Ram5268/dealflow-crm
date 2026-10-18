@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { verifyState } from '@/lib/comms/oauth/state'
 import { exchangeCode } from '@/lib/comms/oauth/graph'
 import { upsertCredential } from '@/lib/comms/oauth/store'
+import { graphEnabled, graphDisabledResponse } from '@/lib/comms/graph-switch'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -9,6 +10,9 @@ export const dynamic = 'force-dynamic'
 // MSFT Graph OAuth callback: verify state, exchange code, persist the encrypted
 // credential (provider=msft-graph), bounce to settings.
 export async function GET(req: Request) {
+  // Brief 41.2: Outlook is paused (Ryan's instruction). Refuse before anything
+  // else: the state isn't checked, no code is exchanged, no token is stored.
+  if (!graphEnabled()) return graphDisabledResponse()
   const url = new URL(req.url)
   const code = url.searchParams.get('code')
   const state = url.searchParams.get('state')

@@ -6,6 +6,7 @@ import { sendEmailMessage } from '@/lib/comms/email/send'
 import { sendSmsMessage, ComplianceBlockedError } from '@/lib/comms/sms/send'
 import { SmsDisabledError } from '@/lib/comms/sms/config'
 import { emailEnabled } from '@/lib/comms/email/config'
+import { GraphDisabledError } from '@/lib/comms/graph-switch'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -169,6 +170,15 @@ export async function POST(req: Request) {
       where: { id: msg.id },
       data: { status: 'error', errorMessage: String(err) },
     })
+    // Brief 41.2: the only mailbox is Outlook, which is paused (Ryan's
+    // instruction). Say so plainly rather than a generic failure; nothing
+    // reached Microsoft.
+    if (err instanceof GraphDisabledError) {
+      return NextResponse.json(
+        { messageId: msg.id, status: 'error', error: err.code, message: err.message },
+        { status: 403 },
+      )
+    }
     return NextResponse.json({ messageId: msg.id, status: 'error' }, { status: 502 })
   }
 }

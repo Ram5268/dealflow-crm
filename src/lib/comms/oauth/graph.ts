@@ -1,4 +1,5 @@
 import { signState } from './state'
+import { graphEnabled, GraphDisabledError } from '../graph-switch'
 
 /**
  * Microsoft Graph OAuth (brief §M5). Mirrors oauth/gmail.ts but via the MSFT
@@ -8,6 +9,9 @@ import { signState } from './state'
  *
  * Bases are env-overridable so isolation tests point at the Graph mock:
  * MSFT_IDENTITY_BASE (token/authorize), GRAPH_API_BASE / GRAPH_MOCK_URL (/me).
+ *
+ * Brief 41.2: while Outlook is paused (Ryan's instruction) there is no sign-in
+ * link, code exchange or token refresh; each refuses before calling Microsoft.
  */
 export const GRAPH_SCOPES = ['offline_access', 'Mail.Read', 'Mail.Send', 'User.Read']
 
@@ -17,6 +21,7 @@ const graphBase = () =>
 const tenant = () => process.env.MSFT_GRAPH_TENANT_ID ?? 'common'
 
 export function getAuthUrl(orgId: string): string {
+  if (!graphEnabled()) throw new GraphDisabledError()
   const params = new URLSearchParams({
     client_id: process.env.MSFT_GRAPH_CLIENT_ID ?? '',
     response_type: 'code',
@@ -54,6 +59,7 @@ export interface ExchangedTokens {
 }
 
 export async function exchangeCode(code: string): Promise<ExchangedTokens> {
+  if (!graphEnabled()) throw new GraphDisabledError()
   const t = await tokenRequest({
     client_id: process.env.MSFT_GRAPH_CLIENT_ID ?? '',
     client_secret: process.env.MSFT_GRAPH_CLIENT_SECRET ?? '',
@@ -85,6 +91,7 @@ export async function exchangeCode(code: string): Promise<ExchangedTokens> {
 export async function refreshAccessToken(
   refreshToken: string,
 ): Promise<{ accessToken: string; expiresAt?: Date }> {
+  if (!graphEnabled()) throw new GraphDisabledError()
   const t = await tokenRequest({
     client_id: process.env.MSFT_GRAPH_CLIENT_ID ?? '',
     client_secret: process.env.MSFT_GRAPH_CLIENT_SECRET ?? '',

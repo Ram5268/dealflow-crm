@@ -3,6 +3,7 @@ import { NewLeadModal } from './NewLeadModal'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { isLeadSortKey, listLeads } from '@/lib/leads/list'
+import { sequencesOffReason } from '@/lib/comms/sequences/channel-gate'
 import { LeadsView } from './LeadsView'
 
 export const dynamic = 'force-dynamic'
@@ -55,6 +56,8 @@ export default async function LeadsPage({
         viewId={sp.viewId ?? ''}
         views={views}
         viewError={result.viewError}
+        // Brief 41.2 (PR E): the switches are server settings, so the reason is decided here.
+        sequencesOffReason={sequencesOffReason()}
       />
     </>
   )

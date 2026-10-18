@@ -12,6 +12,7 @@ import {
   formatMinutes,
   formatWindow,
   isMailboxConnected,
+  mailboxCardActions,
   maskCallerId,
   pacingBandRows,
   spendPercent,
@@ -152,5 +153,53 @@ describe('mailbox connection state', () => {
     expect(isMailboxConnected({ status: 'active' })).toBe(true)
     expect(isMailboxConnected({ status: 'reauth_required' })).toBe(true)
     expect(isMailboxConnected({ status: 'error' })).toBe(true)
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. The server reads GRAPH_ENABLED and passes
+// only the resulting card state down to the page.
+describe('connected accounts card while Outlook is paused', () => {
+  const outlook = { key: 'outlook' as const, label: 'Outlook', authorizeHref: '/api/comms/oauth/msft/authorize' }
+  const gmail = { key: 'gmail' as const, label: 'Gmail', authorizeHref: '/api/comms/oauth/gmail/authorize' }
+  const paused = { graphEnabled: false }
+
+  it('the Outlook card says "Outlook is paused" and offers no Connect link', () => {
+    const card = mailboxCardActions({ ...outlook, connected: false }, paused)
+    expect(card.pausedNote).toMatch(/^Outlook is paused/)
+    expect(card.connect).toBeNull()
+    expect(card.disconnect).toBe(false)
+  })
+
+  it('a stored Outlook connection still shows, with Disconnect but no Reconnect', () => {
+    const card = mailboxCardActions({ ...outlook, connected: true }, paused)
+    expect(card.disconnect).toBe(true)
+    expect(card.connect).toBeNull()
+    expect(card.pausedNote).toMatch(/^Outlook is paused/)
+  })
+
+  it('Gmail is unchanged', () => {
+    expect(mailboxCardActions({ ...gmail, connected: false }, paused)).toEqual({
+      pausedNote: null,
+      connect: { label: 'Connect', href: gmail.authorizeHref },
+      disconnect: false,
+    })
+    expect(mailboxCardActions({ ...gmail, connected: true }, paused)).toEqual({
+      pausedNote: null,
+      connect: { label: 'Reconnect', href: gmail.authorizeHref },
+      disconnect: true,
+    })
+  })
+
+  it('with GRAPH_ENABLED=true the Outlook card is as before', () => {
+    expect(mailboxCardActions({ ...outlook, connected: false }, { graphEnabled: true })).toEqual({
+      pausedNote: null,
+      connect: { label: 'Connect', href: outlook.authorizeHref },
+      disconnect: false,
+    })
+    expect(mailboxCardActions({ ...outlook, connected: true }, { graphEnabled: true }).connect).toEqual({
+      label: 'Reconnect',
+      href: outlook.authorizeHref,
+    })
   })
 })

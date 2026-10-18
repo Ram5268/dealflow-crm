@@ -80,6 +80,19 @@ export async function listSequenceRows(organizationId: string): Promise<Sequence
   })
 }
 
+/**
+ * Brief 41.2 (PR E): how many people have an active enrollment, for the
+ * /sequences banner. People are distinct contacts: someone in two sequences
+ * counts once. Read-only.
+ */
+export async function countPeopleInActiveSequences(organizationId: string): Promise<number> {
+  const people = await prisma.sequenceEnrollment.groupBy({
+    by: ['contactId'],
+    where: { organizationId, status: 'active' },
+  })
+  return people.length
+}
+
 // ------------------------------------------------------------------ detail
 
 export interface SequenceStepRow {

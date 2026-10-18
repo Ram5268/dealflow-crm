@@ -1,5 +1,6 @@
 import { prisma } from '../../prisma'
 import { encryptToken, decryptToken } from './crypto'
+import { graphEnabled, GraphDisabledError } from '../graph-switch'
 
 /**
  * OAuthCredential CRUD (brief §2.1 `store.ts`).
@@ -26,6 +27,10 @@ export interface UpsertCredentialInput {
 }
 
 export function upsertCredential(input: UpsertCredentialInput) {
+  // Brief 41.2: no Microsoft token is stored while Outlook is paused (Ryan's
+  // instruction). Refreshed tokens (updateAccessToken) can't arise while it's
+  // off: oauth/graph.ts refuses every Microsoft refresh.
+  if (input.provider === 'msft-graph' && !graphEnabled()) throw new GraphDisabledError()
   const accessTokenEncrypted = encryptToken(input.accessToken)
   const refreshTokenEncrypted = input.refreshToken
     ? encryptToken(input.refreshToken)

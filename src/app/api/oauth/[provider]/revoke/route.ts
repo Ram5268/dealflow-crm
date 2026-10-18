@@ -32,6 +32,8 @@ const PROVIDERS: Record<string, OAuthProvider> = {
  *     needs a scope this app does not hold (D requests offline_access, Mail.Read,
  *     Mail.Send, User.Read). So Outlook is revoked LOCALLY only, and the response
  *     says so via `remoteRevocation: false` rather than implying otherwise.
+ *     Brief 41.2: that is also why Disconnect stays allowed while Outlook is
+ *     paused (GRAPH_ENABLED off, Ryan's instruction): it makes no Microsoft call.
  *
  * On provider failure: 502 and the DB is left untouched, so the UI keeps showing
  * the account as connected instead of lying about a disconnect that did not land.

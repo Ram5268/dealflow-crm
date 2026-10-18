@@ -2,13 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { GraphClient, parseGraphMessage, type GraphMessage } from './graph-client'
 
 const fetchMock = vi.fn()
+const savedGraphEnabled = process.env.GRAPH_ENABLED
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
   fetchMock.mockReset()
+  // Brief 41.2: Outlook is paused unless GRAPH_ENABLED is exactly 'true'. These
+  // tests exercise the client against a mocked Graph, so they turn it on.
+  process.env.GRAPH_ENABLED = 'true'
   process.env.GRAPH_API_BASE = 'https://graph.test/v1.0'
   delete process.env.GRAPH_MOCK_URL
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  if (savedGraphEnabled === undefined) delete process.env.GRAPH_ENABLED
+  else process.env.GRAPH_ENABLED = savedGraphEnabled
+})
 
 const okJson = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) })
 
@@ -103,5 +111,34 @@ describe('GraphClient.createAndSend', () => {
     await expect(
       new GraphClient('AT').createAndSend({ internetMessageId: '<x>', body: { contentType: 'Text', content: '' }, toRecipients: [] }),
     ).rejects.toThrow(/HTTP 500/)
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. Every Graph request refuses before any
+// HTTP call unless GRAPH_ENABLED is exactly 'true'. The client never reads
+// EMAIL_ENABLED, so this holds whatever the email switch says.
+describe.each([
+  ['unset', undefined],
+  ['empty', ''],
+  ['TRUE', 'TRUE'],
+  ['1', '1'],
+])('while Outlook is paused (GRAPH_ENABLED %s)', (_n, value) => {
+  const paused = { name: 'GraphDisabledError', code: 'outlook_paused' }
+  beforeEach(() => {
+    if (value === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = value
+    fetchMock.mockResolvedValue(okJson({ id: 'draft1', value: [{ conversationId: 'c1' }], '@odata.deltaLink': 'DL' }))
+  })
+
+  it.each([
+    ['createAndSend (send)', (gc: GraphClient) =>
+      gc.createAndSend({ internetMessageId: '<crm-1@dealflow-crm.local>', body: { contentType: 'Text', content: 'hi' }, toRecipients: [{ emailAddress: { address: 'a@b.com' } }] })],
+    ['listChangedConversations (sync)', (gc: GraphClient) => gc.listChangedConversations('')],
+    ['getConversationMessages (sync)', (gc: GraphClient) => gc.getConversationMessages('c1')],
+    ['listConversationsSince (backfill)', (gc: GraphClient) => gc.listConversationsSince('')],
+  ])('%s refuses with no HTTP call', async (_name, call) => {
+    await expect(call(new GraphClient('AT'))).rejects.toMatchObject(paused)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

@@ -6,7 +6,8 @@ import { getPolicyStatus } from '@/lib/compliance/policy/status'
 import { evaluateCallingWindow } from '@/lib/compliance/timezone/windowCheck'
 import { monthlyCapStatus } from '@/lib/telephony/cost/monthlyCap'
 import { getEnv, isDncVendorConfigured, isLitigatorVendorConfigured } from '@/lib/compliance/env'
-import { isMailboxConnected } from '@/lib/settings/format'
+import { graphEnabled } from '@/lib/comms/graph-switch'
+import { isMailboxConnected, mailboxCardActions, type MailboxCardActions } from '@/lib/settings/format'
 
 /* ---------------------------------------------------------------- profile -- */
 
@@ -51,7 +52,7 @@ export async function getProfileInfo(): Promise<ProfileInfo> {
 
 /* ------------------------------------------------------- connected accounts -- */
 
-export interface MailboxAccount {
+export interface MailboxAccount extends MailboxCardActions {
   /** URL-facing provider name — the segment /api/oauth/[provider]/revoke wants. */
   key: 'gmail' | 'outlook'
   label: string
@@ -64,7 +65,6 @@ export interface MailboxAccount {
   updatedAt: Date | null
   /** True once a delta cursor exists, i.e. at least one sync has run. */
   hasSyncCursor: boolean
-  authorizeHref: string
   /** Provider-side revocation is Gmail-only; AAD exposes no RFC 7009 endpoint. */
   remoteRevocation: boolean
 }
@@ -81,6 +81,9 @@ export interface MailboxAccount {
  */
 export async function getMailboxAccounts(): Promise<MailboxAccount[]> {
   const organizationId = await getCurrentOrgId()
+  // Brief 41.2: the Outlook switch is read here, on the server; the page only
+  // gets the resulting card state (mailboxCardActions), never the setting.
+  const switches = { graphEnabled: graphEnabled() }
 
   const specs = [
     {
@@ -100,12 +103,15 @@ export async function getMailboxAccounts(): Promise<MailboxAccount[]> {
   ]
 
   return Promise.all(
-    specs.map(async (spec) => {
+    specs.map(async ({ authorizeHref, ...spec }) => {
       const cred = await getCredential(organizationId, spec.stored)
       const connected = isMailboxConnected(cred)
       return {
         ...spec,
         connected,
+        // The authorize path reaches the page only as `connect`, which is null
+        // while the provider is paused.
+        ...mailboxCardActions({ ...spec, authorizeHref, connected }, switches),
         // A revoked row keeps its emailAddress, so gate on `connected` — else a
         // disconnected card would still display the address it used to sync.
         emailAddress: connected ? (cred?.emailAddress ?? null) : null,
