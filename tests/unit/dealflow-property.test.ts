@@ -120,6 +120,7 @@ describe('toPropertyFacts: the whitelist into dealflowRawJson.property', () => {
   it('keeps a value only with a sane range around it, and nearby sales only with a value', () => {
     const bad = [
       { value: 1_830_000, low: 2_000_000, high: 2_120_000 }, // low above the value
+      { value: 1_830_000, low: 1_540_000, high: 1_700_000 }, // value above the high end
       { value: 1_830_000, low: 1_540_000, high: null }, // no high end
       { value: 1_830_000, low: 800_000, high: 2_120_000 }, // low under half the value
       { value: 1_830_000, low: 1_540_000, high: 4_000_000 }, // high over twice the value
@@ -160,9 +161,11 @@ describe('toPropertyFacts: the whitelist into dealflowRawJson.property', () => {
 
   it(`keeps at most ${MAX_COMPS} nearby sales, in DealFlow's order, each with every field valid`, () => {
     const many = Array.from({ length: 12 }, (_, i) => comp(i))
-    expect(toPropertyFacts(rawProperty({ comps: many }))?.comps).toEqual(many.slice(0, MAX_COMPS))
+    expect(toPropertyFacts(rawProperty({ comps: many }))?.comps).toEqual(many.slice(0, 8))
     const bad = [
       comp(0, { address: 'Example St' }), // no house number
+      comp(0, { address: 'J Example St' }), // a letter is not a house number
+      comp(0, { address: ' Example St' }),
       comp(0, { address: '12 Example St; x' }),
       comp(0, { address: `12 ${'Example '.repeat(12)}St` }), // too long
       comp(0, { address: 12 }),
@@ -307,9 +310,9 @@ describe('getLeadProperty: the lead page read', () => {
 })
 
 describe('compact money', () => {
-  it('reads like the card: $1.83M, $875k', () => {
+  it('reads like the card: $1.83M, $875K', () => {
     expect([1_830_000, 875_000, 999_600, 999_400, 2_000_000, 1_500_000].map(compactMoney)).toEqual([
-      '$1.83M', '$875k', '$1M', '$999k', '$2M', '$1.5M',
+      '$1.83M', '$875K', '$1M', '$999K', '$2M', '$1.5M',
     ])
   })
 })

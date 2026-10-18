@@ -227,11 +227,11 @@ const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', y
 // "Oct 1, 2026"
 export const dayText = (isoDay: string) => DAY.format(new Date(`${isoDay}T00:00:00Z`))
 
-// "$1.83M", "$875k"
+// "$1.83M", "$875K"
 export function compactMoney(n: number): string {
   if (n < 1000) return `$${Math.round(n)}`
   const k = Math.round(n / 1000)
-  return k < 1000 ? `$${k}k` : `$${Number((n / 1e6).toFixed(2))}M`
+  return k < 1000 ? `$${k}K` : `$${Number((n / 1e6).toFixed(2))}M` // "K", as the Matching buyers card writes it
 }
 
 const sqftText = (n: number) => `${Math.round(n).toLocaleString('en-US')} sq ft`
@@ -247,7 +247,7 @@ const NO_VALUE_WHY: Record<NoValueReason, string> = {
   five_plus_units: "5+ unit building: the city values these on income, so there's no model value.",
   condo_without_unit: "Condo building, but this lead has no unit number, so the unit can't be valued.",
   not_found: "We couldn't match this address to a city tax lot.",
-  other_property_type: "Not a 1–4 family home (for example a garage, store or mixed-use lot), so there's no model value.",
+  other_property_type: "Not a 1–4 family home (for example a condo unit, garage, store or mixed-use lot), so there's no model value.",
 }
 
 // Why there's no value, in one sentence.

@@ -61,7 +61,7 @@ describe('PropertyValueCard', () => {
     const why = {
       five_plus_units: "5+ unit building: the city values these on income, so there's no model value.",
       condo_without_unit: "Condo building, but this lead has no unit number, so the unit can't be valued.",
-      other_property_type: "Not a 1–4 family home (for example a garage, store or mixed-use lot), so there's no model value.",
+      other_property_type: "Not a 1–4 family home (for example a condo unit, garage, store or mixed-use lot), so there's no model value.",
     }
     for (const [reason, sentence] of Object.entries(why)) {
       const html = render(property({ ...NO_VALUE, reason, facts: facts({ units: 6 }) }))
@@ -83,6 +83,10 @@ describe('PropertyValueCard', () => {
 
   it('before any run, or no valuation for this lead: "No value yet"', () => {
     expect(text(render(null))).toBe('No value yet')
+  })
+
+  it('a run that named no sources still dates its sales from the run itself', () => {
+    expect(text(render(property({ sources: null })))).toContain('Sources: city sales through Sep 30, 2026')
   })
 
   it('no buttons or option selections in any state, and no confidence label', () => {

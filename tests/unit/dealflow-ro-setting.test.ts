@@ -17,6 +17,7 @@ const THIS_FILE = 'tests/unit/dealflow-ro-setting.test.ts'
 const MAY_SET: Record<string, string> = {
   'tests/unit/dealflow-ro-client.test.ts': 'an address nothing listens on; pg connect() is replaced',
   'tests/unit/health-dealflow-probe.test.ts': 'an address nothing listens on; pg connect() is replaced',
+  'tests/unit/dealflow-sync-ready.test.ts': 'an address nothing listens on; pg connect() is replaced',
   'tests/dealflow-ro-client.readonly.test.ts': "CI's throwaway test database (db-suite), never DealFlow's",
 }
 

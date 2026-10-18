@@ -1,6 +1,7 @@
 import { roQuery } from './ro-client'
 import { toBuyers } from './buyers'
 import { toPropertyFacts } from './property'
+import { logger } from '@/lib/logger'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DealFlow signal sync — reads the latest nightly CallQueueEntry batch from
@@ -222,16 +223,30 @@ export const RUN_INFO_SQL = `
   FROM "AuditLog" WHERE "action" = 'NIGHTLY_SCORING' ORDER BY "createdAt" DESC LIMIT 1
 `
 
+// Brief 44: whether DealFlow's valuation tables exist yet (data step V1).
+// Postgres looks up every table a statement names before it runs any of it, so
+// no guard inside RO_SQL can skip PROPERTY_SQL: this separate one-statement read
+// picks which RO_SQL to send. Before V1 (or if the tables are ever dropped) the
+// sync still writes ranks and buyers, with property NULL, instead of failing
+// whole (engineering precaution).
+export const VALUATIONS_READY_SQL = `
+  SELECT to_regclass('"PropertyValuation"') IS NOT NULL AND to_regclass('"ValuationRun"') IS NOT NULL AS ready
+`
+export const RO_SQL_WITHOUT_PROPERTY = RO_SQL.replace(PROPERTY_SQL, 'NULL::jsonb')
+
 // Fetches the latest queue batch from DealFlow (read-only). In stub mode returns
 // a small golden fixture without touching any DB (unit-scope shortcut).
 export async function fetchDealflowBatch(now: Date = new Date()): Promise<DealflowBatch> {
   if (process.env.DEALFLOW_SYNC_STUB === '1') {
     return stubBatch(now)
   }
-  const [rows, info] = await Promise.all([
-    roQuery<DealflowJoinRow>(RO_SQL),
+  const [ready, info] = await Promise.all([
+    roQuery<{ ready: boolean | null }>(VALUATIONS_READY_SQL),
     roQuery<{ include_test_buyers: boolean | null }>(RUN_INFO_SQL),
   ])
+  const valuationsReady = ready[0]?.ready === true
+  if (!valuationsReady) logger.warn('DealFlow sync: the valuation tables are not there yet, so no property card data this run')
+  const rows = await roQuery<DealflowJoinRow>(valuationsReady ? RO_SQL : RO_SQL_WITHOUT_PROPERTY)
   return { rows, includeTestBuyers: info[0]?.include_test_buyers ?? null }
 }
 
