@@ -67,7 +67,8 @@ export interface SidebarUi {
   dropTarget: DropTarget | null
   startCreate: (kind: CreateKind, folderId?: string | null) => void
   submitName: (name: string) => void
-  cancelName: () => void
+  /** Esc returns focus to the row (or the + button); clicking away leaves focus where it went. */
+  cancelName: (opts?: { refocus?: boolean }) => void
   setOpenMenu: (key: string | null) => void
   menuAction: (item: ItemRef, action: MenuAction) => void
   toggleFolder: (folderId: string) => void
@@ -119,8 +120,9 @@ const MENU_BUTTON = cn(
   'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100',
   'data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100',
 )
+// No text color here: an item is text-fg or (Delete) text-danger, never both.
 const MENU_ITEM = cn(
-  'flex h-7 cursor-default select-none items-center gap-2 rounded px-2 text-sm text-fg outline-none',
+  'flex h-7 cursor-default select-none items-center gap-2 rounded px-2 text-sm outline-none',
   'data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
 )
 const MENU_CONTENT = cn(
@@ -178,14 +180,14 @@ function ItemMenu({ target, name, entries }: { target: ItemRef; name: string; en
             if (entry.kind === 'sub') {
               return (
                 <RM.Sub key={i}>
-                  <RM.SubTrigger className={MENU_ITEM} disabled={entry.options.length === 0}>
+                  <RM.SubTrigger className={cn(MENU_ITEM, 'text-fg')} disabled={entry.options.length === 0}>
                     <span className="min-w-0 flex-1 truncate">{entry.label}</span>
                     <ChevronRight size={13} className="shrink-0 text-subtle" />
                   </RM.SubTrigger>
                   <RM.Portal>
                     <RM.SubContent sideOffset={4} className={cn(MENU_CONTENT, 'max-h-72 overflow-y-auto')}>
                       {entry.options.map((o) => (
-                        <RM.Item key={o.label} className={MENU_ITEM} onSelect={() => choose(o.action)}>
+                        <RM.Item key={o.label} className={cn(MENU_ITEM, 'text-fg')} onSelect={() => choose(o.action)}>
                           {o.dot && <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', o.dot)} />}
                           <span className="min-w-0 flex-1 truncate">{o.label}</span>
                           {o.checked && <Check size={13} className="shrink-0 text-accent" aria-label="current" />}
@@ -200,7 +202,7 @@ function ItemMenu({ target, name, entries }: { target: ItemRef; name: string; en
             return (
               <div key={i}>
                 <RM.Item
-                  className={cn(MENU_ITEM, entry.danger ? 'text-danger' : undefined)}
+                  className={cn(MENU_ITEM, entry.danger ? 'text-danger' : 'text-fg')}
                   disabled={entry.disabled}
                   aria-describedby={reasonId}
                   onSelect={() => choose(entry.action)}
@@ -310,7 +312,7 @@ function NameBox({ placeholder, label, initial = '', at }: { placeholder: string
         }}
         // Clicking away closes an untouched box; typed text is kept until Enter or Esc.
         onBlur={() => {
-          if (!ui.busy && (value.trim() === '' || value === initial)) ui.cancelName()
+          if (!ui.busy && (value.trim() === '' || value === initial)) ui.cancelName({ refocus: false })
         }}
         className={cn(controlBase, error ? 'border-danger' : 'border-line hover:border-line-strong', 'h-7')}
       />
@@ -367,7 +369,9 @@ function ListRow({
           onKeyDown={(e) => ui.rowKeyDown(ref, e)}
           className={cn(ROW_MAIN, TEXT_AT[depth], archived && 'text-muted')}
         >
-          <span className="min-w-0 flex-1 truncate">{list.name}</span>
+          <span className="min-w-0 flex-1 truncate" title={list.name}>
+            {list.name}
+          </span>
           <span className={COUNT}>{formatCount(list.memberCount)}</span>
         </Link>
         <ItemMenu target={ref} name={list.name} entries={listMenu(list, scopeIds, folders, archived)} />
@@ -426,7 +430,9 @@ function FolderRow({
             ) : (
               <ChevronRight size={14} className="shrink-0 text-subtle" />
             )}
-            <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+            <span className="min-w-0 flex-1 truncate" title={folder.name}>
+            {folder.name}
+          </span>
           </button>
           <ItemMenu target={ref} name={folder.name} entries={folderMenu(folder, folderIds)} />
         </div>
@@ -484,7 +490,9 @@ function GroupRow({ group, groupIds, active }: { group: GroupDTO; groupIds: stri
           <span aria-hidden="true" className="flex w-3.5 shrink-0 justify-center">
             <span className={cn('h-2 w-2 rounded-full', groupColorStyle(group.color).dot)} />
           </span>
-          <span className="min-w-0 flex-1 truncate">{group.name}</span>
+          <span className="min-w-0 flex-1 truncate" title={group.name}>
+            {group.name}
+          </span>
           <span className={COUNT}>{formatCount(group.memberCount)}</span>
         </Link>
         <ItemMenu target={ref} name={group.name} entries={groupMenu(group, groupIds)} />

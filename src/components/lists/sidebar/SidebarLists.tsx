@@ -34,6 +34,8 @@ import { ConfirmDialog } from './ConfirmDialog'
 import type { CreateKind, CreateRequest } from './createRequest'
 
 const CREATE_LABEL: Record<CreateKind, string> = { folder: 'New folder', list: 'New list', group: 'New group' }
+const NAV_RELOAD_MS = 15_000
+let lastNavReload = 0
 
 function callApi(c: ApiCall): Promise<unknown> {
   switch (c.call) {
@@ -163,6 +165,19 @@ export function SidebarLists({
     [prefs],
   )
 
+  // Counts stay live when people change elsewhere (a new lead, an import): the
+  // sidebar re-reads on navigation, at most every 15 seconds.
+  const firstPath = useRef(true)
+  useEffect(() => {
+    if (firstPath.current) {
+      firstPath.current = false
+      return
+    }
+    if (Date.now() - lastNavReload < NAV_RELOAD_MS) return
+    lastNavReload = Date.now()
+    void reload()
+  }, [pathname, reload])
+
   // ⌘K "New list / New folder / New group".
   useEffect(() => {
     if (!createRequest) return
@@ -172,9 +187,11 @@ export function SidebarLists({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createRequest?.nonce])
 
-  const cancelName = useCallback(() => {
-    if (renaming) focusItem(renaming.id)
-    else if (creating) focusCreate(creating.kind)
+  const cancelName = useCallback((opts: { refocus?: boolean } = {}) => {
+    if (opts.refocus !== false) {
+      if (renaming) focusItem(renaming.id)
+      else if (creating) focusCreate(creating.kind)
+    }
     setCreating(null)
     setRenaming(null)
     setInlineError(null)
@@ -231,6 +248,9 @@ export function SidebarLists({
       if (!base) return
       const plan = planMove(base, action)
       if (!plan) return
+      // Show where it went: a list moved into a closed folder opens that folder.
+      const into = action.type === 'dropListOnFolder' ? action.folderId : action.type === 'moveListTo' ? action.folderId : null
+      if (into) prefs.setFolderCollapsed(into, false)
       // A second quick move plans on top of this one, and the calls go one after another.
       shownRef.current = plan.next
       setOverride(plan.next)
@@ -250,7 +270,7 @@ export function SidebarLists({
         }
       })
     },
-    [toast],
+    [toast, prefs],
   )
 
   const setArchived = useCallback(

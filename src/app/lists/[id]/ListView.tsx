@@ -71,14 +71,16 @@ function WhyNowCell({ row }: { row: RankedRow }) {
       </Tooltip>
     )
   }
-  return row.whyNow ? <span className="line-clamp-2 text-sm">{row.whyNow}</span> : <span className="text-subtle">—</span>
+  return row.whyNow ? <span className="line-clamp-2 min-w-[180px] text-sm">{row.whyNow}</span> : <span className="text-subtle">—</span>
 }
 
 function BestBuyerCell({ buyer }: { buyer: BestBuyerDTO | null }) {
   if (!buyer) return <span className="text-subtle">—</span>
   return (
-    <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm">
-      <span className="min-w-0 truncate">{buyer.name}</span>
+    <span className="flex w-[220px] min-w-0 items-center gap-1.5 whitespace-nowrap text-sm">
+      <span className="min-w-0 truncate" title={buyer.name}>
+        {buyer.name}
+      </span>
       {buyer.score != null && <span className="shrink-0 tabular-nums text-muted">{buyer.score}</span>}
       {buyer.isTestData && <Badge className="shrink-0">Test</Badge>}
     </span>
@@ -91,7 +93,7 @@ function GroupBadges({ groups }: { groups: GroupChipDTO[] }) {
   return (
     <span className="flex flex-wrap gap-1">
       {groups.map((g) => (
-        <span key={g.id} className={cn('inline-flex h-5 items-center rounded-full px-2 text-xs', groupColorStyle(g.color).chip)}>
+        <span key={g.id} className={cn('inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-xs', groupColorStyle(g.color).chip)}>
           {g.name}
         </span>
       ))}
@@ -300,7 +302,7 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
     // (Ryan-only screens; never anything a buyer or homeowner sees [Ryan,
     // 2026-10-17]). No column until that data is present.
     { key: 'whyNow', header: 'Why now', cell: (r) => <WhyNowCell row={r} /> },
-    { key: 'bestBuyer', header: 'Best buyer', width: '200px', cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
+    { key: 'bestBuyer', header: 'Best buyer', width: '240px', cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
     { key: 'groups', header: 'Groups', width: '180px', cell: (r) => <GroupBadges groups={r.groups} /> },
     { key: 'attempts', header: 'Attempts', width: '96px', align: 'right', cell: (r) => <span className="tabular-nums">{r.attempts}</span> },
     {
@@ -331,7 +333,8 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
   return (
     <div className="flex h-full flex-col">
       <header className="flex shrink-0 flex-wrap items-start gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0 flex-1">
+        {/* At phone width the buttons wrap under the title instead of squeezing it. */}
+        <div className="min-w-[16rem] flex-1">
           <p className="truncate text-xs text-subtle">{list.folderName ?? 'No folder'}</p>
           <div className="flex min-w-0 items-center gap-2">
             {/* AppShell's top bar owns the page <h1>; this contributes a heading. */}
