@@ -8,8 +8,8 @@ export const dynamic = 'force-dynamic'
 
 // POST /api/compliance/dnc/internal — add a phone to the org's internal DNC.
 // Idempotent: re-adding returns HTTP 201 with added:false. Brief 41 (H13): the
-// number is stored in canonical E.164 however it was typed ("917-331-2047" →
-// "+19173312047"); a value that isn't a phone number is refused with 400. SMS
+// number is stored in canonical E.164 however it was typed ("917-555-0147" →
+// "+19175550147"); a value that isn't a phone number is refused with 400. SMS
 // STOP now adds in-process (comms/sms/stop-handler.ts), not through here.
 export async function POST(req: Request) {
   const correlationId = correlationIdFrom(req)

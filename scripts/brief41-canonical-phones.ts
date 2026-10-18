@@ -1,7 +1,7 @@
-// Brief 41 (H13) — rewrite stored phones in canonical E.164 (+19173312047).
+// Brief 41 (H13) — rewrite stored phones in canonical E.164 (+19175550147).
 //
 // Opt-outs (DncSuppression) and contact phones added before Brief 41 could be
-// stored as typed ("9173312047", "(917) 331-2047"), so an opt-out and a lead's
+// stored as typed ("9175550147", "(917) 555-0147"), so an opt-out and a lead's
 // phone could fail to match. The code now stores and matches canonical form
 // (and still matches the old forms); this rewrites what is already stored so
 // every check sees one form. Plan: src/lib/compliance/dnc/phoneBackfill.ts

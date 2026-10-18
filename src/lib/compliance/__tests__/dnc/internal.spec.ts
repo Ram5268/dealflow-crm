@@ -25,8 +25,8 @@ describe('normalizeE164', () => {
   it('canonical E.164 however the number is typed (Brief 41, H13)', () => {
     expect(normalizeE164('+1 (212) 555-0101')).toBe('+12125550101')
     expect(normalizeE164(' +12125550101 ')).toBe('+12125550101')
-    for (const typed of ['917-331-2047', '(917) 331-2047', '9173312047', '1-917-331-2047', '917.331.2047', '+1 917 331 2047']) {
-      expect(normalizeE164(typed)).toBe('+19173312047')
+    for (const typed of ['917-555-0147', '(917) 555-0147', '9175550147', '1-917-555-0147', '917.555.0147', '+1 917 555 0147']) {
+      expect(normalizeE164(typed)).toBe('+19175550147')
     }
   })
 

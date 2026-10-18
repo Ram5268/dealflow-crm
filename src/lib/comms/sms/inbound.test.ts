@@ -104,9 +104,9 @@ describe('handleInboundSms', () => {
 
   it("matches the contact by the number's canonical E.164 form", async () => {
     db.contactPhone.findFirst.mockResolvedValue(null)
-    await handleInboundSms({ orgId: 'o', from: '(917) 331-2047', to: '+15550000000', body: 'STOP', messageSid: 'SM8' })
-    expect(db.contactPhone.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: '+19173312047', contact: { organizationId: 'o' } } }))
-    expect(stop.handleStop).toHaveBeenCalledWith('o', '+19173312047', { kind: 'keyword', phrase: 'stop' })
+    await handleInboundSms({ orgId: 'o', from: '(917) 555-0147', to: '+15550000000', body: 'STOP', messageSid: 'SM8' })
+    expect(db.contactPhone.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: '+19175550147', contact: { organizationId: 'o' } } }))
+    expect(stop.handleStop).toHaveBeenCalledWith('o', '+19175550147', { kind: 'keyword', phrase: 'stop' })
   })
 
   it('recognizes UNSUBSCRIBE / CANCEL as opt-out', async () => {

@@ -1,7 +1,7 @@
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 
 // Brief 41 (H13): the one form a phone is stored and matched in: E.164
-// (+19173312047), US by default, the same parse the importer uses
+// (+19175550147), US by default, the same parse the importer uses
 // (importer/dedup.ts). It accepts any number of a possible length, so an
 // opt-out is never refused for an unusual number. null = not a phone number.
 export function toE164(raw: string | null | undefined): string | null {

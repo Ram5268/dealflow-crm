@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 // GET /api/compliance/dnc/suppressions?phone=E164 — every suppression on a
 // phone (federal | state:XX | internal), for support/debug. Brief 41 (H13): any
-// format finds it ("917-331-2047", "+19173312047", and "+1…" typed unencoded
+// format finds it ("917-555-0147", "+19175550147", and "+1…" typed unencoded
 // in a URL, which arrives as " 1…"), including rows stored in an older format;
 // the reply names the canonical number. 400 if it isn't a phone number.
 export async function GET(req: Request) {

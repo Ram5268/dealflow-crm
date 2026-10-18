@@ -38,7 +38,7 @@ function fakeDb(messages: InboundSmsRow[], optOuts: Array<{ organizationId: stri
   return { db: db as unknown as StopSweepDb & typeof db, dnc }
 }
 
-const text = (id: string, body: string, from = '+19173312047', org = 'org_1', at = 0): InboundSmsRow => ({
+const text = (id: string, body: string, from = '+19175550147', org = 'org_1', at = 0): InboundSmsRow => ({
   id, organizationId: org, smsRemotePhone: from, fromAddress: from, bodyText: body, dateCreated: new Date(at),
 })
 
@@ -55,12 +55,12 @@ describe('lost-STOP sweep', () => {
     const { db, dnc } = fakeDb(
       [
         text('m1', 'is it still available?'),
-        text('m2', 'STOP', '+19173312047', 'org_1', 20),
-        text('m3', 'stop texting me', '+19173312047', 'org_1', 10), // same number, earlier: the one reported (with m2's keyword reason)
+        text('m2', 'STOP', '+19175550147', 'org_1', 20),
+        text('m3', 'stop texting me', '+19175550147', 'org_1', 10), // same number, earlier: the one reported (with m2's keyword reason)
         text('m4', 'Opt-Out', '(718) 555-0102'), // stored as typed: still read as a number
         text('m5', 'UNSUBSCRIBE', '+12125550199'), // already on the list in an old format
         text('m6', 'stop', 'not-a-phone'),
-        text('m7', 'STOP', '+19173312047', 'org_2'), // another org: its own opt-out
+        text('m7', 'STOP', '+19175550147', 'org_2'), // another org: its own opt-out
       ],
       [{ organizationId: 'org_1', phone: '2125550199' }],
     )
@@ -86,11 +86,11 @@ describe('lost-STOP sweep', () => {
   })
 
   it('apply: adds each missing opt-out in canonical form, with the reason for its kind of match', async () => {
-    const { db, dnc } = fakeDb([text('m1', 'please stop', '917-331-2047'), text('m2', 'STOP', '+12125550100')], [])
+    const { db, dnc } = fakeDb([text('m1', 'please stop', '917-555-0147'), text('m2', 'STOP', '+12125550100')], [])
     const plan = await planStopSweep(db)
     expect(await applyStopSweep(db, plan)).toEqual({ added: 2, alreadyThere: 0 })
     expect(dnc.map((r) => [r.organizationId, r.phone, r.source, r.reason, r.addedBy])).toEqual([
-      ['org_1', '+19173312047', 'internal', 'sms_stop_phrase', 'brief41-1-stop-sweep'],
+      ['org_1', '+19175550147', 'internal', 'sms_stop_phrase', 'brief41-1-stop-sweep'],
       ['org_1', '+12125550100', 'internal', 'sms_stop_received', 'brief41-1-stop-sweep'],
     ])
     // Re-running finds nothing left.
@@ -98,7 +98,7 @@ describe('lost-STOP sweep', () => {
   })
 
   it('a number that also sent a plain keyword gets the keyword reason, reported by its earliest text', async () => {
-    const { db, dnc } = fakeDb([text('m1', 'can you stop by?', '+19173312047', 'org_1', 5), text('m2', 'STOP', '+19173312047', 'org_1', 9)], [])
+    const { db, dnc } = fakeDb([text('m1', 'can you stop by?', '+19175550147', 'org_1', 5), text('m2', 'STOP', '+19175550147', 'org_1', 9)], [])
     const plan = await planStopSweep(db)
     expect(describeStopSweep(plan).missing).toEqual([{ messageId: 'm1', match: 'keyword', phrase: 'stop' }])
     await applyStopSweep(db, plan)
