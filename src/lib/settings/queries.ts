@@ -6,7 +6,8 @@ import { getPolicyStatus } from '@/lib/compliance/policy/status'
 import { evaluateCallingWindow } from '@/lib/compliance/timezone/windowCheck'
 import { monthlyCapStatus } from '@/lib/telephony/cost/monthlyCap'
 import { getEnv, isDncVendorConfigured, isLitigatorVendorConfigured } from '@/lib/compliance/env'
-import { isMailboxConnected } from '@/lib/settings/format'
+import { graphEnabled } from '@/lib/comms/graph-switch'
+import { isMailboxConnected, mailboxCardActions, type MailboxCardActions } from '@/lib/settings/format'
 
 /* ---------------------------------------------------------------- profile -- */
 
@@ -51,7 +52,7 @@ export async function getProfileInfo(): Promise<ProfileInfo> {
 
 /* ------------------------------------------------------- connected accounts -- */
 
-export interface MailboxAccount {
+export interface MailboxAccount extends MailboxCardActions {
   /** URL-facing provider name — the segment /api/oauth/[provider]/revoke wants. */
   key: 'gmail' | 'outlook'
   label: string
@@ -81,6 +82,9 @@ export interface MailboxAccount {
  */
 export async function getMailboxAccounts(): Promise<MailboxAccount[]> {
   const organizationId = await getCurrentOrgId()
+  // Brief 41.2: the Outlook switch is read here, on the server; the page only
+  // gets the resulting card state (mailboxCardActions), never the setting.
+  const switches = { graphEnabled: graphEnabled() }
 
   const specs = [
     {
@@ -106,6 +110,7 @@ export async function getMailboxAccounts(): Promise<MailboxAccount[]> {
       return {
         ...spec,
         connected,
+        ...mailboxCardActions({ ...spec, connected }, switches),
         // A revoked row keeps its emailAddress, so gate on `connected` — else a
         // disconnected card would still display the address it used to sync.
         emailAddress: connected ? (cred?.emailAddress ?? null) : null,

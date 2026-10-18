@@ -114,3 +114,35 @@ export function isMailboxConnected(cred: { status: string } | null | undefined):
   if (!cred) return false
   return cred.status !== 'revoked'
 }
+
+export interface MailboxCardActions {
+  /** Plain-English line while the mailbox's provider is paused, else null. */
+  pausedNote: string | null
+  /** The Connect / Reconnect link; null while the provider is paused. */
+  connect: { label: 'Connect' | 'Reconnect'; href: string } | null
+  /** Offered for every connected mailbox, paused or not. */
+  disconnect: boolean
+}
+
+/**
+ * What a Connected Accounts card offers. Brief 41.2: Outlook is paused unless
+ * GRAPH_ENABLED is exactly 'true' (Ryan's instruction: Outlook stays on hard
+ * pause). While it is, the Outlook card says so and has no Connect or Reconnect
+ * link; a stored connection still shows, with Disconnect, which only removes
+ * it locally. Gmail is unaffected. The caller reads the switch on the server.
+ */
+export function mailboxCardActions(
+  account: { key: 'gmail' | 'outlook'; label: string; connected: boolean; authorizeHref: string },
+  switches: { graphEnabled: boolean },
+): MailboxCardActions {
+  const paused = account.key === 'outlook' && !switches.graphEnabled
+  return {
+    pausedNote: paused
+      ? `${account.label} is paused, so the CRM won't connect to it, sync it or send from it.`
+      : null,
+    connect: paused
+      ? null
+      : { label: account.connected ? 'Reconnect' : 'Connect', href: account.authorizeHref },
+    disconnect: account.connected,
+  }
+}

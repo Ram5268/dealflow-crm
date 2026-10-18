@@ -14,13 +14,21 @@ vi.mock('../events', () => events)
 import { createGraphSyncPorts } from './graph-adapter'
 
 const fetchMock = vi.fn()
+const savedGraphEnabled = process.env.GRAPH_ENABLED
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('fetch', fetchMock)
+  // Brief 41.2: Outlook is paused unless GRAPH_ENABLED is exactly 'true'. These
+  // tests exercise the sync ports against a mocked Graph, so they turn it on.
+  process.env.GRAPH_ENABLED = 'true'
   process.env.GRAPH_API_BASE = 'https://graph.test/v1.0'
   delete process.env.GRAPH_MOCK_URL
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  if (savedGraphEnabled === undefined) delete process.env.GRAPH_ENABLED
+  else process.env.GRAPH_ENABLED = savedGraphEnabled
+})
 
 const okJson = (b: unknown) => ({ ok: true, status: 200, json: async () => b, text: async () => JSON.stringify(b) })
 
@@ -78,5 +86,30 @@ describe('createGraphSyncPorts', () => {
       leadId: null,
     } as never)
     expect(events.notifyMessageReceived).toHaveBeenCalled()
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. No Outlook sync ports unless
+// GRAPH_ENABLED is exactly 'true': nothing is read from Microsoft or saved.
+describe.each([
+  ['unset', undefined],
+  ['empty', ''],
+  ['TRUE', 'TRUE'],
+  ['1', '1'],
+])('while Outlook is paused (GRAPH_ENABLED %s)', (_n, value) => {
+  it('createGraphSyncPorts refuses, with no HTTP call and no cursor saved', () => {
+    if (value === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = value
+    fetchMock.mockResolvedValue(okJson({ value: [{ conversationId: 'c1' }], '@odata.deltaLink': 'DL' }))
+    let thrown: unknown
+    try {
+      ports()
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toMatchObject({ name: 'GraphDisabledError', code: 'outlook_paused' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(store.updateGraphDeltaLink).not.toHaveBeenCalled()
   })
 })

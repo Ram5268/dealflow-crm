@@ -3,10 +3,14 @@ import { getAuthUrl, exchangeCode, refreshAccessToken, GRAPH_SCOPES } from './gr
 import { verifyState } from './state'
 
 const fetchMock = vi.fn()
+const savedGraphEnabled = process.env.GRAPH_ENABLED
 
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
   fetchMock.mockReset()
+  // Brief 41.2: Outlook is paused unless GRAPH_ENABLED is exactly 'true'. These
+  // tests exercise the sign-in against a mocked Microsoft, so they turn it on.
+  process.env.GRAPH_ENABLED = 'true'
   process.env.MSFT_GRAPH_CLIENT_ID = 'client-id'
   process.env.MSFT_GRAPH_CLIENT_SECRET = 'secret'
   process.env.MSFT_GRAPH_REDIRECT_URI = 'https://crm/api/comms/oauth/msft/callback'
@@ -16,7 +20,11 @@ beforeEach(() => {
   delete process.env.GRAPH_API_BASE
   delete process.env.MSFT_IDENTITY_BASE
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  if (savedGraphEnabled === undefined) delete process.env.GRAPH_ENABLED
+  else process.env.GRAPH_ENABLED = savedGraphEnabled
+})
 
 const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
 
@@ -82,5 +90,42 @@ describe('refreshAccessToken', () => {
   it('throws when no token comes back', async () => {
     fetchMock.mockResolvedValueOnce(ok({}))
     await expect(refreshAccessToken('RT')).rejects.toThrow(/no access token/)
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. No sign-in link, code exchange or token
+// refresh unless GRAPH_ENABLED is exactly 'true'.
+describe.each([
+  ['unset', undefined],
+  ['empty', ''],
+  ['TRUE', 'TRUE'],
+  ['1', '1'],
+])('while Outlook is paused (GRAPH_ENABLED %s)', (_n, value) => {
+  const paused = { name: 'GraphDisabledError', code: 'outlook_paused' }
+  beforeEach(() => {
+    if (value === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = value
+    fetchMock.mockResolvedValue(ok({ access_token: 'AT', refresh_token: 'RT' }))
+  })
+
+  it('getAuthUrl builds no Microsoft sign-in link', () => {
+    let thrown: unknown
+    try {
+      getAuthUrl('org_9')
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toMatchObject(paused)
+  })
+
+  it('exchangeCode refuses before calling Microsoft', async () => {
+    await expect(exchangeCode('code')).rejects.toMatchObject(paused)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refreshAccessToken refuses before calling Microsoft', async () => {
+    await expect(refreshAccessToken('RT')).rejects.toMatchObject(paused)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

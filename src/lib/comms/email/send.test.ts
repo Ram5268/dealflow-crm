@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { randomBytes } from 'node:crypto'
 
 const db = vi.hoisted(() => ({
@@ -28,14 +28,20 @@ import { encryptToken } from '../oauth/crypto'
 import { buildRawMessage, generateMessageId, sendEmailMessage, type ProviderSender } from './send'
 import { emailEnabled, EmailDisabledError } from './config'
 
+const savedGraphEnabled = process.env.GRAPH_ENABLED
 beforeAll(() => {
   process.env.OAUTH_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64')
 })
 beforeEach(() => {
   vi.clearAllMocks()
   process.env.EMAIL_ENABLED = 'true' // Brief 37: off by default; these tests exercise a live send
+  process.env.GRAPH_ENABLED = 'true' // Brief 41.2: Outlook is paused by default; the Graph sends here are mocked
   db.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(db))
   db.message.update.mockResolvedValue({})
+})
+afterAll(() => {
+  if (savedGraphEnabled === undefined) delete process.env.GRAPH_ENABLED
+  else process.env.GRAPH_ENABLED = savedGraphEnabled
 })
 
 const decode = (b64: string) => Buffer.from(b64, 'base64url').toString('utf8')
@@ -212,5 +218,61 @@ describe('Brief 37: EMAIL_ENABLED switch', () => {
     for (const v of [undefined, '', 'false', '1', 'TRUE', 'yes', ' true']) {
       expect(emailEnabled({ EMAIL_ENABLED: v })).toBe(false)
     }
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. Even with EMAIL_ENABLED on (set for this
+// whole file above), a send that would go out through Outlook is refused before
+// the token is refreshed or anything is written or sent. Gmail is unaffected.
+describe.each([
+  ['unset', undefined],
+  ['empty', ''],
+  ['TRUE', 'TRUE'],
+  ['1', '1'],
+])('while Outlook is paused (GRAPH_ENABLED %s)', (_n, value) => {
+  const paused = { name: 'GraphDisabledError', code: 'outlook_paused' }
+  beforeEach(() => {
+    if (value === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = value
+    db.oAuthCredential.update.mockResolvedValue({})
+    graphOAuth.refreshAccessToken.mockResolvedValue({ accessToken: 'AT-new', expiresAt: new Date(Date.now() + 3_600_000) })
+  })
+
+  it('an Outlook-only mailbox: refused before the token refresh, the Message-ID write or the send', async () => {
+    db.message.findUnique.mockResolvedValue(emailMsg)
+    db.oAuthCredential.findMany.mockResolvedValue([
+      { ...msftCred(), refreshTokenEncrypted: encryptToken('RT'), expiresAt: new Date(Date.now() - 1000) },
+    ])
+    const send = vi.fn() as unknown as ProviderSender
+    await expect(sendEmailMessage('m1', { send })).rejects.toMatchObject(paused)
+    expect(graphOAuth.refreshAccessToken).not.toHaveBeenCalled()
+    expect(db.oAuthCredential.update).not.toHaveBeenCalled()
+    expect(db.message.update).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('the default sender never reaches Graph', async () => {
+    db.message.findUnique.mockResolvedValue(emailMsg)
+    db.oAuthCredential.findMany.mockResolvedValue([msftCred()])
+    await expect(sendEmailMessage('m1')).rejects.toMatchObject(paused)
+    expect(graphClientSend.createAndSend).not.toHaveBeenCalled()
+  })
+
+  it('a from-address on Outlook is refused, not quietly sent from Gmail instead', async () => {
+    db.message.findUnique.mockResolvedValue({ ...emailMsg, fromAddress: 'ryan@elliman.com' })
+    db.oAuthCredential.findMany.mockResolvedValue([gmailCred(), msftCred()])
+    const send = vi.fn() as unknown as ProviderSender
+    await expect(sendEmailMessage('m1', { send })).rejects.toMatchObject(paused)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('Gmail still sends as before', async () => {
+    db.message.findUnique.mockResolvedValue(emailMsg)
+    db.oAuthCredential.findMany.mockResolvedValue([msftCred(), gmailCred()])
+    const send: ProviderSender = vi.fn(async () => {})
+    const res = await sendEmailMessage('m1', { send })
+    expect(res.providerMessageId.startsWith('gmail:')).toBe(true)
+    expect((send as any).mock.calls[0][0].provider).toBe('gmail')
   })
 })

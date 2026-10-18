@@ -1,5 +1,6 @@
 import { sendEmailMessage } from '../email/send'
 import { EmailDisabledError } from '../email/config'
+import { GraphDisabledError } from '../graph-switch'
 import { logger } from '../../logger'
 
 /**
@@ -26,6 +27,12 @@ export async function handleSendEmailJob(input: Job | Job[]): Promise<void> {
       // queued during the test phase can go out once the switch flips.
       if (err instanceof EmailDisabledError) {
         logger.warn({ messageId }, 'send-email job dropped: email is off (EMAIL_ENABLED)')
+        continue
+      }
+      // Brief 41.2: likewise for a send that would go out through Outlook while
+      // Outlook is paused (Ryan's instruction).
+      if (err instanceof GraphDisabledError) {
+        logger.warn({ messageId }, 'send-email job dropped: Outlook is paused (GRAPH_ENABLED)')
         continue
       }
       logger.error({ err, messageId }, 'send-email job failed; will retry')

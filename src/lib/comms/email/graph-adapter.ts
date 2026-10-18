@@ -1,5 +1,6 @@
 import { GraphClient } from './graph-client'
 import { updateGraphDeltaLink } from '../oauth/store'
+import { graphEnabled, GraphDisabledError } from '../graph-switch'
 import type { SyncPorts } from './gmail-sync'
 // The persist ports (contact resolution, thread upsert, message save, NOTIFY) are
 // provider-agnostic — reused from the Gmail adapter so Graph and Gmail share one
@@ -18,6 +19,8 @@ export function createGraphSyncPorts(params: {
   connectedEmail: string
   accessToken: string
 }): SyncPorts {
+  // Brief 41.2: no Outlook sync while Outlook is paused (Ryan's instruction).
+  if (!graphEnabled()) throw new GraphDisabledError()
   const gc = new GraphClient(params.accessToken)
   return {
     connectedEmail: params.connectedEmail,
