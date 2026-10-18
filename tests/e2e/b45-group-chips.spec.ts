@@ -134,12 +134,23 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     const [, , lead] = await ungrouped(request, 3)
     await page.goto(`/leads/${lead.leadId}`)
     const third = page.getByTestId('group-chips').locator(`[data-group-id="${groups[2].id}"]`)
+    // A server error: its own text isn't for people, so the toast says it plainly.
     await page.route('**/api/core-data/groups/*/members/*', (route) =>
-      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'The CRM had a hiccup (test).' }) }),
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Internal error (test)' }) }),
     )
     await third.click()
     await expect(page.getByText(`Couldn't add to ${groups[2].name}`, { exact: true })).toBeVisible()
-    await expect(page.getByText('The CRM had a hiccup (test).', { exact: true })).toBeVisible()
+    await expect(page.getByText("The CRM couldn't save that just now. Please try again.", { exact: true })).toBeVisible()
+    await expect(page.getByText('Internal error (test)')).toHaveCount(0)
+    await expect(third).toHaveAttribute('aria-pressed', 'false')
+    await page.unroute('**/api/core-data/groups/*/members/*')
+
+    // A refusal the API words for people (e.g. the group was deleted elsewhere) is shown as written.
+    await page.route('**/api/core-data/groups/*/members/*', (route) =>
+      route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Group not found.' }) }),
+    )
+    await third.click()
+    await expect(page.getByText('Group not found.', { exact: true })).toBeVisible()
     await expect(third).toHaveAttribute('aria-pressed', 'false')
     await page.unroute('**/api/core-data/groups/*/members/*')
     expect(await groupIdsOf(request, lead.leadId)).toEqual([])
@@ -238,6 +249,70 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Bulk actions' })).toHaveCount(0)
     await expect(banner).toHaveCount(0)
+  })
+
+  test('Leads: a "Select all matching" that finishes after a new search is dropped', async ({ page }) => {
+    await page.goto('/leads')
+    const isIdsCall = (url: URL) => url.pathname === '/api/core-data/all-leads' && url.searchParams.get('ids') === '1'
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    await page.route(isIdsCall, async (route) => {
+      await held
+      await route.continue()
+    })
+    await page.locator('thead').getByRole('checkbox').click()
+    const banner = page.getByTestId('select-all-matching')
+    await banner.getByRole('button', { name: /^Select all [\d,]+ matching$/ }).click()
+    await expect(banner).toContainText('Selecting all')
+
+    await page.getByLabel('Search leads').fill('Dummerton')
+    await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
+    const late = page.waitForResponse((r) => isIdsCall(new URL(r.url())))
+    release()
+    await late
+    await page.waitForTimeout(300) // give a late answer the chance to (wrongly) select
+    await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
+    await page.unroute(isIdsCall)
+  })
+
+  test('Leads: a bulk action closed while it works still says how it ended', async ({ page }) => {
+    await page.goto('/leads')
+    const rows = page.locator('tbody tr')
+    for (let i = 0; i < 2; i++) await rows.nth(i).getByRole('checkbox').click()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    await page.route('**/api/core-data/groups/*/members', async (route) => {
+      await held
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Internal error (test)' }) })
+    })
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Add to group…' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: new RegExp(`^${groups[0].name}\\b`) }).click()
+    await expect(dialog).toContainText('Working…')
+    await page.keyboard.press('Escape') // close it while it works
+    await expect(dialog).toHaveCount(0)
+    release()
+    await expect(page.getByText("The bulk action didn't finish", { exact: true })).toBeVisible()
+    await expect(page.getByText("The CRM couldn't save that just now. Please try again.", { exact: true })).toBeVisible()
+    await page.unroute('**/api/core-data/groups/*/members')
+  })
+
+  test('Leads: Export CSV never exports part of a selection that reaches other pages', async ({ page }) => {
+    await page.goto('/leads')
+    const rows = page.locator('tbody tr')
+    await rows.nth(0).getByRole('checkbox').click()
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    await expect(page.getByText(/^51–100 of [\d,]+$/)).toBeVisible()
+    await rows.nth(0).getByRole('checkbox').click()
+    await expect(page.getByText(/^2 selected$/)).toBeVisible()
+    let downloaded = false
+    page.on('download', () => (downloaded = true))
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+    await expect(page.getByText('Nothing exported', { exact: true })).toBeVisible()
+    await expect(page.getByText(/^1 of the 2 selected is on another page\./)).toBeVisible()
+    expect(downloaded).toBe(false)
   })
 
   test('dialer: nothing new without a call; during a (simulated) call the card has the same chips', async ({ page, request }) => {

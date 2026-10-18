@@ -164,14 +164,27 @@ export function LeadsView({
   const pageIds = rows.map((r) => r.id)
   const everyoneSelected = !viewId && selectAllOffer({ pageIds, selected, total }).kind === 'all'
   const exportForMenu = useCallback(() => {
-    if (!everyoneSelected) return exportSelected()
+    if (!everyoneSelected) {
+      // This page's rows are all the browser has: never export part of a
+      // selection that reaches other pages without saying so.
+      const elsewhere = selected.size - rows.filter((r) => selected.has(r.id)).length
+      if (elsewhere > 0) {
+        toast({
+          tone: 'danger',
+          title: 'Nothing exported',
+          description: `${elsewhere.toLocaleString('en-US')} of the ${selected.size.toLocaleString('en-US')} selected ${elsewhere === 1 ? 'is on another page' : 'are on other pages'}. Select all matching to export everyone, or export one page at a time.`,
+        })
+        return
+      }
+      return exportSelected()
+    }
     // Everyone matching is selected, most of them not on this page: the
     // ranked CSV of all of them (no phones or emails, like this export).
     const a = document.createElement('a')
     a.href = allLeadsExportUrl({ q: q || undefined })
     a.click()
     toast({ title: `Exporting all ${selected.size.toLocaleString('en-US')} matching leads` })
-  }, [everyoneSelected, exportSelected, q, selected, toast])
+  }, [everyoneSelected, exportSelected, q, rows, selected, toast])
 
   const columns: Column<LeadRow>[] = [
     // Brief 45: in rank order, each person's place in All leads (the same
@@ -341,6 +354,7 @@ export function LeadsView({
           pageIds={pageIds}
           selected={selected}
           total={total}
+          scope={filterKey}
           onSelect={setSelected}
           loadAll={() => getAllLeadIds({ q: q || undefined })}
         />

@@ -191,4 +191,31 @@ describe('runBulk', () => {
     expect(r.text).toBe('A list named "Callbacks" is already outside folders.')
     expect(r.listId).toBeNull()
   })
+
+  it('a server error part way reads as plain English', async () => {
+    stubFetch((_c, n) => (n === 1 ? { status: 200, body: { removed: 5_000 } } : { status: 502, body: { error: 'Bad gateway' } }))
+    const r = await runBulk({ kind: 'removeFromGroup', groupId: 'grp_hot', name: 'Hot' }, ids(5_001))
+    expect(r.error).toBe("The CRM couldn't save that just now. Please try again.")
+    expect(r.text).toBe(
+      "Removed 5,000 people from Hot, then stopped: The CRM couldn't save that just now. Please try again. Trying again is safe.",
+    )
+  })
+
+  it('an empty selection is refused before anything is sent: no list is made', async () => {
+    const calls = stubFetch(() => ({ status: 201, body: { list: { id: 'list_new', name: 'Empty' }, added: 0, notFound: 0 } }))
+    for (const op of [
+      { kind: 'newList', name: 'Empty', folderId: null },
+      { kind: 'addToGroup', groupId: 'grp_hot', name: 'Hot' },
+      { kind: 'removeFromThisList', listId: 'list_1', name: 'Referrals' },
+    ] as const) {
+      const r = await runBulk(op, [])
+      expect(r).toEqual({
+        totals: totals({}),
+        text: 'Select at least one person first.',
+        error: 'Select at least one person first.',
+        listId: null,
+      })
+    }
+    expect(calls).toEqual([])
+  })
 })

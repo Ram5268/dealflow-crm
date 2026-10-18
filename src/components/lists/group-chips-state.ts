@@ -121,10 +121,20 @@ export const CRM_CHIP_API: ChipApi = {
 }
 
 export const OFFLINE_MESSAGE = "Couldn't reach the CRM. Check your connection and try again."
+export const SAVE_FAILED_MESSAGE = "The CRM couldn't save that just now. Please try again."
+export const LOAD_FAILED_MESSAGE = "The CRM couldn't load that just now. Please try again."
 
-/** The API's own plain-English message, or the offline one (fetch itself failed). */
-export function plainError(err: unknown): { message: string; status: number | null } {
-  if (err instanceof ListsApiError) return { message: err.message, status: err.status }
+/**
+ * What to tell the person: the API's own plain-English message; a plain
+ * sentence for a server error (5xx), whose text isn't written for people; or
+ * the offline one when fetch itself failed. `action` picks the wording for a
+ * failed read ("couldn't load") or write ("couldn't save").
+ */
+export function plainError(err: unknown, action: 'save' | 'load' = 'save'): { message: string; status: number | null } {
+  if (err instanceof ListsApiError) {
+    if (err.status >= 500) return { message: action === 'load' ? LOAD_FAILED_MESSAGE : SAVE_FAILED_MESSAGE, status: err.status }
+    return { message: err.message, status: err.status > 0 ? err.status : null }
+  }
   return { message: OFFLINE_MESSAGE, status: null }
 }
 

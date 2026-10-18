@@ -7,8 +7,10 @@ import {
   isSettled,
   litGroupIds,
   nextSends,
+  plainError,
   type ChipState,
 } from '@/components/lists/group-chips-state'
+import { ListsApiError } from '@/lib/core-data/lists/client'
 
 // Brief 45 PR C — the group chips on a lead's contact card [brief §5.3]: one
 // click adds the lead to that group and the chip lights up at once; a second
@@ -205,6 +207,34 @@ describe("the chips' requests (stubbed fetch)", () => {
     expect(errors[0].message).toBe("Couldn't reach the CRM. Check your connection and try again.")
   })
 
+  it('a server error (5xx) reads as plain English, not the server’s own text', async () => {
+    stubFetch(() => ({ status: 500, body: { error: 'Internal error: relation "LeadGroup" is locked' } }))
+    const { c, errors } = controller([])
+    c.toggle('grp_hot')
+    await c.idle()
+    expect(isOn(c.getState(), 'grp_hot')).toBe(false)
+    expect(errors).toEqual([{ groupId: 'grp_hot', value: true, message: "The CRM couldn't save that just now. Please try again." }])
+  })
+
+  it('plainError: the API’s own words below 500, plain sentences for 5xx (save or load) and when offline', () => {
+    expect(plainError(new ListsApiError(409, 'A group named "Hot" already exists.'))).toEqual({
+      message: 'A group named "Hot" already exists.',
+      status: 409,
+    })
+    expect(plainError(new ListsApiError(503, 'upstream timeout'))).toEqual({
+      message: "The CRM couldn't save that just now. Please try again.",
+      status: 503,
+    })
+    expect(plainError(new ListsApiError(500, 'boom'), 'load')).toEqual({
+      message: "The CRM couldn't load that just now. Please try again.",
+      status: 500,
+    })
+    expect(plainError(new TypeError('Failed to fetch'))).toEqual({
+      message: "Couldn't reach the CRM. Check your connection and try again.",
+      status: null,
+    })
+  })
+
   it('fast clicks on one chip: one request at a time, ending on the last wish', async () => {
     let inFlight = 0
     let maxInFlight = 0
@@ -238,6 +268,22 @@ describe("the chips' requests (stubbed fetch)", () => {
     ])
     expect(settled).toEqual([['grp_b']])
     expect(notify).toHaveBeenCalledTimes(1)
+  })
+
+  it('clicks on two chips whose answers come back at different times: the page still hears about it once', async () => {
+    const release: Record<string, () => void> = {}
+    const answer = (g: string) => new Promise<{ changed: boolean }>((r) => (release[g] = () => r({ changed: true })))
+    const api = { add: answer, remove: answer, create: async () => Promise.reject(new Error('unused')) }
+    const { c, settled, notify } = controller(['grp_a'], { api })
+    c.toggle('grp_a') // DELETE
+    c.toggle('grp_b') // PUT
+    release.grp_a()
+    await new Promise((r) => setTimeout(r, 5)) // the first answer is fully handled before the second arrives
+    expect(notify).not.toHaveBeenCalled()
+    release.grp_b()
+    await c.idle()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(settled).toEqual([['grp_b']])
   })
 
   it('"+" creates the group and adds the lead in one request: POST /api/core-data/groups { name, leadId }', async () => {

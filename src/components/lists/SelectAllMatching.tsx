@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useToast } from '@/components/ui'
 import { selectAllOffer } from './bulk-actions'
 import { plainError } from './group-chips-state'
@@ -15,6 +15,7 @@ export function SelectAllMatching({
   pageIds,
   selected,
   total,
+  scope,
   onSelect,
   loadAll,
 }: {
@@ -22,21 +23,33 @@ export function SelectAllMatching({
   selected: ReadonlySet<string>
   /** Everyone matching the search and filters. */
   total: number
+  /** The search and filters the ids are for. A load that finishes after they
+   *  changed, or after this bar went away, is dropped [engineering precaution]. */
+  scope: string
   onSelect(next: Set<string>): void
   /** Every matching id, in rank order. */
   loadAll(): Promise<string[]>
 }) {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
+  const current = useRef<string | null>(scope)
+  useEffect(() => {
+    current.current = scope
+    return () => {
+      current.current = null
+    }
+  }, [scope])
   const offer = selectAllOffer({ pageIds, selected, total })
   if (offer.kind === 'none') return null
 
   const selectAll = async () => {
+    const asked = scope
     setLoading(true)
     try {
-      onSelect(new Set(await loadAll()))
+      const ids = await loadAll()
+      if (current.current === asked) onSelect(new Set(ids))
     } catch (err) {
-      toast({ tone: 'danger', title: "Couldn't select everyone", description: plainError(err).message })
+      toast({ tone: 'danger', title: "Couldn't select everyone", description: plainError(err, 'load').message })
     } finally {
       setLoading(false)
     }

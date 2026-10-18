@@ -17,7 +17,7 @@ export function LeadGroupChips({ leadId, hotkeys = false }: { leadId: string; ho
     let cancelled = false
     getLeadMemberships(leadId).then(
       (m) => !cancelled && setLoaded({ leadId, groupIds: m.groupIds, error: null }),
-      (err: unknown) => !cancelled && setLoaded({ leadId, groupIds: null, error: plainError(err).message }),
+      (err: unknown) => !cancelled && setLoaded({ leadId, groupIds: null, error: plainError(err, 'load').message }),
     )
     return () => {
       cancelled = true

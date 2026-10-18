@@ -106,14 +106,18 @@ export interface BulkRun {
   listId: string | null
 }
 
+export const NOBODY_SELECTED = 'Select at least one person first.'
+
 /**
  * Runs a bulk action over a selection, 5,000 people per request, one request
  * after another. A new list is made with the first chunk, and the rest are
- * added to it. Stops at the first refusal and says what was done.
+ * added to it. Stops at the first refusal and says what was done. An empty
+ * selection is refused before anything is sent (nothing is made or changed).
  */
 export async function runBulk(op: BulkOp, leadIds: readonly string[], onProgress?: (done: number, total: number) => void): Promise<BulkRun> {
   const chunks = chunkIds(leadIds)
   const totals: BulkTotals = { requested: chunks.reduce((n, c) => n + c.length, 0), added: 0, alreadyIn: 0, notFound: 0, removed: 0 }
+  if (chunks.length === 0) return { totals, text: NOBODY_SELECTED, error: NOBODY_SELECTED, listId: null }
   let listId: string | null = op.kind === 'addToList' || op.kind === 'removeFromThisList' ? op.listId : null
   let done = 0
   const add = (r: { added: number; alreadyIn?: number; notFound: number }) => {

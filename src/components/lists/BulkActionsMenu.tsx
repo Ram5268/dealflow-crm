@@ -12,7 +12,7 @@
 // Deleting is never offered: people always stay in the CRM. Selections over
 // 5,000 go in chunks (bulk-actions.ts); results read in plain English.
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, ListMinus, ListPlus, Tag, Tags } from 'lucide-react'
 import {
   Button,
@@ -120,6 +120,14 @@ function BulkDialog({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const busy = progress !== null
+  // Closed while a run was still working: its outcome goes to a toast instead.
+  const closed = useRef(false)
+  useEffect(() => {
+    closed.current = false
+    return () => {
+      closed.current = true
+    }
+  }, [])
 
   const run = async (op: BulkOp) => {
     setProblem(null)
@@ -131,7 +139,8 @@ function BulkDialog({
       onDone?.()
     }
     if (r.error) {
-      setProblem(r.text)
+      if (closed.current) toast({ tone: 'danger', title: "The bulk action didn't finish", description: r.text })
+      else setProblem(r.text)
       return
     }
     toast({ tone: 'success', title: r.text })
@@ -294,17 +303,25 @@ function ListPicker({
 function NewGroupForm({ busy, onSubmit }: { busy: boolean; onSubmit: (name: string) => Promise<void> }) {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Making the group comes before the bulk run starts (`busy`): a second
+  // click meanwhile would try to make it twice.
+  const [creating, setCreating] = useState(false)
+  const working = busy || creating
   return (
     <form
       className="flex items-end gap-2 border-t border-line pt-3"
       onSubmit={async (e) => {
         e.preventDefault()
+        if (working) return
         const problem = nameProblem(name)
         if (problem) return setError(problem)
+        setCreating(true)
         try {
           await onSubmit(name)
         } catch (err) {
           setError(plainError(err).message)
+        } finally {
+          setCreating(false)
         }
       }}
     >
@@ -318,10 +335,10 @@ function NewGroupForm({ busy, onSubmit }: { busy: boolean; onSubmit: (name: stri
           }}
           placeholder="Group name, e.g. Hot"
           error={error ?? undefined}
-          disabled={busy}
+          readOnly={working}
         />
       </div>
-      <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+      <Button type="submit" variant="primary" loading={creating} disabled={working || !name.trim()}>
         Make it and add them
       </Button>
     </form>
