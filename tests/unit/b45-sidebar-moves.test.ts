@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { FolderDTO, GroupDTO, ListDTO, SidebarData } from '@/lib/core-data/lists/types'
-import { buildTree, planMove, type MoveAction } from '@/components/lists/sidebar/tree'
+import { buildTree, dropAction, dropPosition, planMove, type MoveAction } from '@/components/lists/sidebar/tree'
 
 // Brief 45 PR B — the sidebar's drag-and-drop and its keyboard alternatives
 // ("Move up / Move down / Move to folder…") as one pure reducer: an action in,
@@ -203,5 +203,38 @@ describe('folders and groups reorder (drag or keyboard)', () => {
     planMove(d, { type: 'dropListOnList', listId: 'l4', targetId: 'l2', position: 'before' })
     planMove(d, { type: 'dropFolder', folderId: 'f3', targetId: 'f1', position: 'before' })
     expect(JSON.stringify(d)).toBe(before)
+  })
+})
+
+describe('where a dragged item may land', () => {
+  const L = { kind: 'list' as const, id: 'l1' }
+  const F = { kind: 'folder' as const, id: 'f1' }
+  const G = { kind: 'group' as const, id: 'g1' }
+
+  it('a list goes into a folder, before/after another list, or out of folders; never among groups', () => {
+    expect(dropPosition(L, { kind: 'folder', id: 'f2' }, true)).toBe('into')
+    expect(dropPosition(L, { kind: 'list', id: 'l2' }, true)).toBe('before')
+    expect(dropPosition(L, { kind: 'list', id: 'l2' }, false)).toBe('after')
+    expect(dropPosition(L, { kind: 'outside', id: 'outside' }, false)).toBe('into')
+    expect(dropPosition(L, { kind: 'group', id: 'g1' }, true)).toBeNull()
+    expect(dropPosition(L, { kind: 'list', id: 'l1' }, true)).toBeNull()
+  })
+
+  it('folders only among folders (no folder in a folder), groups only among groups', () => {
+    expect(dropPosition(F, { kind: 'folder', id: 'f2' }, false)).toBe('after')
+    expect(dropPosition(F, { kind: 'list', id: 'l1' }, true)).toBeNull()
+    expect(dropPosition(F, { kind: 'outside', id: 'outside' }, true)).toBeNull()
+    expect(dropPosition(G, { kind: 'group', id: 'g2' }, true)).toBe('before')
+    expect(dropPosition(G, { kind: 'folder', id: 'f1' }, true)).toBeNull()
+  })
+
+  it('turns a drop into the move', () => {
+    expect(dropAction(L, { kind: 'folder', id: 'f2', position: 'into' })).toEqual({ type: 'dropListOnFolder', listId: 'l1', folderId: 'f2' })
+    expect(dropAction(L, { kind: 'list', id: 'l2', position: 'after' })).toEqual({ type: 'dropListOnList', listId: 'l1', targetId: 'l2', position: 'after' })
+    expect(dropAction(L, { kind: 'outside', id: 'outside', position: 'into' })).toEqual({ type: 'dropListOutside', listId: 'l1' })
+    expect(dropAction(F, { kind: 'folder', id: 'f2', position: 'before' })).toEqual({ type: 'dropFolder', folderId: 'f1', targetId: 'f2', position: 'before' })
+    expect(dropAction(G, { kind: 'group', id: 'g2', position: 'after' })).toEqual({ type: 'dropGroup', groupId: 'g1', targetId: 'g2', position: 'after' })
+    expect(dropAction(F, { kind: 'folder', id: 'f2', position: 'into' })).toBeNull()
+    expect(dropAction(G, { kind: 'list', id: 'l2', position: 'before' })).toBeNull()
   })
 })

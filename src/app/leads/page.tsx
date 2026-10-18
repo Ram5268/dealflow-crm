@@ -14,6 +14,8 @@ type Search = {
   sort?: string
   dir?: string
   page?: string
+  /** Brief 45: a group's id (the sidebar's group links), or 'none'. */
+  group?: string
 }
 
 export default async function LeadsPage({
@@ -25,13 +27,13 @@ export default async function LeadsPage({
   const sp = await searchParams
 
   // A column only when the URL names one; otherwise listLeads picks the
-  // default (a Smart View's own saved sort, or most recently updated).
+  // default (a Smart View's own saved sort, or, Brief 45, the lists' rank order).
   const sortKey = isLeadSortKey(sp.sort) ? sp.sort : undefined
   const sortDir = sp.dir === 'asc' ? 'asc' : 'desc'
   const page = Math.max(1, Number(sp.page) || 1)
 
   const [result, views] = await Promise.all([
-    listLeads({ organizationId, q: sp.q, viewId: sp.viewId, sortKey, sortDir, page }),
+    listLeads({ organizationId, q: sp.q, viewId: sp.viewId, sortKey, sortDir, page, group: sp.group }),
     prisma.savedView.findMany({
       where: { organizationId, type: 'lead' },
       orderBy: { updatedAt: 'desc' },
@@ -58,6 +60,9 @@ export default async function LeadsPage({
         viewError={result.viewError}
         // Brief 41.2 (PR E): the switches are server settings, so the reason is decided here.
         sequencesOffReason={sequencesOffReason()}
+        group={result.group ?? null}
+        groupError={result.groupError}
+        rankedAt={result.rankedAt ?? null}
       />
     </>
   )

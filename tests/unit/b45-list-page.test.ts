@@ -21,7 +21,8 @@ import { localTimeInfo, rankBadge, rankedHeadline, rankedStamp, sourceLine, RANK
 
 const WED_NOON_NY = new Date('2026-10-14T16:00:00.000Z')
 const SUN_NOON_NY = new Date('2026-10-18T16:00:00.000Z')
-const RANKED_TODAY = '2026-10-18T11:02:00.000Z' // 7:02 am in New York
+const RANKED_TODAY = '2026-10-18T11:02:00.000Z' // 7:02 am in New York, the Sunday
+const RANKED_WED = '2026-10-14T11:02:00.000Z' // 7:02 am in New York, the day the page is drawn
 
 const router: AppRouterInstance = { back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {} }
 
@@ -61,7 +62,7 @@ function page(patch: Partial<RankedPage> = {}, listPatch: Partial<NonNullable<Ra
     memberCount: 412,
     page: 2,
     pageSize: 100,
-    rankedAt: RANKED_TODAY,
+    rankedAt: RANKED_WED,
     callingOffReason: 'Calling is off',
     callingWindows: {
       'America/New_York': { earliestHour: 9, latestHour: 20, allowedDaysOfWeek: [1, 2, 3, 4, 5], confirmed: false },

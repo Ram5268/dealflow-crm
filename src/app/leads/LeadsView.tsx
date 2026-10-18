@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, Search, Users, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, Download, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -20,7 +20,10 @@ import {
   type Column,
   type SortState,
 } from '@/components/ui'
-import type { AppliedSort, LeadRow } from '@/lib/leads/list'
+import type { AppliedGroup, AppliedSort, LeadRow } from '@/lib/leads/list'
+import { cn } from '@/lib/ui/cn'
+import { groupColorStyle } from '@/lib/ui/groupColors'
+import { formatCount, rankedHeadline } from '@/components/lists/format'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -53,6 +56,9 @@ export function LeadsView({
   views,
   viewError,
   sequencesOffReason,
+  group = null,
+  groupError,
+  rankedAt = null,
 }: {
   rows: LeadRow[]
   total: number
@@ -65,6 +71,12 @@ export function LeadsView({
   viewError?: string
   /** Brief 41.2 (PR E): why "Add to sequence" is greyed out (email and texting off). */
   sequencesOffReason?: string | null
+  /** Brief 45: the group the page is narrowed to (?group=), shown as a removable chip. */
+  group?: AppliedGroup | null
+  /** Brief 45: ?group= named a group that doesn't exist. */
+  groupError?: string
+  /** Brief 45: when DealFlow's morning ranking came in (rank order only). */
+  rankedAt?: string | null
 }) {
   const router = useRouter()
   const { toast } = useToast()
@@ -83,15 +95,17 @@ export function LeadsView({
       const base: Record<string, string | undefined> = {
         q: term || undefined,
         viewId: viewId || undefined,
-        sort: sort.fromView ? undefined : (sort.key ?? undefined),
-        dir: sort.fromView ? undefined : sort.dir,
+        // Brief 45: the group filter rides along (a Smart View drops it).
+        group: group?.id,
+        sort: sort.fromView || sort.ranked ? undefined : (sort.key ?? undefined),
+        dir: sort.fromView || sort.ranked ? undefined : sort.dir,
         page: String(page),
         ...patch,
       }
       for (const [k, v] of Object.entries(base)) if (v) params.set(k, v)
       startTransition(() => router.push(`/leads?${params.toString()}`))
     },
-    [router, term, viewId, sort, page],
+    [router, term, viewId, sort, page, group],
   )
 
   // Debounce the search box so typing does not fire a query per keystroke.
@@ -122,6 +136,19 @@ export function LeadsView({
   }, [rows, selected, toast])
 
   const columns: Column<LeadRow>[] = [
+    // Brief 45: in rank order, each person's place in All leads (the same
+    // order as every list). Not shown under a Smart View or a column sort.
+    ...(sort.ranked
+      ? [
+          {
+            key: 'rank',
+            header: '#',
+            width: '64px',
+            align: 'right' as const,
+            cell: (r: LeadRow) => <span className="tabular-nums text-muted">{r.rank != null ? formatCount(r.rank) : '—'}</span>,
+          },
+        ]
+      : []),
     {
       key: 'displayName',
       header: 'Name',
@@ -194,8 +221,9 @@ export function LeadsView({
           <Select
             value={viewId || 'all'}
             onValueChange={(v) =>
-              // Picking a view drops any column sort, so the view's own sort applies.
-              push({ viewId: v === 'all' ? undefined : v, sort: undefined, dir: undefined, page: '1' })
+              // Picking a view drops any column sort, so the view's own sort applies,
+              // and the group filter (a Smart View has its own).
+              push({ viewId: v === 'all' ? undefined : v, sort: undefined, dir: undefined, group: undefined, page: '1' })
             }
             options={[
               { value: 'all', label: 'All leads' },
@@ -203,6 +231,30 @@ export function LeadsView({
             ]}
           />
         </div>
+
+        {/* Brief 45: ?group=<id> from the sidebar narrows All leads to one group. */}
+        {group && (
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-elevated pl-2.5 pr-1 text-sm text-fg">
+            <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', groupColorStyle(group.color).dot)} />
+            {group.id === 'none' ? 'In no group' : `Group: ${group.name}`}
+            <button
+              type="button"
+              aria-label="Remove the group filter"
+              onClick={() => push({ group: undefined, page: '1' })}
+              className="flex h-5 w-5 items-center justify-center rounded-full text-subtle hover:bg-hover hover:text-fg"
+            >
+              <X size={12} />
+            </button>
+          </span>
+        )}
+
+        {/* Brief 45: a column sort replaces the rank order until you come back to it. */}
+        {!viewId && !sort.ranked && (
+          <Button size="sm" variant="ghost" onClick={() => push({ sort: undefined, dir: undefined, page: '1' })}>
+            <ListOrdered size={13} />
+            Ranked order
+          </Button>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 && (
@@ -246,8 +298,20 @@ export function LeadsView({
           <span className="text-sm text-subtle" aria-live="polite">
             {pending ? 'Loading…' : `${from}–${to} of ${total}`}
           </span>
+          {sort.ranked && !pending && (
+            <span className="hidden text-sm text-subtle lg:inline" suppressHydrationWarning>
+              · {rankedHeadline(rankedAt, new Date())}
+            </span>
+          )}
         </div>
       </div>
+
+      {groupError && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">
+          <AlertTriangle size={14} />
+          {groupError}
+        </div>
+      )}
 
       {viewError && (
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">
@@ -267,18 +331,20 @@ export function LeadsView({
           selectedIds={selected}
           onSelectedChange={setSelected}
           onRowActivate={(r) => router.push(`/leads/${r.id}`)}
+          // Brief 45: the post-merge check reads each ranked row's place.
+          rowAttributes={(r) => (r.rank != null ? { 'data-rank': r.rank } : undefined)}
           empty={
             <EmptyState
               icon={<Users />}
-              title={q || viewId ? 'No leads match' : 'No leads yet'}
+              title={q || viewId || group ? 'No leads match' : 'No leads yet'}
               description={
-                q || viewId
-                  ? 'Try a different search term or Smart View.'
+                q || viewId || group
+                  ? 'Try a different search term, Smart View or group.'
                   : 'Import a Mojo CSV to get started.'
               }
               action={
-                q || viewId ? (
-                  <Button onClick={() => { setTerm(''); push({ q: undefined, viewId: undefined, page: '1' }) }}>
+                q || viewId || group ? (
+                  <Button onClick={() => { setTerm(''); push({ q: undefined, viewId: undefined, group: undefined, page: '1' }) }}>
                     Clear filters
                   </Button>
                 ) : (

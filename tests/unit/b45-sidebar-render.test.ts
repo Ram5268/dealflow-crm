@@ -94,26 +94,26 @@ describe('the sidebar tree', () => {
     expect(link(html, '/lists/l3').text).toBe('Brownstones likely to sell 1,102')
     expect(link(html, '/lists/l4').text).toBe('Referrals 41')
     // Folders are buttons that open and close (no folder inside a folder).
-    expect(html).toMatch(/<button[^>]*aria-expanded="true"[^>]*>[\s\S]*?Expireds/)
+    expect(html).toMatch(/<button[^>]*aria-expanded="true"[^>]*>(?:(?!<\/button>)[\s\S])*Expireds/)
   })
 
   it('a collapsed folder hides its lists (remembered per browser by the caller)', () => {
     const html = render({ data: populated(), collapsedFolderIds: new Set(['f2']) })
-    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>[\s\S]*?Off-market/)
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>(?:(?!<\/button>)[\s\S])*Off-market/)
     expect(html).not.toContain('href="/lists/l3"')
     expect(html).toContain('href="/lists/l1"')
   })
 
   it('archived lists sit in a collapsible "Archived (n)" section', () => {
     const closed = render({ data: populated() })
-    expect(closed).toMatch(/<button[^>]*aria-expanded="false"[^>]*>[\s\S]*?Archived \(2\)/)
+    expect(closed).toMatch(/<button[^>]*aria-expanded="false"[^>]*>(?:(?!<\/button>)[\s\S])*Archived \(2\)/)
     expect(closed).not.toContain('href="/lists/a1"')
     const open = render({
       data: populated(),
       archivedOpen: true,
       archivedLists: [list('a1', 'Old expireds', 'f2', 7, '2026-10-10T12:00:00.000Z'), list('a2', 'Old referrals', null, 2, '2026-10-11T12:00:00.000Z')],
     })
-    expect(open).toMatch(/<button[^>]*aria-expanded="true"[^>]*>[\s\S]*?Archived \(2\)/)
+    expect(open).toMatch(/<button[^>]*aria-expanded="true"[^>]*>(?:(?!<\/button>)[\s\S])*Archived \(2\)/)
     expect(link(open, '/lists/a1').text).toContain('Old expireds')
     expect(link(open, '/lists/a2').text).toContain('Old referrals')
   })

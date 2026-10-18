@@ -64,3 +64,49 @@ export function Drawer({
     </RD.Root>
   )
 }
+
+/**
+ * Brief 45 — the navigation drawer: slides in from the left at phone width and
+ * holds the whole sidebar. Unlike the reply Drawer above it is MODAL (backdrop,
+ * focus trap, Esc or a backdrop tap closes it), because it covers the page.
+ * The content brings its own layout; the title is for screen readers.
+ */
+export function SideDrawer({
+  open,
+  onOpenChange,
+  title,
+  width = 288,
+  onEscapeKeyDown,
+  children,
+  className,
+}: {
+  open?: boolean
+  onOpenChange?: (o: boolean) => void
+  title: string
+  width?: number
+  /** Call preventDefault() to keep it open (e.g. Esc belongs to a name box inside). */
+  onEscapeKeyDown?: (e: KeyboardEvent) => void
+  children?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <RD.Root open={open} onOpenChange={onOpenChange}>
+      <RD.Portal>
+        <RD.Overlay className="fixed inset-0 z-40 bg-black/40 data-[state=open]:animate-[dfFadeIn_120ms_ease-out]" />
+        <RD.Content
+          aria-describedby={undefined}
+          onEscapeKeyDown={onEscapeKeyDown}
+          style={{ width: `min(${width}px, 85vw)` }}
+          className={cn(
+            'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-line bg-bg shadow-lg',
+            'data-[state=open]:animate-[dfSlideInLeft_160ms_ease-out]',
+            className,
+          )}
+        >
+          <RD.Title className="sr-only">{title}</RD.Title>
+          {children}
+        </RD.Content>
+      </RD.Portal>
+    </RD.Root>
+  )
+}
