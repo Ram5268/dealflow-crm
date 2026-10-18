@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma'
+import { assertSequenceCanStart } from './channel-gate'
 
 /** Sequence + step CRUD and enrollment (brief §3.3). */
 export const stepInputSchema = z.object({
@@ -190,6 +191,11 @@ export async function enrollContact(orgId: string, input: unknown) {
   })
   if (!seq) throw new Error('enrollContact: sequence not found')
 
+  // Brief 41.2 (PR E): no enrollment while a channel this sequence uses is off,
+  // refused before anything is written. Every enrollment is created here, so
+  // every caller gets it. Engineering precaution (audit H15); see channel-gate.
+  assertSequenceCanStart(seq)
+
   const contact = await prisma.contact.findFirst({ where: { id: contactId, organizationId: orgId } })
   if (!contact) throw new Error('enrollContact: contact not found')
 
@@ -211,6 +217,18 @@ export async function enrollContact(orgId: string, input: unknown) {
 
 export async function updateEnrollment(orgId: string, id: string, input: unknown) {
   const { status } = enrollmentStatusSchema.parse(input)
+  // Brief 41.2 (PR E): making an enrollment active again (resume) is refused
+  // while a channel its sequence uses is off, before anything is written: a
+  // resumed enrollment would fire at switch-on just like a new one. Engineering
+  // precaution (audit H15); see channel-gate. Pausing and cancelling stay
+  // allowed. An id that isn't ours matches nothing below, as before.
+  if (status === 'active') {
+    const enrollment = await prisma.sequenceEnrollment.findFirst({
+      where: { id, organizationId: orgId },
+      select: { sequence: { select: { channel: true, steps: { select: { channel: true } } } } },
+    })
+    if (enrollment) assertSequenceCanStart(enrollment.sequence)
+  }
   return prisma.sequenceEnrollment.updateMany({
     where: { id, organizationId: orgId },
     data: { status },

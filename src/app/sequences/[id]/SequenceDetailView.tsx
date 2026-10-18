@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Clock, Mail, MessageSquare, Pencil } from 'lucide-react'
@@ -23,7 +23,14 @@ function delayLabel(hours: number): string {
   return `Wait ${hours}h`
 }
 
-export function SequenceDetailView({ sequence }: { sequence: SequenceDetail }) {
+export function SequenceDetailView({
+  sequence,
+  blockedReason,
+}: {
+  sequence: SequenceDetail
+  /** Brief 41.2 (PR E): why this sequence can't start or resume right now, or null. */
+  blockedReason?: string | null
+}) {
   const [tab, setTab] = useState<Tab>('steps')
 
   return (
@@ -64,7 +71,7 @@ export function SequenceDetailView({ sequence }: { sequence: SequenceDetail }) {
       </div>
 
       {tab === 'steps' && <StepsTab sequence={sequence} />}
-      {tab === 'enrollment' && <EnrollmentTab sequence={sequence} />}
+      {tab === 'enrollment' && <EnrollmentTab sequence={sequence} blockedReason={blockedReason} />}
       {tab === 'stats' && <StatsTab sequence={sequence} />}
     </div>
   )
@@ -131,9 +138,25 @@ function StepsTab({ sequence }: { sequence: SequenceDetail }) {
   )
 }
 
-function EnrollmentTab({ sequence }: { sequence: SequenceDetail }) {
+/**
+ * Brief 41.2 (PR E): with `blockedReason` (a channel this sequence uses is off)
+ * Resume is greyed out with the reason above the table, and the empty state
+ * gives the reason instead of "Enroll a lead". The server refuses a resume
+ * anyway (engineering precaution, audit H15: a resumed enrollment would fire at
+ * switch-on just like a new one), and the toast shows its message. Pause and
+ * Unenroll stay available. Greyed out with the reason, not hidden, follows
+ * Ryan's decision of 2026-10-17 for "Add to sequence".
+ */
+export function EnrollmentTab({
+  sequence,
+  blockedReason,
+}: {
+  sequence: SequenceDetail
+  blockedReason?: string | null
+}) {
   const router = useRouter()
   const { toast } = useToast()
+  const reasonId = useId()
   const [busy, setBusy] = useState<string | null>(null)
 
   const setStatus = useCallback(
@@ -146,7 +169,10 @@ function EnrollmentTab({ sequence }: { sequence: SequenceDetail }) {
           body: JSON.stringify({ status }),
         })
         if (!res.ok) {
-          toast({ tone: 'danger', title: 'Could not update enrollment' })
+          // A 403 is a resume refused while a channel is off; it says why.
+          const body =
+            res.status === 403 ? ((await res.json().catch(() => null)) as { message?: string } | null) : null
+          toast({ tone: 'danger', title: 'Could not update enrollment', description: body?.message })
           return
         }
         router.refresh()
@@ -161,13 +187,20 @@ function EnrollmentTab({ sequence }: { sequence: SequenceDetail }) {
     return (
       <EmptyState
         title="Nobody is enrolled yet."
-        description="Enroll a lead from its detail page."
+        description={blockedReason ?? 'Enroll a lead from its detail page.'}
       />
     )
   }
 
+  const resumeBlocked = Boolean(blockedReason) && sequence.enrollments.some((e) => e.status === 'paused')
+
   return (
     <div className="overflow-hidden rounded-lg border border-line">
+      {resumeBlocked && (
+        <p id={reasonId} className="border-b border-line px-3 py-2 text-xs text-muted">
+          {blockedReason}
+        </p>
+      )}
       <table className="w-full text-sm">
         <thead className="bg-hover text-left text-xs font-medium text-muted">
           <tr>
@@ -213,7 +246,13 @@ function EnrollmentTab({ sequence }: { sequence: SequenceDetail }) {
                     </Button>
                   )}
                   {e.status === 'paused' && (
-                    <Button size="sm" variant="ghost" disabled={busy === e.id} onClick={() => setStatus(e.id, 'active')}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy === e.id || resumeBlocked}
+                      aria-describedby={resumeBlocked ? reasonId : undefined}
+                      onClick={() => setStatus(e.id, 'active')}
+                    >
                       Resume
                     </Button>
                   )}

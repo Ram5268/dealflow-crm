@@ -12,10 +12,19 @@ import type { SequenceRow } from '@/lib/sequences/queries'
  * Owner is dropped (single-seat) and "Active/Idle" is derived, because
  * `Sequence` has no status column: active means something is enrolled and
  * running right now.
+ *
+ * Brief 41.2 (PR E): `banner` says how many people are enrolled while email and
+ * texting are off, since their steps would start firing once either goes on
+ * (engineering precaution, audit H15). The page builds it; null hides it.
  */
-export function SequencesView({ sequences }: { sequences: SequenceRow[] }) {
+export function SequencesView({ sequences, banner }: { sequences: SequenceRow[]; banner?: string | null }) {
   return (
     <div className="px-4 py-4">
+      {banner && (
+        <div role="status" className="mb-3 rounded-md bg-warning-subtle p-3 text-base font-medium text-warning">
+          {banner}
+        </div>
+      )}
       <div className="mb-3 flex items-center justify-end">
         <Button asChild variant="primary" size="sm">
           <Link href="/sequences/new">

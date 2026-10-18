@@ -39,6 +39,7 @@ export function DropdownItem({
   shortcut,
   className,
   children,
+  'aria-describedby': describedBy,
 }: {
   onSelect?: () => void
   disabled?: boolean
@@ -46,11 +47,14 @@ export function DropdownItem({
   shortcut?: React.ReactNode
   className?: string
   children: React.ReactNode
+  /** The id of text that explains the item, e.g. why it's disabled. */
+  'aria-describedby'?: string
 }) {
   return (
     <RM.Item
       disabled={disabled}
       onSelect={onSelect}
+      aria-describedby={describedBy}
       className={cn(
         'flex h-7 cursor-default select-none items-center gap-2 rounded px-2',
         'text-sm outline-none',
