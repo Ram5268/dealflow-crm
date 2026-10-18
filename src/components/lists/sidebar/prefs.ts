@@ -1,10 +1,11 @@
 'use client'
 
 // Brief 45 — the sidebar's per-browser memory: which folders are collapsed and
-// whether the Archived section is open (brief §5.2: folders open and close,
-// remembered per browser). One small store shared by every sidebar on the page
-// (the left column and the phone drawer), saved in localStorage. Storage can be
-// missing or blocked (private windows): then it simply isn't remembered.
+// whether the Archived section is open. Remembering them per browser is a
+// builder's design choice (engineering), not a brief rule. One small store
+// shared by every sidebar on the page (the left column and the phone drawer),
+// saved in localStorage. Storage can be missing or blocked (private windows):
+// then it simply isn't remembered.
 import { useCallback, useSyncExternalStore } from 'react'
 
 const COLLAPSED_KEY = 'dealflow-sidebar-collapsed-folders'

@@ -21,7 +21,7 @@ import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 import { reasonText, timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { rankStateOf, STRONG_BUYER_MIN_FIT } from './rules'
 import {
-  CALLING_OFF_REASON, IDS_CAP, PAGE_SIZE,
+  CALLING_OFF_REASON, IDS_CAP, MAX_PAGE, PAGE_SIZE,
   type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow,
 } from './types'
 import {
@@ -229,7 +229,8 @@ function toRows(rows: RowSql[], meta: MetaSql): RankedRow[] {
     })
 }
 
-const pageNumber = (p: number | undefined) => (Number.isInteger(p) && (p as number) >= 1 ? (p as number) : 1)
+// 1 to MAX_PAGE, else 1: a bigger page would overflow the database's OFFSET [engineering precaution].
+const pageNumber = (p: number | undefined) => (Number.isSafeInteger(p) && (p as number) >= 1 && (p as number) <= MAX_PAGE ? (p as number) : 1)
 
 /** One page (100 rows) of a list (listId) or of All leads (null), in rank order. */
 export async function getRankedPage(

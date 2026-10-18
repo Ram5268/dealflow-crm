@@ -1,9 +1,10 @@
+import { notFound } from 'next/navigation'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { HttpError } from '@/lib/shared/http'
 import { getRankedPage } from '@/lib/core-data/lists/ranked'
 import { listGroups } from '@/lib/core-data/lists/groups'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
-import { ListNotFound, ListView } from './ListView'
+import { ListView } from './ListView'
 import { parseListSearch, type ListSearch } from './filters'
 
 export const dynamic = 'force-dynamic'
@@ -11,8 +12,9 @@ export const dynamic = 'force-dynamic'
 // Brief 45 — a list's page: its people in today's rank order, 100 a page,
 // with each person's rank in the whole list whatever the filters (brief §5.4).
 // Reads only. The calling switch is read, never changed (Brief 37); while it
-// is off "Start calling this list" and the "called today" filter are greyed
-// out with the reason.
+// is off the "called today" filter is greyed out with the reason. An unknown
+// list, or another organization's, is a real 404 (not-found.tsx says it in
+// plain English).
 export default async function ListPage({
   params,
   searchParams,
@@ -28,7 +30,7 @@ export default async function ListPage({
   try {
     ;[data, groups] = await Promise.all([getRankedPage(organizationId, id, { page, filters }), listGroups(organizationId)])
   } catch (err) {
-    if (err instanceof HttpError && err.status === 404) return <ListNotFound />
+    if (err instanceof HttpError && err.status === 404) notFound()
     throw err
   }
 

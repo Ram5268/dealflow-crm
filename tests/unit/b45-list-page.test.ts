@@ -8,9 +8,12 @@ import {
 import { ToastProvider, TooltipProvider } from '@/components/ui'
 import type { GroupChipDTO, RankedPage, RankedRow } from '@/lib/core-data/lists/types'
 import { EXPORT_COLUMNS } from '@/lib/core-data/lists/ranked'
-import { ListView, ListNotFound } from '@/app/lists/[id]/ListView'
+import { ListView, ListNotFound, CALL_LIST_LATER } from '@/app/lists/[id]/ListView'
 import { listSearchString, parseListSearch } from '@/app/lists/[id]/filters'
-import { LIST_CSV_COLUMNS, rowsToCsv } from '@/app/lists/[id]/csv'
+import { LIST_CSV_COLUMNS, rowsToCsv, selectedCsvFilename } from '@/app/lists/[id]/csv'
+import { keepSelection } from '@/app/lists/[id]/selection'
+import { pageParam } from '@/lib/ui/pageParam'
+import { MAX_PAGE } from '@/lib/core-data/lists/types'
 import { localTimeInfo, rankBadge, rankedHeadline, rankedStamp, sourceLine, RANK_BADGES } from '@/components/lists/format'
 
 // Brief 45 PR B — a list's page (brief §5.4): the header (folder, source,
@@ -133,11 +136,14 @@ describe('list page header', () => {
     expect(byId(html, describedBy!)).toBe('Calling is off')
   })
 
-  it('while calling is on it only links to the dialer (nothing new can call)', () => {
+  it('while calling is on it is still greyed out: calling a whole list comes later (brief §5.10), never the plain dialer', () => {
     const html = render(page({ callingOffReason: null }))
     const tag = control(html, 'Start calling this list')
-    expect(tag).toContain('href="/dialer"')
-    expect(tag).not.toMatch(/\sdisabled=""/)
+    expect(tag).toMatch(/\sdisabled=""/)
+    expect(tag).not.toContain('href=')
+    expect(html).not.toContain('href="/dialer"')
+    expect(byId(html, /aria-describedby="([^"]+)"/.exec(tag)![1])).toBe(CALL_LIST_LATER)
+    expect(CALL_LIST_LATER).toBe('Calling a whole list comes in a later update.')
   })
 
   it('an archived list says so, with Unarchive', () => {
@@ -154,6 +160,14 @@ describe('the ranked table', () => {
     const ranks = [...html.matchAll(/<tr[^>]*\sdata-rank="(\d+)"/g)].map((m) => Number(m[1]))
     expect(ranks).toEqual([101, 102, 103, 104])
     expect((html.match(/data-rank=/g) ?? []).length).toBe(4)
+  })
+
+  it('with a filter, each row keeps its place in the whole list (gaps in the numbers, never 1, 2, 3)', () => {
+    const html = render(page({ total: 3, page: 1, rows: [row(3), row(17), row(42)] }), { filters: { strongBuyer: true } })
+    const rows = [...html.matchAll(/<tr[^>]*\sdata-rank="(\d+)"[^>]*>(?:(?!<\/tr>)[\s\S])*?<\/td><td[^>]*><span[^>]*>([\d,]+)<\/span>/g)]
+    expect(rows.map((m) => Number(m[1]))).toEqual([3, 17, 42])
+    // The visible # column says the same as data-rank.
+    expect(rows.map((m) => m[2])).toEqual(['3', '17', '42'])
   })
 
   it('rows show name and property, why now, best buyer, group badges, attempts and last result', () => {
@@ -240,6 +254,24 @@ describe('filters', () => {
     expect(parseListSearch({ borough: 'Atlantis', page: 'x', strongBuyer: '0' }, { callingOn: false })).toEqual({ page: 1, filters: {} })
   })
 
+  it('a huge page number never reaches the query: past MAX_PAGE (or 20 digits) is page 1', () => {
+    expect(parseListSearch({ page: '12345678901234567890' }, { callingOn: false }).page).toBe(1)
+    expect(parseListSearch({ page: '1000000' }, { callingOn: false }).page).toBe(1_000_000)
+    expect(parseListSearch({ page: '1000001' }, { callingOn: false }).page).toBe(1)
+    expect(parseListSearch({ page: '-3' }, { callingOn: false }).page).toBe(1)
+    expect(parseListSearch({ page: ['4', '5'] }, { callingOn: false }).page).toBe(4)
+  })
+
+  it('the Leads page reads ?page= the same way', () => {
+    expect(pageParam('12345678901234567890')).toBe(1)
+    expect(pageParam('2')).toBe(2)
+    expect(pageParam(String(MAX_PAGE))).toBe(MAX_PAGE)
+    expect(pageParam(String(MAX_PAGE + 1))).toBe(1)
+    expect(pageParam(undefined)).toBe(1)
+    expect(pageParam('abc')).toBe(1)
+    expect(pageParam('0')).toBe(1)
+  })
+
   it('write the URL: only what is set, page 1 left out', () => {
     expect(listSearchString({ q: 'smith', group: 'g1', strongBuyer: true, borough: 'Brooklyn' }, 3))
       .toBe('?q=smith&group=g1&strongBuyer=1&borough=Brooklyn&page=3')
@@ -248,7 +280,34 @@ describe('filters', () => {
   })
 })
 
+describe('what stays picked when the rows reload', () => {
+  const rows = (...ids: string[]) => ids.map((leadId) => ({ leadId }))
+
+  it('a refresh of the same view (a sidebar or chip change) keeps everyone still on the page', () => {
+    const picked = new Set(['a', 'b', 'c'])
+    expect([...keepSelection(picked, rows('a', 'b', 'c', 'd'), false)]).toEqual(['a', 'b', 'c'])
+    // Nothing changed: the very same Set comes back (no needless re-render).
+    expect(keepSelection(picked, rows('a', 'b', 'c', 'd'), false)).toBe(picked)
+  })
+
+  it('someone who left the page (taken off the list, say) drops out of the selection', () => {
+    expect([...keepSelection(new Set(['a', 'b', 'c']), rows('a', 'c'), false)]).toEqual(['a', 'c'])
+  })
+
+  it('a new search, filter or page starts with nothing picked', () => {
+    expect(keepSelection(new Set(['a', 'b']), rows('a', 'b'), true).size).toBe(0)
+    const none = new Set<string>()
+    expect(keepSelection(none, rows('a'), true)).toBe(none)
+  })
+})
+
 describe('Export CSV of selected rows', () => {
+  it('names the file with the New York date, like the server export', () => {
+    // 10 pm in New York on Oct 18 is already Oct 19 in UTC.
+    expect(selectedCsvFilename('Expireds – Oct 2026', new Date('2026-10-19T02:00:00.000Z'))).toBe('Expireds-Oct-2026-selected-2026-10-18.csv')
+    expect(selectedCsvFilename('Referrals', new Date('2026-10-18T16:00:00.000Z'))).toBe('Referrals-selected-2026-10-18.csv')
+  })
+
   it('uses the same columns as the server export (no phones or emails)', () => {
     expect([...LIST_CSV_COLUMNS]).toEqual([...EXPORT_COLUMNS])
     const csv = rowsToCsv(page().rows.slice(0, 1).map((r) => ({ ...r, groups: [HOT] })))

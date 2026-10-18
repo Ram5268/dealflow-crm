@@ -4,6 +4,7 @@
 // [brief §5.4]. Pure: the server page reads with parseListSearch, the browser
 // writes with listSearchString.
 import { BOROUGHS, type MemberFilters } from '@/lib/core-data/lists/types'
+import { pageParam } from '@/lib/ui/pageParam'
 
 type Param = string | string[] | undefined
 
@@ -20,9 +21,10 @@ const first = (v: Param) => (Array.isArray(v) ? v[0] : v)
 const on = (v: Param) => ['1', 'true'].includes(first(v)?.trim() ?? '')
 
 /**
- * Tolerant: an unknown borough or a bad page number is ignored rather than an
- * error. "Called today" counts only while calling is on; while it's off the
- * filter is greyed out and never applied [brief §5.1 rule 3].
+ * Tolerant: an unknown borough or a bad page number (unreadable, or past
+ * MAX_PAGE) is ignored rather than an error. "Called today" counts only while
+ * calling is on; while it's off the filter is greyed out and never applied
+ * [brief §5.1 rule 3].
  */
 export function parseListSearch(sp: ListSearch, opts: { callingOn: boolean }): { page: number; filters: MemberFilters } {
   const filters: MemberFilters = {}
@@ -35,8 +37,7 @@ export function parseListSearch(sp: ListSearch, opts: { callingOn: boolean }): {
   const borough = first(sp.borough)?.trim().toLowerCase()
   const canonical = BOROUGHS.find((b) => b.toLowerCase() === borough)
   if (canonical) filters.borough = canonical
-  const page = Number.parseInt(first(sp.page) ?? '1', 10)
-  return { page: Number.isInteger(page) && page >= 1 ? page : 1, filters }
+  return { page: pageParam(sp.page), filters }
 }
 
 /** "?q=…&group=…&strongBuyer=1&borough=…&page=3" — only what is set; page 1 is left out. */

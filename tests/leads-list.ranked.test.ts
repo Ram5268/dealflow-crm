@@ -79,6 +79,16 @@ describe("All leads in rank order (no Smart View, no column)", () => {
     expect(p2.rows.map((r) => r.rank)).toEqual(Array.from({ length: N - 100 }, (_, i) => 101 + i));
   });
 
+  it('a 20-digit page never reaches the query: it is page 1 (rank order and a column sort)', async () => {
+    const huge = 12345678901234567890
+    const ranked = await listLeads({ organizationId: org, page: huge }, db)
+    expect(ranked.page).toBe(1)
+    expect(ranked.rows[0].rank).toBe(1)
+    const sorted = await listLeads({ organizationId: org, page: huge, sortKey: "displayName", sortDir: "asc" }, db)
+    expect(sorted.page).toBe(1)
+    expect(sorted.rows.length).toBeGreaterThan(0)
+  });
+
   it("search narrows but keeps each person's place in All leads", async () => {
     const expected = await getRankedIds(org, null, {}, db);
     const r = await listLeads({ organizationId: org, q: "Ranked owner 01" }, db);

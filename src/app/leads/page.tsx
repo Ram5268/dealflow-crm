@@ -3,6 +3,7 @@ import { NewLeadModal } from './NewLeadModal'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { isLeadSortKey, listLeads } from '@/lib/leads/list'
+import { pageParam } from '@/lib/ui/pageParam'
 import { sequencesOffReason } from '@/lib/comms/sequences/channel-gate'
 import { LeadsView } from './LeadsView'
 
@@ -30,7 +31,8 @@ export default async function LeadsPage({
   // default (a Smart View's own saved sort, or, Brief 45, the lists' rank order).
   const sortKey = isLeadSortKey(sp.sort) ? sp.sort : undefined
   const sortDir = sp.dir === 'asc' ? 'asc' : 'desc'
-  const page = Math.max(1, Number(sp.page) || 1)
+  // Brief 45: 1 to MAX_PAGE, else 1, so a huge ?page= never reaches the query.
+  const page = pageParam(sp.page)
 
   const [result, views] = await Promise.all([
     listLeads({ organizationId, q: sp.q, viewId: sp.viewId, sortKey, sortDir, page, group: sp.group }),

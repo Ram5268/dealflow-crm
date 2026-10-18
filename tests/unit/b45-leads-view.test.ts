@@ -68,6 +68,13 @@ describe('All leads in rank order', () => {
     expect([...html.matchAll(/data-rank="(\d+)"/g)].map((m) => Number(m[1]))).toEqual([101, 102])
   })
 
+  it('a search or group filter keeps each person\'s place in All leads (gaps in the numbers)', () => {
+    const html = render({ rows: [lead(3, 3), lead(17, 17), lead(42, 42)], total: 3, group: { id: 'g1', name: 'Hot', color: 'red' } })
+    const rows = [...html.matchAll(/<tr[^>]*\sdata-rank="(\d+)"[^>]*>(?:(?!<\/tr>)[\s\S])*?<\/td><td[^>]*><span[^>]*>([\d,]+)<\/span>/g)]
+    expect(rows.map((m) => Number(m[1]))).toEqual([3, 17, 42])
+    expect(rows.map((m) => m[2])).toEqual(['3', '17', '42'])
+  })
+
   it('a column sort shows the grid exactly as before (no # column, no data-rank) and a way back to ranked order', () => {
     const html = render({ rows: [lead(1), lead(2)], sort: BY_NAME })
     expect(html).not.toContain('data-rank')

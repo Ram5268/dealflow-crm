@@ -4,9 +4,11 @@
 // 2026-10-18]. Search and filters narrow it but keep its order and everyone's
 // rank number (their place in the whole list). 100 rows a page. The server
 // page reads (getRankedPage); this component filters, selects, exports and
-// unarchives. "Start calling this list" stays greyed out with the calling-off
-// reason while calling is off [Ryan, 2026-09-24: nothing contacts a lead];
-// while it's on it only opens the dialer, so nothing new can call.
+// unarchives. "Start calling this list" is always greyed out with its reason:
+// "Calling is off" while calling is off [Ryan, 2026-09-24: nothing contacts a
+// lead]; while it's on, calling a whole list is a later brief (brief §5.10:
+// select-and-call and the calling cockpit are out of scope), so it never
+// links to the dialer.
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
@@ -30,12 +32,12 @@ import { cn } from '@/lib/ui/cn'
 import { groupColorStyle } from '@/lib/ui/groupColors'
 import { BOROUGHS, type BestBuyerDTO, type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow } from '@/lib/core-data/lists/types'
 import { LISTS_CHANGED_EVENT, listExportUrl, notifyListsChanged, updateList } from '@/lib/core-data/lists/client'
-import { fileStem } from '@/lib/core-data/lists/csv'
 import { timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { formatCount, localTimeInfo, rankBadge, rankedHeadline, sourceLine } from '@/components/lists/format'
 import { downloadText, messageOf } from '@/components/lists/browser'
 import { listSearchString } from './filters'
-import { rowsToCsv } from './csv'
+import { rowsToCsv, selectedCsvFilename } from './csv'
+import { keepSelection } from './selection'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -127,18 +129,12 @@ function LocalTimeCell({ timezone, window, now }: { timezone: string | null; win
 
 // ─── Header pieces ────────────────────────────────────────────────────────────
 
-function StartCalling({ reason }: { reason: string | null }) {
+/** Why "Start calling this list" is greyed out while calling is on (brief §5.10: out of scope here). */
+export const CALL_LIST_LATER = 'Calling a whole list comes in a later update.'
+
+function StartCalling({ callingOffReason }: { callingOffReason: string | null }) {
   const id = useId()
-  if (!reason) {
-    return (
-      <Button asChild variant="primary">
-        <Link href="/dialer">
-          <Phone size={13} />
-          Start calling this list
-        </Link>
-      </Button>
-    )
-  }
+  const reason = callingOffReason ?? CALL_LIST_LATER
   // Greyed out with the reason underneath, not hidden (as on the lead page).
   return (
     <div className="flex flex-col items-end gap-0.5">
@@ -218,8 +214,16 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
   const archived = list.archivedAt !== null
   const unknownGroup = Boolean(filters.group && filters.group !== 'none' && !groups.some((g) => g.id === filters.group))
 
-  // A new page of rows (paging, a filter, a refresh) starts with nothing selected.
-  useEffect(() => setSelected(new Set()), [data])
+  // A refresh (a rename or a group change elsewhere fires crm:lists-changed)
+  // keeps what's picked, minus anyone no longer on the page; a new search,
+  // filter or page starts with nothing picked.
+  const viewKey = listSearchString(filters, data.page)
+  const lastViewKey = useRef(viewKey)
+  useEffect(() => {
+    const viewChanged = lastViewKey.current !== viewKey
+    lastViewKey.current = viewKey
+    setSelected((picked) => keepSelection(picked, data.rows, viewChanged))
+  }, [data, viewKey])
 
   // A rename, archive or group change elsewhere (the sidebar) shows here too.
   useEffect(() => {
@@ -228,8 +232,15 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
     return () => window.removeEventListener(LISTS_CHANGED_EVENT, refresh)
   }, [router])
 
+  // The search box's pending debounce, and a flag for "Clear filters", which
+  // empties the box itself (that is not a new search to send).
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const skipSearch = useRef(false)
+
   const push = useCallback(
     (patch: Partial<MemberFilters>, page = 1) => {
+      // Every push carries the box's current text, so a search still waiting to fire would only undo it.
+      clearTimeout(searchTimer.current)
       const next: MemberFilters = { ...filters, q: term.trim() || undefined, ...patch }
       startTransition(() => router.push(`/lists/${encodeURIComponent(list.id)}${listSearchString(next, page)}`))
     },
@@ -243,14 +254,20 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
       first.current = false
       return
     }
+    if (skipSearch.current) {
+      skipSearch.current = false
+      return
+    }
     if (term.trim() === (filters.q ?? '')) return
-    const t = setTimeout(() => push({ q: term.trim() || undefined }), SEARCH_DEBOUNCE_MS)
-    return () => clearTimeout(t)
+    searchTimer.current = setTimeout(() => push({ q: term.trim() || undefined }), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(searchTimer.current)
     // `push` is intentionally omitted: it changes identity on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term])
 
   const clearFilters = () => {
+    clearTimeout(searchTimer.current)
+    if (term !== '') skipSearch.current = true
     setTerm('')
     startTransition(() => router.push(`/lists/${encodeURIComponent(list.id)}`))
   }
@@ -258,8 +275,7 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
   const exportSelected = useCallback(() => {
     const chosen = data.rows.filter((r) => selected.has(r.leadId))
     if (chosen.length === 0) return
-    const day = new Date().toISOString().slice(0, 10)
-    downloadText(rowsToCsv(chosen), `${fileStem(list.name)}-selected-${day}.csv`)
+    downloadText(rowsToCsv(chosen), selectedCsvFilename(list.name))
     toast({ title: `Exported ${chosen.length} ${chosen.length === 1 ? 'person' : 'people'}` })
   }, [data.rows, selected, list.name, toast])
 
@@ -351,7 +367,7 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
               Export CSV
             </a>
           </Button>
-          <StartCalling reason={data.callingOffReason} />
+          <StartCalling callingOffReason={data.callingOffReason} />
         </div>
       </header>
 

@@ -13,7 +13,7 @@ import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
 import { sQuerySchema, sortSpecSchema, type SortSpec, type SQuery } from '@/lib/core-data/query-dsl/schema'
 import { getRankedPage } from '@/lib/core-data/lists/ranked'
 import { isGroupColor } from '@/lib/core-data/lists/rules'
-import type { GroupColor, MemberFilters } from '@/lib/core-data/lists/types'
+import { MAX_PAGE, type GroupColor, type MemberFilters } from '@/lib/core-data/lists/types'
 
 export const LEAD_SORT_KEYS = ['displayName', 'statusLabel', 'priorityScore', 'updatedAt'] as const
 export type LeadSortKey = (typeof LEAD_SORT_KEYS)[number]
@@ -279,9 +279,11 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
     viewId,
     sortKey: chosenSortKey,
     sortDir: chosenSortDir,
-    page = 1,
     pageSize = DEFAULT_PAGE_SIZE,
   } = params
+  // Brief 45: 1 to MAX_PAGE, else 1. A bigger page would overflow the
+  // database's OFFSET [engineering precaution]; the page parses it the same way.
+  const page = Number.isSafeInteger(params.page) && params.page! >= 1 && params.page! <= MAX_PAGE ? params.page! : 1
 
   const term = q?.trim() || undefined
   let viewError: string | undefined

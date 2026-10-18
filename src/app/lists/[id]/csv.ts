@@ -2,7 +2,8 @@
 // browser with exactly the server export's columns (ranked.ts EXPORT_COLUMNS):
 // no phone numbers or emails, the same columns policy as the Leads export
 // [engineering precaution]. Formula-safe cells come from PR A's csv.ts.
-import { toCsv } from '@/lib/core-data/lists/csv'
+import { DateTime } from 'luxon'
+import { fileStem, toCsv } from '@/lib/core-data/lists/csv'
 import { timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import type { RankedRow } from '@/lib/core-data/lists/types'
 
@@ -18,4 +19,9 @@ export function rowsToCsv(rows: readonly RankedRow[]): string {
       r.groups.map((g) => g.name).join('; '), r.attempts, r.lastResult, timezoneLabel(r.timezone),
     ]),
   )
+}
+
+/** "Expireds-Oct-2026-selected-2026-10-18.csv": the New York date, like the server's export. */
+export function selectedCsvFilename(listName: string, now: Date = new Date()): string {
+  return `${fileStem(listName)}-selected-${DateTime.fromJSDate(now).setZone('America/New_York').toISODate()}.csv`
 }

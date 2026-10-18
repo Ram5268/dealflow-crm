@@ -11,7 +11,7 @@
 // (inert) context the tree still renders completely, which is how the render
 // tests draw it. Nothing here contacts anyone: it only organizes.
 import Link from 'next/link'
-import { createContext, useContext, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import * as RM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronDown, ChevronRight, MoreHorizontal, Plus, Users } from 'lucide-react'
 import { Skeleton, Tooltip } from '@/components/ui'
@@ -350,6 +350,7 @@ function ListRow({
     <li>
       <div
         className={rowShell(active, dropFor(ui, 'list', list.id))}
+        data-drop={dropFor(ui, 'list', list.id) ?? undefined}
         onContextMenu={(e) => {
           e.preventDefault()
           ui.setOpenMenu(menuKey(ref))
@@ -380,6 +381,9 @@ function ListRow({
   )
 }
 
+/** A single click on a folder waits this long, so a double-click can rename it without closing it first. */
+export const FOLDER_CLICK_DELAY_MS = 250
+
 function FolderRow({
   folder, lists, folderIds, folders, expanded, pathname,
 }: {
@@ -395,6 +399,8 @@ function FolderRow({
   const creatingHere = ui.creating?.kind === 'list' && ui.creating.folderId === folder.id
   const scopeIds = lists.map((l) => l.id)
   const renaming = ui.renaming?.kind === 'folder' && ui.renaming.id === folder.id
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(clickTimer.current), [])
   return (
     <li>
       {renaming ? (
@@ -402,6 +408,7 @@ function FolderRow({
       ) : (
         <div
           className={rowShell(false, dropFor(ui, 'folder', folder.id))}
+          data-drop={dropFor(ui, 'folder', folder.id) ?? undefined}
           onContextMenu={(e) => {
             e.preventDefault()
             ui.setOpenMenu(menuKey(ref))
@@ -417,11 +424,17 @@ function FolderRow({
             draggable
             onDragStart={(e) => ui.dragStart(ref, e)}
             onDragEnd={ui.dragEnd}
-            // The second click of a double-click renames instead of toggling back.
+            // Enter / Space (detail 0) open or close it at once. A mouse click
+            // waits a beat: a double-click renames the folder without closing it.
             onClick={(e) => {
-              if (e.detail <= 1) ui.toggleFolder(folder.id)
+              if (e.detail === 0) return ui.toggleFolder(folder.id)
+              clearTimeout(clickTimer.current)
+              if (e.detail === 1) clickTimer.current = setTimeout(() => ui.toggleFolder(folder.id), FOLDER_CLICK_DELAY_MS)
             }}
-            onDoubleClick={() => ui.menuAction(ref, { type: 'rename' })}
+            onDoubleClick={() => {
+              clearTimeout(clickTimer.current)
+              ui.menuAction(ref, { type: 'rename' })
+            }}
             onKeyDown={(e) => ui.rowKeyDown(ref, e)}
             className={cn(ROW_MAIN, 'pl-2 text-left font-medium')}
           >
@@ -468,6 +481,7 @@ function GroupRow({ group, groupIds, active }: { group: GroupDTO; groupIds: stri
     <li>
       <div
         className={rowShell(active, dropFor(ui, 'group', group.id))}
+        data-drop={dropFor(ui, 'group', group.id) ?? undefined}
         onContextMenu={(e) => {
           e.preventDefault()
           ui.setOpenMenu(menuKey(ref))
@@ -634,6 +648,7 @@ export function SidebarTree({
                   <div
                     onDragOver={(e) => ui.dragOver({ kind: 'outside', id: 'outside' }, e)}
                     onDrop={ui.drop}
+                    data-drop={ui.dropTarget?.kind === 'outside' ? 'into' : undefined}
                     className={cn(
                       'ml-[22px] mr-1 mt-0.5 flex h-7 items-center rounded-md border border-dashed px-2 text-xs',
                       ui.dropTarget?.kind === 'outside' ? 'border-accent bg-accent-subtle text-accent' : 'border-line-strong text-subtle',

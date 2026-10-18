@@ -85,10 +85,17 @@ export function LeadsView({
   const [term, setTerm] = useState(q)
   const sequencesOffId = useId()
 
+  // The search box's pending debounce, and a flag for "Clear filters", which
+  // empties the box itself (that is not a new search to send).
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const skipSearch = useRef(false)
+
   // Push a new query string; every filter/sort/page control funnels through
   // here so the URL stays the single source of truth and is shareable.
   const push = useCallback(
     (patch: Record<string, string | undefined>) => {
+      // Every push carries the box's current text, so a search still waiting to fire would only undo it.
+      clearTimeout(searchTimer.current)
       const params = new URLSearchParams()
       // A Smart View's own saved sort stays implicit (no sort in the URL), so
       // every page of the view is listed in that same order.
@@ -115,9 +122,13 @@ export function LeadsView({
       first.current = false
       return
     }
+    if (skipSearch.current) {
+      skipSearch.current = false
+      return
+    }
     if (term === q) return
-    const t = setTimeout(() => push({ q: term || undefined, page: '1' }), SEARCH_DEBOUNCE_MS)
-    return () => clearTimeout(t)
+    searchTimer.current = setTimeout(() => push({ q: term || undefined, page: '1' }), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(searchTimer.current)
     // `push` is intentionally omitted: it changes identity on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [term, q])
@@ -344,7 +355,7 @@ export function LeadsView({
               }
               action={
                 q || viewId || group ? (
-                  <Button onClick={() => { setTerm(''); push({ q: undefined, viewId: undefined, group: undefined, page: '1' }) }}>
+                  <Button onClick={() => { if (term !== '') skipSearch.current = true; setTerm(''); push({ q: undefined, viewId: undefined, group: undefined, page: '1' }) }}>
                     Clear filters
                   </Button>
                 ) : (

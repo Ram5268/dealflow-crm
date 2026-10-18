@@ -24,11 +24,12 @@ import {
   useSidebarData,
 } from '@/lib/core-data/lists/client'
 import { nameProblem, normalizeName } from '@/lib/core-data/lists/rules'
-import type { ListDTO, SidebarData } from '@/lib/core-data/lists/types'
+import type { ListDTO } from '@/lib/core-data/lists/types'
 import { peopleCount } from '../format'
 import { downloadUrl, messageOf } from '../browser'
 import { SidebarTree, SidebarUiContext, menuKey, type DropTarget, type ItemRef, type MenuAction, type SidebarUi } from './SidebarTree'
 import { dropAction, dropPosition, planMove, type ApiCall, type MoveAction } from './tree'
+import { IDLE_MOVES, movesBase, movesReducer, type MovesEvent, type MovesState } from './optimistic'
 import { useSidebarPrefs } from './prefs'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { CreateKind, CreateRequest } from './createRequest'
@@ -114,26 +115,29 @@ export function SidebarLists({
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [confirmBusy, setConfirmBusy] = useState(false)
 
-  // The order shown while a move is saving (optimistic); cleared once the
-  // store has reloaded after the last move, or at once if a call fails.
-  const [override, setOverride] = useState<SidebarData | null>(null)
-  const shown = override ?? data
-  const shownRef = useRef(shown)
-  shownRef.current = shown
+  // Optimistic moves (optimistic.ts): the order shown while moves save, cleared
+  // once the store reloads after the last one, or at once if a call is refused.
+  const [moves, setMoves] = useState<MovesState>(IDLE_MOVES)
+  const movesRef = useRef(moves) // the latest, for handlers between renders
+  const dataRef = useRef(data)
+  dataRef.current = data
+  const shown = movesBase(moves, data)
   const moveQueue = useRef<Promise<void>>(Promise.resolve())
-  const movesInFlight = useRef(0)
-  const awaitingReload = useRef(false)
+  const applyMoves = useCallback((e: MovesEvent) => {
+    const step = movesReducer(movesRef.current, e)
+    movesRef.current = step.state
+    setMoves(step.state)
+    if (step.reload) notifyListsChanged()
+  }, [])
   const draggingRef = useRef<ItemRef | null>(null)
   const dropTargetRef = useRef<DropTarget | null>(null)
   // Where keyboard focus goes once that element exists (a new item, a moved row).
   const pendingFocus = useRef<{ selector: string; until: number } | null>(null)
 
+  // The store finished a load: once every move is answered, show the store again.
   useEffect(() => {
-    if (awaitingReload.current && !loading && movesInFlight.current === 0) {
-      awaitingReload.current = false
-      setOverride(null)
-    }
-  }, [loading, data, error])
+    if (!loading) applyMoves({ type: 'loaded' })
+  }, [loading, data, error, applyMoves])
 
   useEffect(() => {
     const p = pendingFocus.current
@@ -244,33 +248,27 @@ export function SidebarLists({
 
   const runMove = useCallback(
     (action: MoveAction) => {
-      const base = shownRef.current
+      // A second quick move plans on top of the first (the view on screen), and the calls go one after another.
+      const base = movesBase(movesRef.current, dataRef.current)
       if (!base) return
       const plan = planMove(base, action)
       if (!plan) return
       // Show where it went: a list moved into a closed folder opens that folder.
       const into = action.type === 'dropListOnFolder' ? action.folderId : action.type === 'moveListTo' ? action.folderId : null
       if (into) prefs.setFolderCollapsed(into, false)
-      // A second quick move plans on top of this one, and the calls go one after another.
-      shownRef.current = plan.next
-      setOverride(plan.next)
-      movesInFlight.current += 1
+      applyMoves({ type: 'planned', next: plan.next })
       moveQueue.current = moveQueue.current.then(async () => {
         try {
           for (const c of plan.calls) await callApi(c)
+          applyMoves({ type: 'saved' })
         } catch (err) {
-          setOverride(null)
+          applyMoves({ type: 'failed' })
+          // The API's own words, e.g. 'A list named "X" is already in this folder.'
           toast({ title: "That move didn't save", description: messageOf(err), tone: 'danger' })
-        } finally {
-          movesInFlight.current -= 1
-          if (movesInFlight.current === 0) {
-            awaitingReload.current = true
-            notifyListsChanged()
-          }
         }
       })
     },
-    [toast, prefs],
+    [toast, prefs, applyMoves],
   )
 
   const setArchived = useCallback(
@@ -402,6 +400,12 @@ export function SidebarLists({
     [menuAction, prefs],
   )
 
+  const clearDropTarget = () => {
+    if (!dropTargetRef.current) return
+    dropTargetRef.current = null
+    setDropTarget(null)
+  }
+
   // ↑ / ↓ walk the sidebar's rows (All leads, folders, lists, Archived, groups).
   const onTreeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return
@@ -444,7 +448,7 @@ export function SidebarLists({
       if (!drag) return
       const rect = e.currentTarget.getBoundingClientRect()
       const position = dropPosition(drag, over, e.clientY < rect.top + rect.height / 2)
-      if (!position) return
+      if (!position) return clearDropTarget()
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
       const cur = dropTargetRef.current
@@ -477,11 +481,14 @@ export function SidebarLists({
       <div
         ref={rootRef}
         onKeyDown={onTreeKeyDown}
+        // A row that accepts the drop marks the event (preventDefault). Over
+        // anything else (another kind of row, a header, empty space) or after
+        // leaving the sidebar, no place is marked.
+        onDragOver={(e) => {
+          if (!e.defaultPrevented) clearDropTarget()
+        }}
         onDragLeave={(e) => {
-          if (!rootRef.current?.contains(e.relatedTarget as Node | null)) {
-            dropTargetRef.current = null
-            setDropTarget(null)
-          }
+          if (!rootRef.current?.contains(e.relatedTarget as Node | null)) clearDropTarget()
         }}
       >
         <SidebarTree
