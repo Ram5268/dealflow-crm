@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { z } from 'zod'
 import { HttpError, parseBody } from '@/lib/shared/http'
 import { CORRELATION_HEADER } from '@/lib/shell/correlationId'
-import { BOROUGHS, type MemberFilters } from './types'
+import { BOROUGHS, MAX_PAGE, type MemberFilters } from './types'
 
 export const FOLDERS_HOLD_LISTS_ONLY = "Folders hold lists only: a folder can't go inside another folder."
 
@@ -46,7 +46,10 @@ export function parseMemberQuery(sp: URLSearchParams): { page: number; filters: 
     filters.borough = canonical
   }
   const page = Number.parseInt(sp.get('page') ?? '1', 10)
-  return { page: Number.isInteger(page) && page >= 1 ? page : 1, filters, ids: flag(sp, 'ids') === true }
+  // A whole number from 1 to MAX_PAGE; anything else is page 1. A 20-digit
+  // page would overflow the database's OFFSET (a 500) [engineering precaution].
+  const pageOk = Number.isSafeInteger(page) && page >= 1 && page <= MAX_PAGE
+  return { page: pageOk ? page : 1, filters, ids: flag(sp, 'ids') === true }
 }
 
 export function csvResponse(

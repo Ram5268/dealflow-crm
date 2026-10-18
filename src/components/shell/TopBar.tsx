@@ -1,7 +1,7 @@
 'use client'
 
 import { usePathname, useRouter } from 'next/navigation'
-import { Bell, ChevronDown, Plus, Upload, UserPlus } from 'lucide-react'
+import { Bell, ChevronDown, Menu, Plus, Upload, UserPlus } from 'lucide-react'
 import {
   Button,
   DropdownContent,
@@ -23,16 +23,24 @@ function titleFor(pathname: string): string {
   return seg ? seg[0].toUpperCase() + seg.slice(1) : 'DealFlow'
 }
 
-export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
+export function TopBar({ onOpenPalette, onOpenNav }: { onOpenPalette: () => void; onOpenNav?: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
 
   return (
     <header
       style={{ height: 'var(--topbar-h)' }}
-      className="flex shrink-0 items-center justify-between gap-4 border-b border-line-subtle bg-elevated pl-6 pr-4"
+      className="flex shrink-0 items-center justify-between gap-2 border-b border-line-subtle bg-elevated pl-2 pr-2 md:gap-4 md:pl-6 md:pr-4"
     >
-      <h1 className="shrink-0 truncate text-sm font-semibold text-fg-strong">{titleFor(pathname)}</h1>
+      {/* Brief 45: at phone width the sidebar (nav, lists, groups) opens from here. */}
+      {onOpenNav && (
+        <IconButton label="Open menu" onClick={onOpenNav} className="md:hidden" tooltip={false}>
+          <Menu size={16} />
+        </IconButton>
+      )}
+      <h1 className="min-w-0 max-w-[30%] truncate text-sm font-semibold text-fg-strong md:max-w-none md:shrink-0">
+        {titleFor(pathname)}
+      </h1>
 
       <SearchLauncher onOpenPalette={onOpenPalette} />
 

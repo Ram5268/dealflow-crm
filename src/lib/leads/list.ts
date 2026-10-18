@@ -11,6 +11,9 @@ import {
 } from '@/lib/core-data/query-dsl/compiler'
 import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
 import { sQuerySchema, sortSpecSchema, type SortSpec, type SQuery } from '@/lib/core-data/query-dsl/schema'
+import { getRankedPage } from '@/lib/core-data/lists/ranked'
+import { isGroupColor } from '@/lib/core-data/lists/rules'
+import { MAX_PAGE, type GroupColor, type MemberFilters } from '@/lib/core-data/lists/types'
 
 export const LEAD_SORT_KEYS = ['displayName', 'statusLabel', 'priorityScore', 'updatedAt'] as const
 export type LeadSortKey = (typeof LEAD_SORT_KEYS)[number]
@@ -41,6 +44,8 @@ export interface LeadRow {
   address: string | null
   contactCount: number
   updatedAt: string
+  /** Brief 45: the person's place in All leads. Set only in rank order (no Smart View, no column). */
+  rank?: number
 }
 
 export interface ListLeadsParams {
@@ -51,7 +56,13 @@ export interface ListLeadsParams {
   sortKey?: LeadSortKey
   sortDir?: 'asc' | 'desc'
   page?: number
+  /** Ignored in rank order, which pages 100 at a time like every list. */
   pageSize?: number
+  /**
+   * Brief 45: a group id (or 'none' for people in no group). Narrows All leads
+   * in rank order or under a column sort; a Smart View ignores it.
+   */
+  group?: string
 }
 
 /** The order the page was listed in, so the grid can mark the sorted column. */
@@ -61,6 +72,19 @@ export interface AppliedSort {
   dir: 'asc' | 'desc'
   /** true when the order is the Smart View's own saved sort, not a column click. */
   fromView: boolean
+  /**
+   * Brief 45: true when the page is in the lists' rank order (no Smart View,
+   * no column): DealFlow priority, then best buyer fit, then fewer call
+   * attempts, then who was added first (CONTRACT §3).
+   */
+  ranked?: boolean
+}
+
+/** Brief 45: the group the page is narrowed to (?group=), for its "Group: Hot" chip. */
+export interface AppliedGroup {
+  id: string
+  name: string
+  color: GroupColor
 }
 
 export interface ListLeadsResult {
@@ -71,7 +95,16 @@ export interface ListLeadsResult {
   sort: AppliedSort
   /** Set when a Smart View could not be applied, so the UI can say why. */
   viewError?: string
+  /** Brief 45: the group filter that was applied, else null. */
+  group?: AppliedGroup | null
+  /** Brief 45: set when ?group= names a group that doesn't exist (here). */
+  groupError?: string
+  /** Brief 45: when DealFlow's morning ranking was copied in (rank order only). */
+  rankedAt?: string | null
 }
+
+export const GROUP_GONE = 'That group no longer exists. Showing all leads.'
+const NO_GROUP: AppliedGroup = { id: 'none', name: 'In no group', color: 'gray' }
 
 const DEFAULT_PAGE_SIZE = 50
 
@@ -195,6 +228,50 @@ async function listViewPage(
   }
 }
 
+/** The ?group= filter, checked against this organization's groups. */
+async function resolveGroup(
+  db: PrismaClient,
+  organizationId: string,
+  group: string | undefined,
+): Promise<{ group: AppliedGroup | null; groupError?: string }> {
+  if (!group) return { group: null }
+  if (group === 'none') return { group: NO_GROUP }
+  const g = await db.leadGroup.findFirst({ where: { id: group, organizationId }, select: { id: true, name: true, color: true } })
+  return g ? { group: { id: g.id, name: g.name, color: isGroupColor(g.color) ? g.color : 'gray' } } : { group: null, groupError: GROUP_GONE }
+}
+
+/**
+ * Brief 45: All leads in the same rank order as every list (CONTRACT §3),
+ * computed by the lists' own ranked query over every lead, 100 a page. Each
+ * row's rank is its place in All leads; search and the group filter narrow
+ * the page without changing anyone's number [brief §5.4]. The page's rows are
+ * then read through Prisma for the grid's usual row shape.
+ */
+async function listRankedPage(
+  db: PrismaClient,
+  args: { organizationId: string; term: string | undefined; group: AppliedGroup | null; page: number },
+): Promise<{ rows: LeadRow[]; total: number; pageSize: number; rankedAt: string | null }> {
+  const filters: MemberFilters = {
+    ...(args.term ? { q: args.term } : {}),
+    ...(args.group ? { group: args.group.id } : {}),
+  }
+  const ranked = await getRankedPage(args.organizationId, null, { page: args.page, filters }, db)
+  const base = { total: ranked.total, pageSize: ranked.pageSize, rankedAt: ranked.rankedAt }
+  if (ranked.rows.length === 0) return { rows: [], ...base }
+  const leads = await db.lead.findMany({
+    where: { organizationId: args.organizationId, id: { in: ranked.rows.map((r) => r.leadId) } },
+    include: ROW_INCLUDE,
+  })
+  const byId = new Map(leads.map((l) => [l.id, l]))
+  return {
+    rows: ranked.rows.flatMap((r) => {
+      const lead = byId.get(r.leadId)
+      return lead ? [{ ...toRow(lead), rank: r.rank }] : []
+    }),
+    ...base,
+  }
+}
+
 export async function listLeads(params: ListLeadsParams, db: PrismaClient = prisma): Promise<ListLeadsResult> {
   const {
     organizationId,
@@ -202,9 +279,11 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
     viewId,
     sortKey: chosenSortKey,
     sortDir: chosenSortDir,
-    page = 1,
     pageSize = DEFAULT_PAGE_SIZE,
   } = params
+  // Brief 45: 1 to MAX_PAGE, else 1. A bigger page would overflow the
+  // database's OFFSET [engineering precaution]; the page parses it the same way.
+  const page = Number.isSafeInteger(params.page) && params.page! >= 1 && params.page! <= MAX_PAGE ? params.page! : 1
 
   const term = q?.trim() || undefined
   let viewError: string | undefined
@@ -220,7 +299,8 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
         page,
         pageSize,
       })
-      return { rows, total, page, pageSize, sort }
+      // A Smart View has its own filter; the group filter doesn't apply to it.
+      return { rows, total, page, pageSize, sort, group: null }
     } catch (err) {
       // A broken saved view must not blank the page — fall back to all leads
       // and surface the reason inline.
@@ -228,8 +308,26 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
     }
   }
 
-  // Without a view the default is most recently updated first, as before.
-  const sortKey = chosenSortKey ?? 'updatedAt'
+  const { group, groupError } = await resolveGroup(db, organizationId, params.group)
+
+  // Brief 45: with no column chosen, All leads is in the lists' rank order.
+  // (It used to be most recently updated first.)
+  if (!chosenSortKey) {
+    const ranked = await listRankedPage(db, { organizationId, term, group, page })
+    return {
+      rows: ranked.rows,
+      total: ranked.total,
+      page,
+      pageSize: ranked.pageSize,
+      sort: { key: null, dir: 'asc', fromView: false, ranked: true },
+      viewError,
+      group,
+      groupError,
+      rankedAt: ranked.rankedAt,
+    }
+  }
+
+  const sortKey = chosenSortKey
   const sortDir = chosenSortDir ?? 'desc'
   const where = {
     organizationId,
@@ -241,6 +339,12 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
           ],
         }
       : {}),
+    // Brief 45: ?group= (its id was checked against this organization above).
+    ...(group?.id === NO_GROUP.id
+      ? { groupMemberships: { none: {} } }
+      : group
+        ? { groupMemberships: { some: { groupId: group.id } } }
+        : {}),
   }
 
   const [total, leads] = await Promise.all([
@@ -263,5 +367,7 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
     pageSize,
     sort: { key: sortKey, dir: sortDir, fromView: false },
     viewError,
+    group,
+    groupError,
   }
 }

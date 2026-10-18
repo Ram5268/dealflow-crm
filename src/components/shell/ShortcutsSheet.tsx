@@ -2,7 +2,7 @@
 
 import { Kbd, Modal } from '@/components/ui'
 
-const GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
+export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = [
   {
     title: 'Global',
     items: [
@@ -22,11 +22,25 @@ const GROUPS: { title: string; items: { keys: string[]; label: string }[] }[] = 
     ],
   },
   {
-    title: 'Lists',
+    title: 'Tables (leads, lists)',
     items: [
       { keys: ['↑', '↓'], label: 'Move between rows' },
       { keys: ['Enter'], label: 'Open the focused row' },
       { keys: ['Space'], label: 'Select the focused row' },
+    ],
+  },
+  {
+    // Brief 45: folders, lists and groups in the sidebar. Every drag has a key.
+    title: 'Sidebar (folders, lists, groups)',
+    items: [
+      { keys: ['↑', '↓'], label: 'Move between folders, lists and groups' },
+      { keys: ['←', '→'], label: 'Close or open a folder' },
+      { keys: ['F2'], label: 'Rename (or double-click)' },
+      { keys: ['⇧', 'F10'], label: 'Open its menu (or right-click, or ⋯)' },
+      { keys: ['⌥', '↑'], label: 'Move up' },
+      { keys: ['⌥', '↓'], label: 'Move down' },
+      { keys: ['Enter'], label: 'Save a new name' },
+      { keys: ['Esc'], label: 'Cancel a new name' },
     ],
   },
 ]
@@ -40,8 +54,9 @@ export function ShortcutsSheet({
 }) {
   return (
     <Modal open={open} onOpenChange={onOpenChange} title="Keyboard shortcuts">
-      <div className="flex flex-col gap-4">
-        {GROUPS.map((g) => (
+      {/* Scrolls when the list outgrows a short screen (Brief 45 added the sidebar keys). */}
+      <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto">
+        {SHORTCUT_GROUPS.map((g) => (
           <div key={g.title}>
             <p className="mb-1.5 text-xs font-medium text-subtle">{g.title}</p>
             <ul className="flex flex-col gap-1">
