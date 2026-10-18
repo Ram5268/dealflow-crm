@@ -170,6 +170,9 @@ test.describe('Brief 45 PR B: sidebar moves and the list page', () => {
   })
 
   test('the drop marker shows only over a place the item can go', async ({ page }) => {
+    // The drag below moves the mouse to fixed points, which must be on screen: a
+    // tall window keeps every row of a well-used sidebar in view.
+    await page.setViewportSize({ width: 1280, height: 2000 })
     await page.goto('/leads')
     const aside = page.locator('aside').first()
     const group = (await page.request.post('/api/core-data/groups', { data: { name: `Marker ${STAMP}` } }).then((r) => r.json())).group as Item
