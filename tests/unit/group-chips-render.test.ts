@@ -7,6 +7,7 @@ import {
 } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { GroupChipsView } from '@/components/lists/GroupChips'
 import { LeadListChips } from '@/components/lists/LeadListChips'
+import { RowGroupChips } from '@/components/lists/RowGroupChips'
 
 // Brief 45 PR C — what the contact card shows [brief §5.3]: a "Groups:" row
 // with every group as a chip in sidebar order plus "+", a "Lists:" row linking
@@ -61,6 +62,16 @@ describe('the lead page Groups row', () => {
     expect(html.indexOf('data-testid="group-chip-add"')).toBeGreaterThan(html.lastIndexOf('data-group-id='))
   })
 
+  it('chips wear their group’s color (PR B’s theme tokens): filled with a check when lit, a dot when not', () => {
+    const tags = chipTags(render(h(GroupChipsView, { groups: GROUPS, lit: ['grp_appt'] })))
+    const cls = (i: number) => attr(tags[i], 'class') ?? ''
+    expect(cls(1)).toContain('bg-group-green-subtle') // lit: Appointment Set (green)
+    expect(cls(1)).toContain('border-group-green')
+    expect(cls(0)).not.toContain('bg-group-red-subtle') // not lit: neutral…
+    const html = render(h(GroupChipsView, { groups: GROUPS, lit: ['grp_appt'] }))
+    expect(html).toMatch(/data-group-id="grp_hot"[^>]*>(?:(?!<\/button>)[\s\S])*class="[^"]*bg-group-red[^"]*"/) // …with a red dot
+  })
+
   it('only the first nine chips get a key', () => {
     const ten = Array.from({ length: 10 }, (_, i) => ({ id: `grp_${i + 1}`, name: `Group ${i + 1}`, color: 'gray' as const }))
     const tags = chipTags(render(h(GroupChipsView, { groups: ten, lit: [], hotkeys: true })))
@@ -88,6 +99,15 @@ describe('the lead page Groups row', () => {
     const failed = render(h(GroupChipsView, { groups: null, lit: [], label: 'Groups:', loadError: 'Your lists could not be loaded.' }))
     expect(text(failed)).toContain('Your lists could not be loaded.')
     expect(text(failed)).toContain('Try again')
+  })
+})
+
+describe('a list row before the groups load (and on the server)', () => {
+  it('shows the row’s own groups as they are, in their colors; "—" with none', () => {
+    const html = render(h(RowGroupChips, { leadId: 'lead_1', groups: [GROUPS[0], GROUPS[2]] }))
+    expect(text(html)).toBe('Hot Nurture')
+    expect(html).toMatch(/class="[^"]*bg-group-red-subtle[^"]*"[^>]*>[\s\S]*?Hot/)
+    expect(text(render(h(RowGroupChips, { leadId: 'lead_1', groups: [] })))).toBe('—')
   })
 })
 

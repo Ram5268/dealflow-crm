@@ -147,10 +147,14 @@ export function LeadsView({
     toast({ title: `Exported ${chosen.length} lead${chosen.length === 1 ? '' : 's'}` })
   }, [rows, selected, toast])
 
-  // Brief 45 (PR C): a selection never outlives the search or Smart View it was
-  // made in, so a bulk action can't reach people the list no longer shows
-  // [engineering precaution: "Select all N matching" can select thousands].
-  const filterKey = `${q}\u0000${viewId}`
+  // Brief 45 (PR C): a selection never outlives the search, Smart View or group
+  // it was made in, so a bulk action can't reach people the list no longer
+  // shows [engineering precaution: "Select all N matching" can select thousands].
+  const filterKey = `${q}\u0000${viewId}\u0000${group?.id ?? ''}`
+  // What "Select all N matching" and its export cover: the search box and the
+  // group (?group=), exactly what this page shows [PR C review: without the
+  // group, "Select all" on a group's page would select the whole CRM].
+  const matching = { q: q || undefined, group: group?.id }
   const selectedFor = useRef(filterKey)
   useEffect(() => {
     if (selectedFor.current === filterKey) return
@@ -181,10 +185,11 @@ export function LeadsView({
     // Everyone matching is selected, most of them not on this page: the
     // ranked CSV of all of them (no phones or emails, like this export).
     const a = document.createElement('a')
-    a.href = allLeadsExportUrl({ q: q || undefined })
+    a.href = allLeadsExportUrl(matching)
     a.click()
     toast({ title: `Exporting all ${selected.size.toLocaleString('en-US')} matching leads` })
-  }, [everyoneSelected, exportSelected, q, rows, selected, toast])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [everyoneSelected, exportSelected, filterKey, rows, selected, toast])
 
   const columns: Column<LeadRow>[] = [
     // Brief 45: in rank order, each person's place in All leads (the same
@@ -356,7 +361,7 @@ export function LeadsView({
           total={total}
           scope={filterKey}
           onSelect={setSelected}
-          loadAll={() => getAllLeadIds({ q: q || undefined })}
+          loadAll={() => getAllLeadIds(matching)}
         />
       )}
 

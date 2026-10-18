@@ -12,14 +12,18 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
  * contacts anyone: calling stays off, and the dialer test only simulates a
  * call inside the browser (no request reaches Twilio or the CRM's call routes).
  *
- *   E2E_BASE_URL=http://127.0.0.1:3147 PW_CHROMIUM_PATH=<chrome-headless-shell> \
+ *   E2E_BASE_URL=http://localhost:3147 PW_CHROMIUM_PATH=<chrome-headless-shell> \
  *     npx playwright test tests/e2e/b45-group-chips.spec.ts
+ *
+ * Use `localhost`, not 127.0.0.1: Next's dev server serves its dev resources
+ * only to its own origin.
  */
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000'
 const LOCAL = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)
 const STAMP = Date.now().toString(36)
 const NEW_GROUP = `Callbacks ${STAMP}`
 const NEW_LIST = `Everyone ${STAMP}`
+const ROWS_LIST = `Row chips ${STAMP}`
 
 if (process.env.PW_CHROMIUM_PATH) test.use({ launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH } })
 test.describe.configure({ mode: 'serial' })
@@ -42,6 +46,22 @@ async function ungrouped(request: APIRequestContext, n: number): Promise<Row[]> 
   const rows = page.rows.filter((r) => r.groups.length === 0).slice(0, n)
   expect(rows.length).toBe(n)
   return rows
+}
+
+/** A made-up list for one test: these leads on it. Deleted by the test (nobody is deleted with it). */
+async function makeList(request: APIRequestContext, name: string, leadIds: string[]): Promise<string> {
+  const res = await request.post('/api/core-data/lists', { data: { name, leadIds } })
+  expect(res.status()).toBe(201)
+  return ((await res.json()) as { list: { id: string } }).list.id
+}
+const memberCountOf = async (request: APIRequestContext, listId: string) =>
+  (await getJson<{ memberCount: number }>(request, `/api/core-data/lists/${listId}/members`)).memberCount
+
+/** The Leads counter "1–100 of 400": this page's size (100 in rank order, 50 under a Smart View or a column sort) and the total. */
+async function leadsCounter(page: Page): Promise<{ pageSize: number; total: number }> {
+  const text = (await page.getByText(/^1–\d+ of \d+$/).textContent())!
+  const [, pageSize, total] = /^1–(\d+) of (\d+)$/.exec(text)!
+  return { pageSize: Number(pageSize), total: Number(total) }
 }
 
 function trackErrors(page: Page): string[] {
@@ -217,10 +237,10 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     const undo = ids.filter((_, i) => !before[i].includes(groups[2].id))
     expect((await request.delete(`/api/core-data/groups/${groups[2].id}/members`, { data: { leadIds: undo } })).status()).toBe(200)
 
-    const total = Number((await page.getByText(/^1–50 of \d+$/).textContent())!.split(' of ')[1])
+    const { pageSize, total } = await leadsCounter(page)
     await page.locator('thead').getByRole('checkbox').click()
     const banner = page.getByTestId('select-all-matching')
-    await expect(banner).toContainText('All 50 on this page are selected.')
+    await expect(banner).toContainText(`All ${pageSize} on this page are selected.`)
     await banner.getByRole('button', { name: `Select all ${total.toLocaleString('en-US')} matching` }).click()
     await expect(banner).toContainText(`All ${total.toLocaleString('en-US')} matching are selected.`)
 
@@ -301,9 +321,10 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
   test('Leads: Export CSV never exports part of a selection that reaches other pages', async ({ page }) => {
     await page.goto('/leads')
     const rows = page.locator('tbody tr')
+    const { pageSize } = await leadsCounter(page)
     await rows.nth(0).getByRole('checkbox').click()
     await page.getByRole('button', { name: 'Next', exact: true }).click()
-    await expect(page.getByText(/^51–100 of [\d,]+$/)).toBeVisible()
+    await expect(page.getByText(new RegExp(`^${pageSize + 1}–\\d+ of \\d+$`))).toBeVisible()
     await rows.nth(0).getByRole('checkbox').click()
     await expect(page.getByText(/^2 selected$/)).toBeVisible()
     let downloaded = false
@@ -363,5 +384,172 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     await first.click()
     await expect(first).toHaveAttribute('aria-pressed', 'false')
     await expect.poll(() => groupIdsOf(request, lead.leadId)).toEqual([])
+  })
+
+  // ─── After PR B: All leads narrowed to a group, and a list's page ─────────
+
+  test('All leads narrowed to a group: "Select all N matching" selects that group only, never the whole CRM', async ({ page, request }) => {
+    // A made-up group bigger than a page (100 in rank order), for this test only.
+    const made = await request.post('/api/core-data/groups', { data: { name: `Big ${STAMP}` } })
+    expect(made.status()).toBe(201)
+    const groupId = ((await made.json()) as { group: { id: string } }).group.id
+    const everyone = (await getJson<{ ids: string[] }>(request, '/api/core-data/all-leads?ids=1')).ids
+    expect(everyone.length).toBeGreaterThan(150)
+    expect((await request.post(`/api/core-data/groups/${groupId}/members`, { data: { leadIds: everyone.slice(0, 150) } })).status()).toBe(200)
+    const group = (await getGroups(request)).find((g) => g.id === groupId)
+    expect(group?.memberCount).toBe(150)
+    const n = group!.memberCount.toLocaleString('en-US')
+    const idsCalls: URLSearchParams[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === '/api/core-data/all-leads' && u.searchParams.get('ids') === '1') idsCalls.push(u.searchParams)
+    })
+    await page.goto(`/leads?group=${group!.id}`)
+    await expect(page.getByText(`Group: ${group!.name}`, { exact: true })).toBeVisible()
+    await page.locator('thead').getByRole('checkbox').click()
+    const banner = page.getByTestId('select-all-matching')
+    await banner.getByRole('button', { name: `Select all ${n} matching` }).click()
+    await expect(banner).toContainText(`All ${n} matching are selected.`)
+    await expect(page.getByText(`${n} selected`, { exact: true })).toBeVisible()
+    expect(idsCalls).toHaveLength(1)
+    expect(idsCalls[0].get('group')).toBe(group!.id)
+
+    // Exporting everyone selected carries the group too.
+    const exported = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/core-data/all-leads/export')
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+    expect(new URL((await exported).url()).searchParams.get('group')).toBe(group!.id)
+
+    // Clean up: deleting the group removes the label, never anyone.
+    expect((await request.delete(`/api/core-data/groups/${groupId}`)).status()).toBe(200)
+  })
+
+  test('list page: compact chips on every row; a click saves without opening the person; keys 1–9 on the focused row', async ({ page, request }) => {
+    const leads = await ungrouped(request, 4)
+    const listId = await makeList(request, ROWS_LIST, leads.map((l) => l.leadId))
+    try {
+      await page.goto(`/lists/${listId}`)
+      await expect(page.locator('tbody tr')).toHaveCount(4)
+      const rowOf = (leadId: string) => page.locator(`tbody tr:has(a[href="/leads/${leadId}"])`)
+      const chipsA = rowOf(leads[0].leadId).getByTestId('group-chips')
+      await expect(chipsA).toHaveAttribute('data-size', 'compact')
+      await expect(chipsA.locator('[data-group-id]')).toHaveCount(groups.length)
+      await expect(chipsA.getByTestId('group-chip-add')).toHaveCount(1)
+
+      const a1 = chipsA.locator(`[data-group-id="${groups[0].id}"]`)
+      await a1.click()
+      await expect(a1).toHaveAttribute('aria-pressed', 'true')
+      await expect.poll(() => groupIdsOf(request, leads[0].leadId)).toEqual([groups[0].id])
+      expect(new URL(page.url()).pathname).toBe(`/lists/${listId}`) // the click didn't open the person
+
+      // Keys toggle the focused row only.
+      const rowB = rowOf(leads[1].leadId)
+      await rowB.focus()
+      await page.keyboard.press('2')
+      await expect(rowB.locator(`[data-group-id="${groups[1].id}"]`)).toHaveAttribute('aria-pressed', 'true')
+      await expect.poll(() => groupIdsOf(request, leads[1].leadId)).toEqual([groups[1].id])
+      expect(await groupIdsOf(request, leads[2].leadId)).toEqual([])
+      await page.keyboard.press('2')
+      await expect.poll(() => groupIdsOf(request, leads[1].leadId)).toEqual([])
+      await a1.click()
+      await expect.poll(() => groupIdsOf(request, leads[0].leadId)).toEqual([])
+    } finally {
+      expect((await request.delete(`/api/core-data/lists/${listId}`)).status()).toBe(200)
+    }
+  })
+
+  test('list page: a reload that started before a later click can’t flip that row’s chip back', async ({ page, request }) => {
+    const [lead] = await ungrouped(request, 1)
+    const listId = await makeList(request, `${ROWS_LIST} reload`, [lead.leadId])
+    try {
+      await page.goto(`/lists/${listId}`)
+      const chip = page.locator(`tbody tr:has(a[href="/leads/${lead.leadId}"])`).locator(`[data-group-id="${groups[0].id}"]`)
+      await expect(chip).toHaveAttribute('aria-pressed', 'false')
+      // Each save makes the page reload its rows (router.refresh). Take each
+      // reload's answer from the CRM at once, but deliver it only when told.
+      // End to end, two guards keep the saved chip: Next drops a reload that a
+      // newer one replaced, and each row's chips are frozen once shown
+      // (RowGroupChips). Unfreezing alone doesn't fail this test (checked).
+      const gates: (() => void)[] = []
+      let reloads = 0
+      const thisPage = (url: URL) => url.pathname === `/lists/${listId}`
+      await page.route(
+        thisPage,
+        async (route) => {
+          if (route.request().headers()['rsc'] !== '1') return route.continue()
+          reloads++
+          const response = await route.fetch()
+          await new Promise<void>((resolve) => gates.push(resolve))
+          await route.fulfill({ response })
+        },
+      )
+      await chip.click() // on: saved, and reload #1 reads "on"
+      await expect.poll(() => reloads).toBe(1)
+      await chip.click() // off: saved
+      await expect.poll(() => groupIdsOf(request, lead.leadId)).toEqual([])
+      await expect.poll(() => gates.length).toBeGreaterThanOrEqual(1)
+      gates.shift()!() // deliver the stale reload ("on")
+      await page.waitForTimeout(800)
+      await expect(chip).toHaveAttribute('aria-pressed', 'false') // the saved "off" stays
+      while (gates.length) gates.shift()!()
+      await page.waitForTimeout(300)
+      while (gates.length) gates.shift()!()
+      await expect(chip).toHaveAttribute('aria-pressed', 'false')
+      await page.unroute(thisPage)
+    } finally {
+      expect((await request.delete(`/api/core-data/lists/${listId}`)).status()).toBe(200)
+    }
+  })
+
+  test('list page: bulk "Remove from this list" takes people off this list only; they stay in the CRM', async ({ page, request }) => {
+    const leads = await ungrouped(request, 4)
+    const name = `${ROWS_LIST} remove`
+    const listId = await makeList(request, name, leads.map((l) => l.leadId))
+    try {
+      await page.goto(`/lists/${listId}`)
+      const rows = page.locator('tbody tr')
+      await expect(rows).toHaveCount(4)
+      for (let i = 0; i < 2; i++) await rows.nth(i).getByRole('checkbox').click()
+      await page.getByRole('button', { name: 'Bulk actions' }).click()
+      const menu = page.getByRole('menu')
+      for (const entry of ['Add to group…', 'Remove from group…', 'Add to list…', 'Remove from this list…', 'Export CSV']) {
+        await expect(menu.getByRole('menuitem', { name: entry })).toBeVisible()
+      }
+      await menu.getByRole('menuitem', { name: 'Remove from this list…' }).click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toContainText(`Remove 2 people from ${name}?`)
+      await dialog.getByRole('button', { name: 'Remove from this list' }).click()
+      await expect(page.getByText(`Removed 2 people from ${name} · they stay in the CRM`, { exact: true })).toBeVisible()
+      await expect(rows).toHaveCount(2)
+      expect(await memberCountOf(request, listId)).toBe(2)
+      for (const l of leads) expect((await request.get(`/api/core-data/leads/${l.leadId}/memberships`)).status()).toBe(200)
+    } finally {
+      expect((await request.delete(`/api/core-data/lists/${listId}`)).status()).toBe(200)
+    }
+  })
+
+  test('list page: "Select all N matching" then Export CSV exports the list; a partial selection exports nothing', async ({ page, request }) => {
+    const lists = (await getJson<{ lists: { id: string; name: string; memberCount: number }[] }>(request, '/api/core-data/lists')).lists
+    const big = lists.find((l) => l.memberCount > 100) // more than one page of 100
+    expect(big).toBeDefined()
+    const n = (x: number) => x.toLocaleString('en-US')
+    await page.goto(`/lists/${big!.id}`)
+    await page.locator('thead').getByRole('checkbox').click()
+    const banner = page.getByTestId('select-all-matching')
+    await banner.getByRole('button', { name: `Select all ${n(big!.memberCount)} matching` }).click()
+    await expect(banner).toContainText(`All ${n(big!.memberCount)} matching are selected.`)
+
+    const exported = page.waitForRequest((r) => new URL(r.url()).pathname === `/api/core-data/lists/${big!.id}/export`)
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+    await exported
+
+    await page.locator('tbody tr').nth(0).getByRole('checkbox').click() // one fewer: no longer everyone
+    const selected = big!.memberCount - 1
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+    await expect(page.getByText('Nothing exported', { exact: true })).toBeVisible()
+    // Anchored: the toast's screen-reader copy starts with "Notification …".
+    await expect(page.getByText(new RegExp(`^${n(selected - 99)} of the ${n(selected)} selected are on other pages\\.`))).toBeVisible()
   })
 })

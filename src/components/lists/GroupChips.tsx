@@ -21,6 +21,7 @@ import { Check, Plus } from 'lucide-react'
 import { useToast } from '@/components/ui'
 import { cn } from '@/lib/ui/cn'
 import { isEditableTarget } from '@/lib/ui/hotkeys'
+import { groupColorStyle } from '@/lib/ui/groupColors'
 import { useSidebarData } from '@/lib/core-data/lists/client'
 import type { GroupChipDTO, GroupDTO, SidebarData } from '@/lib/core-data/lists/types'
 import { GroupChipsController, litGroupIds, plainError } from './group-chips-state'
@@ -35,10 +36,23 @@ const CARD_ATTR = 'data-contact-card'
 // min-w-0 + max-w-full: a long name shortens with an ellipsis on a narrow screen.
 const CHIP = 'inline-flex min-w-0 max-w-full items-center rounded-full border whitespace-nowrap transition-colors duration-100'
 const SIZE = { regular: 'h-6 gap-1 px-2 text-sm', compact: 'h-5 gap-0.5 px-1.5 text-xs' } as const
-// The group's own color arrives with PR B's group color tokens (integration step).
-const ON = 'border-transparent bg-accent-subtle text-accent'
 const OFF = 'border-line bg-elevated text-muted hover:bg-hover hover:text-fg'
 const ADD = 'border-dashed border-line-strong bg-transparent text-muted hover:bg-hover hover:text-fg'
+
+/**
+ * A chip's classes. Lit: filled in the group's own color (PR B's theme
+ * tokens, both themes) with a check mark; not lit: neutral with a small dot
+ * in the group's color. Shared with the list rows' first paint (RowGroupChips).
+ */
+export function chipClassName(color: string, on: boolean, compact: boolean): string {
+  const style = groupColorStyle(color)
+  return cn(CHIP, SIZE[compact ? 'compact' : 'regular'], on ? cn(style.chip, style.border) : OFF)
+}
+
+/** The small dot in the group's color on a chip that isn't lit. */
+export function ChipDot({ color }: { color: string }) {
+  return <span aria-hidden="true" className={cn('h-1.5 w-1.5 shrink-0 rounded-full', groupColorStyle(color).dot)} />
+}
 
 export interface GroupChipsViewProps {
   /** Every group in sidebar order; null while they load. */
@@ -83,7 +97,9 @@ export function GroupChipsView({
       data-size={size}
       role="group"
       aria-label="Groups"
-      className={cn('flex min-w-0 flex-wrap items-center', compact ? 'gap-1' : 'gap-1.5')}
+      // Compact (list rows): at least 11rem wide, so three groups take two lines
+      // and a row stays its natural height instead of growing a line per chip.
+      className={cn('flex flex-wrap items-center', compact ? 'min-w-[11rem] gap-1' : 'min-w-0 gap-1.5')}
       // A click or key on a chip belongs to the chip, not to the row or card
       // around it (a list row opens the lead on click/Enter, selects on Space).
       onClick={(e) => e.stopPropagation()}
@@ -117,9 +133,9 @@ export function GroupChipsView({
               aria-keyshortcuts={key ?? undefined}
               title={`${on ? 'Remove from' : 'Add to'} ${g.name}${key ? ` (press ${key})` : ''}`}
               onClick={() => onToggle?.(g.id)}
-              className={cn(CHIP, SIZE[size], on ? ON : OFF)}
+              className={chipClassName(g.color, on, compact)}
             >
-              {on && <Check size={compact ? 10 : 12} aria-hidden="true" className="shrink-0" />}
+              {on ? <Check size={compact ? 10 : 12} aria-hidden="true" className="shrink-0" /> : <ChipDot color={g.color} />}
               <span className="min-w-0 max-w-[13rem] truncate">{g.name}</span>
             </button>
           )
