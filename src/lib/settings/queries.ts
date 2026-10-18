@@ -65,7 +65,6 @@ export interface MailboxAccount extends MailboxCardActions {
   updatedAt: Date | null
   /** True once a delta cursor exists, i.e. at least one sync has run. */
   hasSyncCursor: boolean
-  authorizeHref: string
   /** Provider-side revocation is Gmail-only; AAD exposes no RFC 7009 endpoint. */
   remoteRevocation: boolean
 }
@@ -104,13 +103,15 @@ export async function getMailboxAccounts(): Promise<MailboxAccount[]> {
   ]
 
   return Promise.all(
-    specs.map(async (spec) => {
+    specs.map(async ({ authorizeHref, ...spec }) => {
       const cred = await getCredential(organizationId, spec.stored)
       const connected = isMailboxConnected(cred)
       return {
         ...spec,
         connected,
-        ...mailboxCardActions({ ...spec, connected }, switches),
+        // The authorize path reaches the page only as `connect`, which is null
+        // while the provider is paused.
+        ...mailboxCardActions({ ...spec, authorizeHref, connected }, switches),
         // A revoked row keeps its emailAddress, so gate on `connected` — else a
         // disconnected card would still display the address it used to sync.
         emailAddress: connected ? (cred?.emailAddress ?? null) : null,

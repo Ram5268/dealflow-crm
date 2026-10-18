@@ -45,6 +45,8 @@ describe('Connected Accounts while Outlook is paused', () => {
     expect(outlook.pausedNote).toMatch(/^Outlook is paused/)
     expect(outlook.connect).toBeNull()
     expect(outlook.disconnect).toBe(false)
+    // Everything here is sent to the browser; the sign-in path isn't among it.
+    expect(JSON.stringify(outlook)).not.toContain('/api/comms/oauth/msft/authorize')
     // Gmail unchanged.
     expect(gmail.pausedNote).toBeNull()
     expect(gmail.connect).toEqual({ label: 'Connect', href: '/api/comms/oauth/gmail/authorize' })
