@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { logger } from '@/lib/logger'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only pg pool into DealFlow's `railway` database. This is a SEPARATE pool
@@ -35,6 +36,14 @@ function getPool(): Pool {
     // Fail fast on a dead RO host so the cron/health don't hang.
     connectionTimeoutMillis: 8_000,
     idleTimeoutMillis: 10_000,
+  })
+  // Brief 41.2 (PR F), engineering precaution (reliability): when the server or
+  // the network drops a connection sitting idle in the pool, pg emits 'error'
+  // on the pool, and with no listener that error crashes the function. Log a
+  // short line (never the connection string); the pool discards that client
+  // and opens a new one on the next query.
+  pool.on('error', (err) => {
+    logger.warn({ err: err.message }, 'DealFlow read-only pool: an idle connection failed and was dropped')
   })
   return pool
 }

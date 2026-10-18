@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } 
 import pg from 'pg'
 import { roQuery, closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
 import { RO_SQL, RUN_INFO_SQL } from '@/lib/core-data/dealflow-sync/sync'
+import { logger } from '@/lib/logger'
 
 // Brief 41.2 (PR F), engineering precautions from the Oct 16, 2026 system-map
 // review (audit M3: the login behind the CRM's DealFlow setting can write).
@@ -176,5 +177,25 @@ describe('roQuery refuses before connecting', () => {
     ]
     for (const s of single) await expect(roQuery(s), s).resolves.toEqual([{ ok: 1 }])
     expect(connect).toHaveBeenCalledTimes(single.length)
+  })
+})
+
+describe('the pool survives a dropped idle connection', () => {
+  it("an 'error' from the pool (an idle connection reset) is logged briefly instead of crashing", async () => {
+    const f = fakeClient()
+    useClient(f.client)
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+    await roQuery('SELECT 1') // creates the pool
+    const pool = connect.mock.contexts[0] as pg.Pool
+    // What pg-pool emits when the server drops an idle client: the error, with
+    // that client (and its connection settings) attached.
+    const reset = Object.assign(new Error('Connection terminated unexpectedly'), {
+      client: { connectionParameters: { password: 'p', host: '127.0.0.1' } },
+    })
+    expect(() => pool.emit('error', reset, reset.client)).not.toThrow()
+    expect(warn).toHaveBeenCalledTimes(1)
+    const logged = JSON.stringify(warn.mock.calls[0])
+    expect(logged).toContain('Connection terminated unexpectedly')
+    expect(logged).not.toMatch(/127\.0\.0\.1|postgresql:|password/)
   })
 })
