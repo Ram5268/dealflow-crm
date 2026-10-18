@@ -15,8 +15,9 @@ import { Pool } from 'pg'
 //   • One statement per call. `SELECT 1; COMMIT; DELETE …` would end the
 //     read-only transaction and run the DELETE on its own (with no parameters
 //     node-pg uses the simple protocol, which runs every statement it is sent).
-//     A `;` before the end is refused here, and the statement is sent over the
-//     extended protocol, where Postgres refuses a second command as well.
+//     A `;` before the end (outside quotes and comments) is refused here, and
+//     the statement is sent over the extended protocol, where Postgres itself
+//     refuses a second command: the backstop to that text check.
 //   • This file is the only reader of DATABASE_URL_DEALFLOW_RO
 //     (tests/unit/dealflow-ro-setting.test.ts), and it hands out no raw client,
 //     so roQuery is the only way the CRM reads DealFlow.
@@ -58,22 +59,27 @@ export function assertReadOnlySql(sql: string): void {
 
 // True when `sql` holds a `;` with more than whitespace or comments after it.
 // A `;` inside a quoted string, a quoted name or a comment doesn't count: the
-// sync's own RO_SQL has one in a comment. Quoting follows Postgres (with its
-// default standard_conforming_strings = on): '…' with '' inside, E'…' where a
-// backslash escapes too, "…", $tag$…$tag$, -- to the end of the line, and
-// /* … */, which nests. Anything left unclosed fails closed (counts as true),
-// since where the statement ends can't be told.
+// sync's own RO_SQL has one in a comment. It follows Postgres's quoting for the
+// forms our queries use (with Postgres's default standard_conforming_strings =
+// on): '…' with '' inside, E'…' where a backslash escapes too, "…",
+// $tag$…$tag$, -- to the end of the line (\n or \r) and /* … */, which nests.
+// What it can't be sure of fails closed (counts as true): an unclosed quote or
+// comment, and an E'…' string carried on into a '…' on a later line (Postgres
+// keeps reading backslashes there; no query of ours needs one). It is not a
+// full SQL parser, so the extended protocol in roQuery is the backstop: there
+// Postgres refuses a second command whatever this check let through.
 const DOLLAR_TAG = /\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/y
 
 function holdsSecondStatement(sql: string): boolean {
   const identChar = (ch: string | undefined) => !!ch && /[A-Za-z0-9_$\u0080-\uffff]/.test(ch)
   let ended = false // a `;` has been seen
+  let afterEString = false // the last token was an E'…' string
   let i = 0
   while (i < sql.length) {
     const ch = sql[i]
     if (ch === '-' && sql[i + 1] === '-') {
-      const eol = sql.indexOf('\n', i + 2)
-      i = eol === -1 ? sql.length : eol + 1
+      i += 2
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') i += 1
     } else if (ch === '/' && sql[i + 1] === '*') {
       let depth = 1
       i += 2
@@ -93,8 +99,11 @@ function holdsSecondStatement(sql: string): boolean {
       i += 1
     } else if (ended) {
       return true // something after the `;`: a second statement
+    } else if (ch === "'" && afterEString) {
+      return true // E'…' carried on into a '…' (see above)
     } else if (ch === ';') {
       ended = true
+      afterEString = false
       i += 1
     } else if (ch === "'" || ch === '"') {
       const backslashEscapes = ch === "'" && /[Ee]/.test(sql[i - 1] ?? '') && !identChar(sql[i - 2])
@@ -107,7 +116,9 @@ function holdsSecondStatement(sql: string): boolean {
         else i += 1
       }
       i += 1
+      afterEString = backslashEscapes
     } else if (ch === '$' && !identChar(sql[i - 1])) {
+      afterEString = false
       DOLLAR_TAG.lastIndex = i
       const tag = DOLLAR_TAG.exec(sql)?.[0]
       if (tag) {
@@ -118,6 +129,7 @@ function holdsSecondStatement(sql: string): boolean {
         i += 1 // a parameter such as $1
       }
     } else {
+      afterEString = false
       i += 1
     }
   }

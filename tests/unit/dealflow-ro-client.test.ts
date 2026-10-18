@@ -138,6 +138,12 @@ describe('roQuery refuses before connecting', () => {
       String.raw`SELECT E'\''; DELETE FROM "Match"; --'`,
       `SELECT $$'$$; DELETE FROM "Match"; SELECT $$'$$`,
       'SELECT $q$ $$ $q$; DELETE FROM "Match"',
+      // Postgres ends a -- comment at \r too, and carries an E'…' string on
+      // into a '…' on a later line, backslashes included.
+      'SELECT 1 --c\r; DELETE FROM "Match"',
+      'SELECT 1; --c\rDELETE FROM "Match"',
+      String.raw`SELECT E'x'` + "\n" + String.raw`'\''; COMMIT; DELETE FROM "Match"; --'`,
+      String.raw`SELECT E'x' -- note` + "\n" + String.raw`'\''; DELETE FROM "Match"; --'`,
       // Unclosed quotes or comments: where the statement ends can't be told.
       `SELECT 'unclosed; DELETE FROM "Match"`,
       'SELECT "unclosed; DELETE FROM x',
@@ -160,6 +166,8 @@ describe('roQuery refuses before connecting', () => {
       'SELECT $1::text',
       'SELECT 1 -- a comment; with a semicolon',
       'SELECT 1 /* a; /* nested; */ comment */',
+      'SELECT 1 -- a comment; ended by a CR\r\n',
+      String.raw`SELECT E'a\'b', 'c'`,
       'SELECT 1;',
       'SELECT 1; -- a trailing comment',
       'SELECT 1 ; /* trailing */ ',
