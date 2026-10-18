@@ -32,6 +32,8 @@ export interface DataTableProps<T> {
   onSelectedChange?: (next: Set<string>) => void
   /** Enter / click on a row. */
   onRowActivate?: (row: T) => void
+  /** Extra data-* attributes for a row's <tr> (Brief 45: data-rank on ranked rows). */
+  rowAttributes?: (row: T) => Partial<Record<`data-${string}`, string | number>> | undefined
   empty?: React.ReactNode
   className?: string
 }
@@ -53,6 +55,7 @@ export function DataTable<T>({
   selectedIds,
   onSelectedChange,
   onRowActivate,
+  rowAttributes,
   empty,
   className,
 }: DataTableProps<T>) {
@@ -165,6 +168,7 @@ export function DataTable<T>({
             return (
               <tr
                 key={id}
+                {...rowAttributes?.(row)}
                 tabIndex={0}
                 onKeyDown={(e) => onRowKeyDown(e, row)}
                 onClick={() => onRowActivate?.(row)}

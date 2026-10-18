@@ -71,6 +71,37 @@
   --topbar-h: 56px;
   --softphone-h: 56px;
 
+  /* Group colors (Brief 45). One per GROUP_COLORS entry: the solid dot, a
+     subtle fill for chips and badges, and readable text on that fill.
+     src/lib/ui/groupColors.ts maps a group's color to these. */
+  --group-gray: #8a8a8a;
+  --group-gray-subtle: #f1f1f1;
+  --group-gray-fg: #4a4a4a;
+  --group-red: #e5484d;
+  --group-red-subtle: #feeceb;
+  --group-red-fg: #b4232a;
+  --group-orange: #f76b15;
+  --group-orange-subtle: #fff0e6;
+  --group-orange-fg: #a8460a;
+  --group-yellow: #e0b400;
+  --group-yellow-subtle: #fff8d6;
+  --group-yellow-fg: #7a5d00;
+  --group-green: #30a46c;
+  --group-green-subtle: #e9f6ee;
+  --group-green-fg: #1d7146;
+  --group-teal: #12a594;
+  --group-teal-subtle: #e3f5f2;
+  --group-teal-fg: #0b7064;
+  --group-blue: #2b6cf0;
+  --group-blue-subtle: #eaf1fe;
+  --group-blue-fg: #1f55c4;
+  --group-purple: #8e4ec6;
+  --group-purple-subtle: #f3ecfb;
+  --group-purple-fg: #6b35a0;
+  --group-pink: #d6409f;
+  --group-pink-subtle: #fceaf5;
+  --group-pink-fg: #a52a7a;
+
   color-scheme: light;
 }
 
@@ -110,6 +141,35 @@
   --shadow-md: 0 12px 12px -8px rgb(0 0 0 / 0.55);
   --shadow-lg: 0 15px 25px 0 rgb(0 0 0 / 0.70);
 
+  /* Group colors (Brief 45), dark: brighter dots, deep fills, light text. */
+  --group-gray: #8b8b94;
+  --group-gray-subtle: #26262e;
+  --group-gray-fg: #d4d4d8;
+  --group-red: #f2555a;
+  --group-red-subtle: #3a1c1d;
+  --group-red-fg: #ff9592;
+  --group-orange: #ff801f;
+  --group-orange-subtle: #3a2414;
+  --group-orange-fg: #ffa057;
+  --group-yellow: #f5d90a;
+  --group-yellow-subtle: #35300e;
+  --group-yellow-fg: #f5e147;
+  --group-green: #3dd68c;
+  --group-green-subtle: #16301f;
+  --group-green-fg: #4cc38a;
+  --group-teal: #0ac5b3;
+  --group-teal-subtle: #102f2b;
+  --group-teal-fg: #0bd8b6;
+  --group-blue: #4d8bf0;
+  --group-blue-subtle: #16233a;
+  --group-blue-fg: #7aa7f5;
+  --group-purple: #9e6cd8;
+  --group-purple-subtle: #2b1d3a;
+  --group-purple-fg: #c29ef0;
+  --group-pink: #e66bb8;
+  --group-pink-subtle: #371a2c;
+  --group-pink-fg: #f19ad2;
+
   color-scheme: dark;
 }
 
@@ -144,6 +204,35 @@
   --color-success-subtle: var(--success-subtle);
   --color-warning: var(--warning);
   --color-warning-subtle: var(--warning-subtle);
+
+  /* Group colors (Brief 45): bg-group-red, bg-group-red-subtle, text-group-red-fg, … */
+  --color-group-gray: var(--group-gray);
+  --color-group-gray-subtle: var(--group-gray-subtle);
+  --color-group-gray-fg: var(--group-gray-fg);
+  --color-group-red: var(--group-red);
+  --color-group-red-subtle: var(--group-red-subtle);
+  --color-group-red-fg: var(--group-red-fg);
+  --color-group-orange: var(--group-orange);
+  --color-group-orange-subtle: var(--group-orange-subtle);
+  --color-group-orange-fg: var(--group-orange-fg);
+  --color-group-yellow: var(--group-yellow);
+  --color-group-yellow-subtle: var(--group-yellow-subtle);
+  --color-group-yellow-fg: var(--group-yellow-fg);
+  --color-group-green: var(--group-green);
+  --color-group-green-subtle: var(--group-green-subtle);
+  --color-group-green-fg: var(--group-green-fg);
+  --color-group-teal: var(--group-teal);
+  --color-group-teal-subtle: var(--group-teal-subtle);
+  --color-group-teal-fg: var(--group-teal-fg);
+  --color-group-blue: var(--group-blue);
+  --color-group-blue-subtle: var(--group-blue-subtle);
+  --color-group-blue-fg: var(--group-blue-fg);
+  --color-group-purple: var(--group-purple);
+  --color-group-purple-subtle: var(--group-purple-subtle);
+  --color-group-purple-fg: var(--group-purple-fg);
+  --color-group-pink: var(--group-pink);
+  --color-group-pink-subtle: var(--group-pink-subtle);
+  --color-group-pink-fg: var(--group-pink-fg);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -235,5 +324,6 @@ body {
   to   { opacity: 0; transform: translate(-50%, -50%) scale(0.98) }
 }
 @keyframes dfSlideInRight { from { transform: translateX(100%) } to { transform: translateX(0) } }
+@keyframes dfSlideInLeft { from { transform: translateX(-100%) } to { transform: translateX(0) } }
 @keyframes dfSlideOutRight { from { transform: translateX(0) } to { transform: translateX(100%) } }
 @keyframes dfSlideInUp { from { transform: translateY(100%) } to { transform: translateY(0) } }

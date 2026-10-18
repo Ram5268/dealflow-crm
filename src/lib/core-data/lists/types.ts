@@ -12,6 +12,8 @@ export const BULK_MAX = 5_000
 export const PAGE_SIZE = 100
 /** Cards per Pipeline column page. */
 export const BOARD_PAGE_SIZE = 50
+/** The highest page number a list or the Pipeline accepts (a bigger one would overflow the database's OFFSET). */
+export const MAX_PAGE = 1_000_000
 /** Cap on `ids=1` and on CSV exports. */
 export const IDS_CAP = 25_000
 
