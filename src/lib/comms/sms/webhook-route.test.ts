@@ -60,7 +60,7 @@ describe('POST /api/comms/webhook/sms', () => {
 // TWILIO_MOCK_SKIP_SIGNATURE (local mocks) is ignored in production.
 describe('POST /api/comms/webhook/sms — signature', () => {
   const URL = 'https://crm.example/api/comms/webhook/sms'
-  const STOP = { From: '+19173312047', To: '+15550000000', Body: 'STOP', MessageSid: 'SMforged' }
+  const STOP = { From: '+19175550147', To: '+15550000000', Body: 'STOP', MessageSid: 'SMforged' }
   const signed = (params: Record<string, string>, key: string) => {
     const r = req(params)
     r.headers.set('x-twilio-signature', computeTwilioSignature(key, URL, params))

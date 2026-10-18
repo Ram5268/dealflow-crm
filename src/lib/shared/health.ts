@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { getDealflowRoClient } from '@/lib/core-data/dealflow-sync/ro-client'
+import { dealflowRoConfigured, roQuery } from '@/lib/core-data/dealflow-sync/ro-client'
 
 // Pure-ish health probes, extracted from the route so they are unit-testable and
 // reusable by boot-standalone. Each check is best-effort and never throws.
@@ -28,10 +28,13 @@ async function checkDb(): Promise<CheckState> {
 
 async function checkDealflowRo(): Promise<CheckState> {
   if (process.env.DEALFLOW_SYNC_STUB === '1') return 'skipped'
-  if (!process.env.DATABASE_URL_DEALFLOW_RO) return 'skipped'
+  if (!dealflowRoConfigured()) return 'skipped'
   try {
-    const client = await getDealflowRoClient()
-    await client.query('SELECT 1')
+    // Brief 41.2 (PR F), engineering precaution: through the read-only client,
+    // which runs it inside BEGIN READ ONLY … ROLLBACK and releases its client.
+    // The raw client this took was never released (known issue M2), from the
+    // pool of 4 the DealFlow sync also uses.
+    await roQuery('SELECT 1')
     return 'ok'
   } catch {
     return 'down'

@@ -7,9 +7,9 @@ import { toE164 } from '@/lib/shared/phone'
 // Cron NEVER removes internal rows (only federal/state:* rows).
 
 // Brief 41 (H13): the form a phone is stored and matched in: canonical E.164
-// ("917-331-2047" → "+19173312047"). It used to only strip punctuation, so an
-// opt-out typed "917-331-2047" was stored as "9173312047" and never matched the
-// lead's "+19173312047". A value that isn't a phone number keeps the old
+// ("917-555-0147" → "+19175550147"). It used to only strip punctuation, so an
+// opt-out typed "917-555-0147" was stored as "9175550147" and never matched the
+// lead's "+19175550147". A value that isn't a phone number keeps the old
 // punctuation-stripped form.
 export function normalizeE164(raw: string): string {
   return toE164(raw) ?? raw.trim().replace(/[\s()\-.]/g, '')

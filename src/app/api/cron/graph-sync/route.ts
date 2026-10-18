@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { isAuthorizedCron } from '@/lib/compliance/cronAuth'
 import { prisma } from '@/lib/prisma'
 import { graphEnabled } from '@/lib/comms/graph-switch'
 import { getBoss } from '@/lib/comms/jobs/boss'
@@ -9,7 +10,9 @@ export const dynamic = 'force-dynamic'
 // Polls Graph delta per active msft-graph credential (Graph push needs public
 // HTTPS + subscription renewal; MVP polls every ~5 min).
 export async function GET(req: Request) {
-  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Brief 41.2 (PR F), engineering precaution: the shared check refuses when
+  // CRON_SECRET is unset too. The old comparison let "Bearer undefined" in.
+  if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const start = Date.now()

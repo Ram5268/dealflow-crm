@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
+import { isAuthorizedCron } from '@/lib/compliance/cronAuth'
 import { runSequenceTick } from '@/lib/comms/sequences/tick'
 
 export const dynamic = 'force-dynamic'
 
 // Advances due SequenceEnrollments. Called every ~15 min.
 export async function GET(req: Request) {
-  if (req.headers.get('authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Brief 41.2 (PR F), engineering precaution: the shared check refuses when
+  // CRON_SECRET is unset too. The old comparison let "Bearer undefined" in.
+  if (!isAuthorizedCron(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
   const start = Date.now()
