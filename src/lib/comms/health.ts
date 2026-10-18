@@ -6,6 +6,7 @@
  * booting without token encryption is refused elsewhere; here we surface it.
  */
 import { emailEnabled } from './email/config'
+import { graphEnabled } from './graph-switch'
 
 export interface HealthReport {
   status: 'ok' | 'degraded'
@@ -18,6 +19,7 @@ export interface HealthReport {
     smsEnabled: boolean
     dialingEnabled: boolean
     emailEnabled: boolean
+    graphEnabled: boolean
   }
 }
 
@@ -35,6 +37,9 @@ export function healthReport(
     // only when exactly 'true'.
     dialingEnabled: env.DIALING_ENABLED === 'true',
     emailEnabled: emailEnabled(env),
+    // Brief 41.2: the Outlook switch (Ryan's instruction: Outlook stays on hard
+    // pause). Also on only when exactly 'true' (engineering precaution).
+    graphEnabled: graphEnabled(env),
   }
   const status: HealthReport['status'] =
     checks.databaseConfigured && checks.encryptionKeyPresent ? 'ok' : 'degraded'

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { randomBytes } from 'node:crypto'
 
 // Mock the shell Prisma singleton with hoisted vi.fn handles (relative specifier
@@ -109,5 +109,52 @@ describe('markRevoked', () => {
     const { data } = db.update.mock.calls.at(-1)![0] as any
     expect(() => decryptToken(data.accessTokenEncrypted)).toThrow()
     expect(data.refreshTokenEncrypted).toBeNull()
+  })
+})
+
+// Brief 41.2 (PR D). Ryan's instruction: Outlook stays on hard pause; switch
+// name confirmed by Ryan 2026-10-17. No Microsoft token is stored unless
+// GRAPH_ENABLED is exactly 'true'. Gmail is unaffected, and Disconnect
+// (markRevoked) stays allowed.
+describe('upsertCredential while Outlook is paused', () => {
+  const saved = process.env.GRAPH_ENABLED
+  const msft = { orgId: 'o', provider: 'msft-graph' as const, emailAddress: 'broker@example.com', accessToken: 'AT', refreshToken: 'RT' }
+  beforeEach(() => {
+    db.upsert.mockReset()
+    db.upsert.mockResolvedValue({ id: 'x' })
+  })
+  afterAll(() => {
+    if (saved === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = saved
+  })
+
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['TRUE', 'TRUE'],
+    ['1', '1'],
+  ])('GRAPH_ENABLED %s: an Outlook token is refused and nothing is written', async (_n, value) => {
+    if (value === undefined) delete process.env.GRAPH_ENABLED
+    else process.env.GRAPH_ENABLED = value
+    // .then() turns a synchronous throw into a rejection, so either shape counts.
+    await expect(Promise.resolve().then(() => upsertCredential(msft))).rejects.toMatchObject({
+      name: 'GraphDisabledError',
+      code: 'outlook_paused',
+    })
+    expect(db.upsert).not.toHaveBeenCalled()
+  })
+
+  it('a Gmail token is stored as before', async () => {
+    delete process.env.GRAPH_ENABLED
+    await upsertCredential({ ...msft, provider: 'gmail' })
+    expect(db.upsert).toHaveBeenCalledOnce()
+  })
+
+  it('with GRAPH_ENABLED=true an Outlook token is stored as before', async () => {
+    process.env.GRAPH_ENABLED = 'true'
+    await upsertCredential(msft)
+    expect((db.upsert.mock.calls[0][0] as any).where).toEqual({
+      organizationId_provider: { organizationId: 'o', provider: 'msft-graph' },
+    })
   })
 })

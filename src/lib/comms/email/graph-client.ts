@@ -1,4 +1,5 @@
 import type { ParsedEmail } from './parse'
+import { graphEnabled, GraphDisabledError } from '../graph-switch'
 
 /**
  * Microsoft Graph mail client (brief §M5) via REST/fetch — same mockable pattern
@@ -6,6 +7,9 @@ import type { ParsedEmail } from './parse'
  * points it at the Graph mock. Graph's `conversationId` is the thread key and
  * `internetMessageId` is the dedup key (analogous to Gmail's threadId / Message-ID
  * header). The sync engine drives this through the shared SyncPorts.
+ *
+ * Brief 41.2: every request goes through getJson/postJson, which refuse while
+ * Outlook is paused (Ryan's instruction), before any HTTP call.
  */
 
 interface GraphRecipient {
@@ -72,6 +76,7 @@ export class GraphClient {
   }
 
   private async getJson(url: string): Promise<Record<string, unknown>> {
+    if (!graphEnabled()) throw new GraphDisabledError()
     const res = await fetch(this.abs(url), {
       headers: { authorization: `Bearer ${this.accessToken}` },
     })
@@ -80,6 +85,7 @@ export class GraphClient {
   }
 
   private async postJson(url: string, body: unknown): Promise<Record<string, unknown>> {
+    if (!graphEnabled()) throw new GraphDisabledError()
     const res = await fetch(this.abs(url), {
       method: 'POST',
       headers: { authorization: `Bearer ${this.accessToken}`, 'content-type': 'application/json' },

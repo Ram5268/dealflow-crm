@@ -41,4 +41,13 @@ describe('healthReport', () => {
     expect(on.checks).toMatchObject({ smsEnabled: true, dialingEnabled: true, emailEnabled: true })
     expect(healthReport({ ...base, DIALING_ENABLED: '1', EMAIL_ENABLED: 'TRUE' }).checks).toMatchObject({ dialingEnabled: false, emailEnabled: false })
   })
+
+  it('Brief 41.2: reports the Outlook switch the same way, off unless exactly "true"', () => {
+    for (const value of [undefined, '', 'TRUE', '1']) {
+      expect(healthReport({ ...base, GRAPH_ENABLED: value }).checks.graphEnabled).toBe(false)
+    }
+    expect(healthReport({ ...base, GRAPH_ENABLED: 'true' }).checks.graphEnabled).toBe(true)
+    // A switch, not a hard requirement: Outlook off never degrades the report.
+    expect(healthReport(base).status).toBe('ok')
+  })
 })
