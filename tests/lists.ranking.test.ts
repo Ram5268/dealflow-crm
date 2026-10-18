@@ -8,8 +8,12 @@ import { createGroup, addGroupMembers } from "@/lib/core-data/lists/groups";
 import { getRankedPage, getRankedIds, exportRankedCsv } from "@/lib/core-data/lists/ranked";
 import { compareRank, attemptsFrom, type RankKey } from "@/lib/core-data/lists/rules";
 import { boroughOf } from "@/lib/core-data/lists/geo";
-import { bestBuyerLookup } from "@/lib/core-data/dealflow-sync/buyer-lookup";
+import { getPipeline } from "@/lib/core-data/lists/pipeline";
+import type { PipelineBoard, PipelineTable } from "@/lib/core-data/lists/types";
+import { getLeadBuyers } from "@/lib/core-data/dealflow-sync/buyer-lookup";
 import { buyerName } from "@/lib/core-data/dealflow-sync/buyers";
+import { applySync } from "@/lib/core-data/dealflow-sync/write";
+import type { DerivedSignalUpsert } from "@/lib/core-data/dealflow-sync/sync";
 
 // Brief 45 PR A — every list is always ranked, computed on read (brief §5.5,
 // CONTRACT §3), against a real Postgres (CI's db-suite). Made-up leads only.
@@ -366,9 +370,10 @@ describe("Call Attempts text that is too long counts as 0 [engineering precautio
 });
 
 describe("best buyer, read for the page's leads only", () => {
-  it("DealFlow's recorded CRM lead id first, else the Mojo ID: the same answer as bestBuyerLookup", async () => {
+  const buyer = (matchId: string, name: string) => ({ matchId, score: 80, tier: "HOT", type: "mojo", name, isTestData: true });
+
+  it("the signal naming the lead first, else its Mojo ID; an unusable buyer is skipped", async () => {
     const o = await org("buyers");
-    const buyer = (matchId: string, name: string) => ({ matchId, score: 80, tier: "HOT", type: "mojo", name, isTestData: true });
     const lead = (key: string, mojoId: string | null) => makeLead(db, o, { id: `${TAG}_bb_${key}`, displayName: `Buyer owner ${key}`, mojoId });
     const signal = (mojoId: string, crmLeadId: string | null, buyers: Prisma.InputJsonObject[]) =>
       db.dealFlowDerivedSignal.create({ data: { organizationId: o, mojoId, dealflowRawJson: { crmLeadId, buyers } } });
@@ -376,7 +381,7 @@ describe("best buyer, read for the page's leads only", () => {
     const b = await lead("b", `${TAG}_mB`);
     const c = await lead("c", `${TAG}_mC`);
     const d = await lead("d", null);
-    await signal(`${TAG}_mA_df`, a, [buyer("x", "Buyer X")]); // names lead a directly: wins
+    await signal(`${TAG}_mA_df`, a, [buyer("x", "Buyer X")]); // names lead a: preferred over a's own Mojo ID signal
     await signal(`${TAG}_mA`, null, [buyer("y", "Buyer Y")]);
     await signal(`${TAG}_mB`, null, [buyer("z", "Buyer Z")]); // by Mojo ID only
     await signal(`${TAG}_mC_df`, c, [{ name: "No match id" }]); // not a usable buyer: skipped
@@ -384,10 +389,50 @@ describe("best buyer, read for the page's leads only", () => {
     const page = await getRankedPage(o, null, {}, db);
     const got = Object.fromEntries(page.rows.map((r) => [r.leadId, r.bestBuyer?.name ?? null]));
     expect(got).toEqual({ [a]: "Buyer X", [b]: "Buyer Z", [c]: "Buyer W", [d]: null });
-    const lookup = await bestBuyerLookup(o, db);
-    for (const r of page.rows) {
-      const old = lookup({ leadId: r.leadId, mojoId: (await db.lead.findUniqueOrThrow({ where: { id: r.leadId } })).mojoId });
-      expect(r.bestBuyer?.name ?? null).toBe(old ? buyerName(old) : null);
+  });
+
+  it("the lead page's buyer (getLeadBuyers): best-ranked of two signals naming a lead, never another org's, no Mojo match DealFlow gave to another lead", async () => {
+    const o = await org("buyers_lp");
+    const other = await org("buyers_lp_other");
+    const L: Record<string, string> = {};
+    const lead = async (k: string, mojoId: string | null, inOrg = o) =>
+      (L[k] = await makeLead(db, inOrg, { id: `${TAG}_lp_${k}`, displayName: `Buyer owner ${k}`, mojoId }));
+    for (const [k, mojo] of [["A", "mA"], ["B", "mB"], ["C", "mC"], ["D", null], ["E", "mE"], ["G", "mG"]] as const) {
+      await lead(k, mojo && `${TAG}_lp_${mojo}`);
+    }
+    await lead("Y", `${TAG}_lp_mY`, other); // the other organization's lead
+    const sig = (mojoId: string, crmLeadId: string | null, queueRank: number | null, name: string): DerivedSignalUpsert => ({
+      mojoId, crmLeadId, queueRank, priorityScore: 50, queueReason: null, primaryMatchId: null, primaryMatchFit: 70,
+      primaryCaptureStatus: null, primaryMatchConfidence: null, matchReason: null, dealflowDeepLink: null,
+      dealflowRawJson: { crmLeadId, queueRank, buyers: [buyer(`m_${mojoId}`, name)] },
+    });
+    // Written the way the morning sync writes a DealFlow batch.
+    await applySync(o, [
+      sig(`${TAG}_lp_xA1`, L.A, 2, "A rank 2"), // A: two signals name the lead; the best-ranked wins
+      sig(`${TAG}_lp_xA2`, L.A, 7, "A rank 7"),
+      sig(`${TAG}_lp_mB`, L.Y, 3, "B by Mojo ID"), // names another org's lead, so B keeps it by Mojo ID
+      sig(`${TAG}_lp_mC`, L.D, 4, "D, not C"), // C's Mojo ID, but DealFlow gave it to lead D
+      sig(`${TAG}_lp_xG1`, L.G, null, "G unranked"), // G: an unranked signal loses to a ranked one
+      sig(`${TAG}_lp_xG2`, L.G, 3, "G rank 3"),
+    ], db);
+    // E: another organization's signal names lead E. It never shows here.
+    await db.dealFlowDerivedSignal.create({
+      data: { organizationId: other, mojoId: `${TAG}_lp_xP`, queueRank: 1, dealflowRawJson: { crmLeadId: L.E, buyers: [buyer("m_p", "Other org's buyer")] } },
+    });
+    const expected: Record<string, string | null> = { A: "A rank 2", B: "B by Mojo ID", C: null, D: "D, not C", E: null, G: "G rank 3" };
+
+    const page = await getRankedPage(o, null, {}, db);
+    const g = await createGroup(o, { name: "Everyone" }, db);
+    await addGroupMembers(o, g.group.id, Object.keys(expected).map((k) => L[k]), db);
+    const table = (await getPipeline(o, { view: "table", filters: {} }, {}, db)) as PipelineTable;
+    const board = (await getPipeline(o, { view: "board", filters: {} }, {}, db)) as PipelineBoard;
+    for (const [k, name] of Object.entries(expected)) {
+      const l = await db.lead.findUniqueOrThrow({ where: { id: L[k] } });
+      const [first] = await getLeadBuyers(o, { id: l.id, mojoId: l.mojoId }, db);
+      expect([k, first ? buyerName(first) : null]).toEqual([k, name]); // what the lead page shows
+      expect([k, page.rows.find((r) => r.leadId === l.id)?.bestBuyer?.name ?? null]).toEqual([k, name]);
+      expect([k, table.rows.find((r) => r.leadId === l.id)?.bestBuyer?.name ?? null]).toEqual([k, name]);
+      expect([k, board.columns[0].cards.find((c) => c.leadId === l.id)?.bestBuyer?.name ?? null]).toEqual([k, name]);
     }
   });
 });

@@ -217,11 +217,14 @@ export function groupChipsSql(leadExpr: string): Prisma.Sql {
 }
 
 // ─── Best buyer, for one page of leads ───────────────────────────────────────
-// The same rule as bestBuyerLookup (dealflow-sync/buyer-lookup.ts): the first
-// buyer DealFlow stored on the signal whose recorded CRM lead id is this lead,
-// else on the signal with this lead's Mojo ID. But only this page's signals
-// are read: the whole org's is ~1.7 MB at 4,500 signals, the slowest part of a
-// list page on the Railway link.
+// The first buyer DealFlow stored on the signal whose recorded CRM lead id is
+// this lead (the best-ranked one if DealFlow named the lead twice), else on the
+// signal with this lead's Mojo ID unless DealFlow gave that signal to another
+// lead of the org. Those are the lead page's rules (getLeadBuyers in
+// dealflow-sync/buyer-lookup.ts), with bestBuyerLookup's preference for the
+// signal that names the lead. Only this page's signals are read: the whole
+// org's is ~1.7 MB at 4,500 signals, the slowest part of a list page on the
+// Railway link.
 const VALID_BEST = Prisma.raw(
   `jsonb_typeof(s."dealflowRawJson"->'buyers'->0->'matchId') = 'string' AND btrim(s."dealflowRawJson"->'buyers'->0->>'matchId') <> ''`,
 )
@@ -242,6 +245,10 @@ export function bestBuyerCtes(organizationId: string, pageCte: string): Prisma.S
     FROM "DealFlowDerivedSignal" s
     WHERE s."organizationId" = ${organizationId} AND ${VALID_BEST}
       AND s."mojoId" IN (SELECT "mojoId" FROM ${page} WHERE "mojoId" IS NOT NULL)
+      -- Not when DealFlow named another lead of this org for this signal: that
+      -- lead has it (as the sync and the lead page assign it).
+      AND NOT EXISTS (SELECT 1 FROM "Lead" o
+        WHERE o.id = s."dealflowRawJson"->>'crmLeadId' AND o."organizationId" = ${organizationId})
   )`
 }
 
