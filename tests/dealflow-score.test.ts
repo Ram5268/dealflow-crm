@@ -284,6 +284,27 @@ describe("the write-back: only those leads' fields and signals [brief §5.8, the
     });
   });
 
+  it("an existing signal row for the Mojo ID keeps the keys this scoring doesn't write (Brief 44's property) [coordination with Brief 44 PR 5]", async () => {
+    const s = await seedImport(2); // the first new lead has a Mojo ID
+    const mojoId = `${TAG}_${seq}_m0`;
+    // A stale row (a reused Mojo ID), with a key only the morning sync writes.
+    await db.dealFlowDerivedSignal.create({
+      data: {
+        organizationId: org, mojoId, priorityScore: 10, queueRank: 4, syncedAt: new Date(Date.now() - 2 * 86_400_000),
+        dealflowRawJson: { property: { beds: 3, note: "made-up" }, buyers: [{ matchId: "old_match" }], crmLeadId: "an_old_lead" },
+      },
+    });
+    const { fetch } = dealflow();
+    await runToEnd(s.importId, deps(fetch));
+    const row = await db.dealFlowDerivedSignal.findUniqueOrThrow({ where: { mojoId } });
+    expect(row).toMatchObject({ priorityScore: 70, queueRank: null });
+    expect(row.dealflowRawJson).toMatchObject({
+      property: { beds: 3, note: "made-up" }, // kept
+      source: IMPORT_SCORING_SOURCE, importId: s.importId, crmLeadId: s.newIds[0], // this scoring's keys win
+    });
+    expect((row.dealflowRawJson as { buyers: { matchId: string }[] }).buyers.map((b) => b.matchId)).toEqual([`match_${s.newIds[0]}`]);
+  });
+
   it("the morning clocks don't move: the sidebar's 'ranked' time, the ranking cutoff, and an older unscored lead still shows 'scoring…'", async () => {
     const waiting = await makeLead(db, org, { displayName: "Test Owner Waiting", mojoId: `${TAG}_mw`, createdAt: new Date(Date.now() - 60 * MIN) });
     const clocks = async () => {
