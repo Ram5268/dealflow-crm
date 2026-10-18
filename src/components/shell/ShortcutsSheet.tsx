@@ -20,6 +20,7 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
       { keys: ['g', 'i'], label: 'Inbox' },
       { keys: ['g', 'l'], label: 'Leads' },
       { keys: ['g', 's'], label: 'Sequences' },
+      { keys: ['g', 'p'], label: 'Pipeline' },
     ],
   },
   {
@@ -49,6 +50,17 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
     // rows, the dialer), while that card has focus and you're not typing.
     title: 'Contact card',
     items: [{ keys: [chipKeysRangeLabel()], label: 'Add or remove one of the first nine groups' }],
+  },
+  {
+    // Brief 45: every drag on the Pipeline board has a key (src/app/pipeline/keys.ts).
+    title: 'Pipeline',
+    items: [
+      { keys: ['↑', '↓', '←', '→'], label: 'Move between cards' },
+      { keys: ['['], label: 'Move the card to the column on the left' },
+      { keys: [']'], label: 'Move the card to the column on the right' },
+      { keys: ['M'], label: 'Move the card to any group…' },
+      { keys: ['Enter'], label: 'Open the lead' },
+    ],
   },
 ]
 

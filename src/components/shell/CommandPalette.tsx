@@ -4,7 +4,7 @@ import { Command } from 'cmdk'
 import * as RD from '@radix-ui/react-dialog'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronLeft, FileText, FolderPlus, ListPlus, Mail, Tag, Upload, UserPlus, Zap, List as ListIcon, type LucideIcon } from 'lucide-react'
+import { ChevronLeft, FileText, FolderPlus, ListPlus, Mail, SquareKanban, Tag, Upload, UserPlus, Zap, List as ListIcon, type LucideIcon } from 'lucide-react'
 import { ALL_DESTINATIONS } from '@/lib/ui/nav'
 import { cn } from '@/lib/ui/cn'
 import { groupColorStyle } from '@/lib/ui/groupColors'
@@ -19,12 +19,14 @@ import type { CreateKind } from '@/components/lists/sidebar/createRequest'
  * needed `/inbox?compose=1` because the reply drawer is thread-scoped and
  * cannot start a conversation.
  */
-const ACTIONS = [
+export const PALETTE_ACTIONS = [
   { id: 'new-lead', label: 'New lead', icon: UserPlus, href: '/leads?new=1' },
   { id: 'compose-email', label: 'Compose email', icon: Mail, href: '/inbox?compose=1' },
   { id: 'new-sequence', label: 'New sequence', icon: Zap, href: '/sequences/new' },
   { id: 'new-template', label: 'New template', icon: FileText, href: '/templates/new' },
   { id: 'import-csv', label: 'Import CSV', icon: Upload, href: '/imports' },
+  // Brief 45 §5.2: the Pipeline (also under "Go to" as Pipeline, g p).
+  { id: 'open-pipeline', label: 'Open Pipeline', icon: SquareKanban, href: '/pipeline' },
 ]
 
 // Brief 45: folders, lists and groups (brief §5.2). "Go to …" open a page of
@@ -203,7 +205,7 @@ export function CommandPalette({
                   </Command.Group>
 
                   <Command.Group heading="Actions" className={GROUP_HEADING}>
-                    {ACTIONS.map((a) => (
+                    {PALETTE_ACTIONS.map((a) => (
                       <Command.Item key={a.id} value={`${a.label} ${a.href}`} onSelect={() => go(a.href)} className={ITEM}>
                         <a.icon size={14} className="shrink-0 text-subtle" />
                         <span className="min-w-0 flex-1 truncate">{a.label}</span>
