@@ -52,6 +52,15 @@ export const SHORTCUT_GROUPS: { title: string; items: { keys: string[]; label: s
     items: [{ keys: [chipKeysRangeLabel()], label: 'Add or remove one of the first nine groups' }],
   },
   {
+    // Brief 50 PR 5: the lead page's Edit mode (src/app/leads/[id]/lead-edit-state.ts).
+    title: 'Lead page',
+    items: [
+      { keys: ['e'], label: 'Edit the lead (name, status, address, phones, emails)' },
+      { keys: ['⌘/Ctrl', 'Enter'], label: 'Save the edit' },
+      { keys: ['Esc'], label: 'Cancel the edit' },
+    ],
+  },
+  {
     // Brief 45: every drag on the Pipeline board has a key (src/app/pipeline/keys.ts).
     title: 'Pipeline',
     items: [

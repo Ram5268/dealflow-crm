@@ -19,6 +19,8 @@ import { captureLabel, reasonText, timezoneLabel } from '@/lib/core-data/dealflo
 import { MatchingBuyers } from './MatchingBuyers'
 import { getLeadMemberships } from '@/lib/core-data/lists/memberships'
 import { LeadMembershipRows } from '@/components/lists/LeadMembershipRows'
+import { EditLeadButton, LeadEditMode, LeadEditPanel } from './LeadEdit'
+import type { LeadEditInitial } from './lead-edit-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,7 +63,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const memberships = getLeadMemberships(organizationId, id)
   memberships.catch(() => {})
 
-  const [customFields, activities, sequences, buyers, property] = await Promise.all([
+  const [customFields, activities, sequences, buyers, property, statuses] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
@@ -71,16 +73,55 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     listSequenceRows(organizationId),
     getLeadBuyers(organizationId, lead),
     getLeadProperty(organizationId, lead), // Brief 44: DealFlow's estimate, Ryan's screen only
+    // Brief 50 PR 5: the statuses in use, suggested in the Edit form.
+    prisma.lead.groupBy({
+      by: ['statusLabel'],
+      where: { organizationId, statusLabel: { not: null } },
+      _count: { _all: true },
+    }),
   ])
   // Brief 38: the sync fills Contact.timezone, so show the primary contact's
   // zone (then the lead's). A blank stays blank rather than guessing Eastern.
   const timezone = pickPrimaryContact(lead.contacts)?.timezone ?? lead.timezone
   const { lists, groupIds } = await memberships
 
+  // Brief 50 PR 5: what the Edit form starts from. Contacts oldest first and
+  // each one's phones primary first (the order DealFlow's copy reads them in).
+  const statusOptions = statuses
+    .filter((s) => s.statusLabel?.trim())
+    .sort((a, b) => b._count._all - a._count._all || a.statusLabel!.localeCompare(b.statusLabel!))
+    .slice(0, 100)
+    .map((s) => s.statusLabel!.trim())
+  const editInitial: LeadEditInitial = {
+    leadId: lead.id,
+    displayName: lead.displayName,
+    statusLabel: lead.statusLabel,
+    primaryAddressFull: lead.primaryAddressFull,
+    contacts: [...lead.contacts]
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+      .map((c) => ({
+        id: c.id,
+        displayName: c.displayName,
+        phones: [...c.phones]
+          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+          .map((p) => ({ id: p.id, phone: p.phoneFormatted ?? p.phone, locked: p.outboundSmsBlocked })),
+        emails: [...c.emails]
+          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || (a.id < b.id ? -1 : 1))
+          .map((e) => ({ id: e.id, email: e.email, locked: e.isUnsubscribed })),
+      })),
+  }
+
   return (
     // Brief 45 (PR C): this page is the lead's contact card, so keys 1–9
     // toggle its groups whenever you're not typing (GroupChips).
-    <div className="flex h-full flex-col" data-contact-card="page">
+    // Brief 50 PR 5: it's also where Edit mode lives ("e"): the name, status,
+    // address, phones and emails; the form opens above the page.
+    <LeadEditMode
+      initial={editInitial}
+      statusOptions={statusOptions}
+      className="flex h-full flex-col"
+      data-contact-card="page"
+    >
       {/* Header — identity + quick actions */}
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line px-4 py-3">
         <div className="min-w-0 flex-1">
@@ -101,7 +142,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           <LeadMembershipRows key={lead.id} leadId={lead.id} groupIds={groupIds} lists={lists} />
         </div>
 
-        <div className="flex shrink-0 items-start gap-2">
+        <div className="flex shrink-0 flex-wrap items-start gap-2">
+          <EditLeadButton />
           {dialingEnabled() ? (
             <Button asChild>
               <Link href="/dialer">
@@ -146,6 +188,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <LeadEditPanel />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[418px_minmax(0,1fr)]">
           {/* Left rail — structured data, ~340px. Matches the live Close
               lead page, where Details/Tasks/Opportunities/Contacts/Fields sit
@@ -252,6 +295,6 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
 
         </div>
       </div>
-    </div>
+    </LeadEditMode>
   )
 }
