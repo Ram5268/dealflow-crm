@@ -35,6 +35,8 @@ function fakeClient(fail: { on?: RegExp; rollback?: boolean } = {}) {
       return { rows: [{ ok: 1 }] }
     }),
     release: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
   }
   return { client, sent, texts: () => sent.map((s) => s.text) }
 }
@@ -177,6 +179,43 @@ describe('roQuery refuses before connecting', () => {
     ]
     for (const s of single) await expect(roQuery(s), s).resolves.toEqual([{ ok: 1 }])
     expect(connect).toHaveBeenCalledTimes(single.length)
+  })
+})
+
+describe('a connection dropped while a query holds it', () => {
+  it("the client's 'error' is caught for the whole query, and that client is destroyed", async () => {
+    const f = fakeClient()
+    let onError: ((e: Error) => void) | undefined
+    f.client.on.mockImplementation((event: string, fn: (e: Error) => void) => {
+      if (event === 'error') onError = fn
+    })
+    f.client.query.mockImplementation(async (q: string | Sent) => {
+      const text = typeof q === 'string' ? q : q.text
+      if (text === 'SELECT 1') {
+        // What pg does when the socket dies mid-query: the query fails, and
+        // the client also emits 'error'.
+        expect(() => onError!(new Error('Connection terminated unexpectedly'))).not.toThrow()
+        throw new Error('Connection terminated unexpectedly')
+      }
+      return { rows: [] }
+    })
+    useClient(f.client)
+    await expect(roQuery('SELECT 1')).rejects.toThrow('Connection terminated unexpectedly')
+    expect(f.client.removeListener).toHaveBeenCalledWith('error', onError)
+    expect(f.client.release).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('every DealFlow read has a time limit (Brief 50 PR 11)', () => {
+  it('the pool asks Postgres, at connect, for a 60 s statement limit and a 60 s idle-in-transaction limit', async () => {
+    const f = fakeClient()
+    useClient(f.client)
+    await roQuery('SELECT 1') // creates the pool
+    const pool = connect.mock.contexts[0] as pg.Pool & { options: Record<string, unknown> }
+    // pg sends these as startup parameters, so they hold for the whole
+    // session (BEGIN READ ONLY and ROLLBACK included), with no extra round trip.
+    expect(pool.options).toMatchObject({ statement_timeout: 60_000, idle_in_transaction_session_timeout: 60_000 })
+    expect(f.texts()).toEqual(['BEGIN READ ONLY', 'SELECT 1', 'ROLLBACK']) // nothing else sent per read
   })
 })
 
