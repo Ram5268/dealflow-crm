@@ -28,8 +28,8 @@ async function main() {
     customFieldValues: await prisma.customFieldValue.findMany(),
     savedViews: await prisma.savedView.findMany(),
     dealFlowDerivedSignals: await prisma.dealFlowDerivedSignal.findMany(),
-    // Brief 45: Ryan's folders, lists and groups, all made by hand. Exported
-    // only: restore-from-backup.ts doesn't load them yet (a manual step).
+    // Brief 45: Ryan's folders, lists and groups, all made by hand.
+    // restore-from-backup.ts puts them back (Brief 50 PR 7).
     folders: await prisma.folder.findMany(),
     callLists: await prisma.callList.findMany(),
     listMemberships: await prisma.listMembership.findMany(),
