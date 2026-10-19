@@ -70,7 +70,6 @@ export function LeadEditMode({
 }: {
   initial: LeadEditInitial
   statusOptions: string[]
-  children: React.ReactNode
 } & React.HTMLAttributes<HTMLDivElement>) {
   const [editing, setEditing] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
