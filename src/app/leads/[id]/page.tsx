@@ -142,7 +142,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
           <LeadMembershipRows key={lead.id} leadId={lead.id} groupIds={groupIds} lists={lists} />
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-start gap-2">
+        {/* Brief 50 PR 5: with Edit added, the buttons wrap on a phone rather than run off the screen. */}
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
           <EditLeadButton />
           {dialingEnabled() ? (
             <Button asChild>
