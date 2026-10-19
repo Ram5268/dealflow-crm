@@ -81,7 +81,18 @@ export interface FakeLead {
   primaryAddressFull: string | null
   mojoId: string | null
   statusLabel: string | null
-  contacts: Array<{ id: string; name: string | null; displayName: string }>
+  // In creation order (the first is the lead's primary contact). `phones`
+  // (Brief 50 PR 6) records which contact holds which number; contacts a test
+  // seeds without it are read as holding none of them.
+  contacts: Array<{ id: string; name: string | null; displayName: string; title?: string | null; phones?: string[] }>
+}
+
+// What the import writes for one contact (nested under a lead, or on its own).
+interface FakeContactInput {
+  name: string | null
+  displayName: string
+  title?: string | null
+  phones?: { create: Array<{ phone: string }> }
 }
 
 export interface FakeCustomField {
@@ -265,19 +276,24 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
           await step('lead.findFirst', where)
           return found ? leadView(found, select) : null
         },
-        async create({ data }: { data: Record<string, unknown> & { contacts: { create: { name: string | null; displayName: string; phones: { create: Array<{ phone: string }> } } } } }) {
+        async create({ data }: { data: Record<string, unknown> & { contacts: { create: FakeContactInput | FakeContactInput[] } } }) {
           await step('lead.create', data)
           const id = `lead_${leads.length + 1}`
-          const c = data.contacts.create
+          // Prisma takes one nested contact or a list of them.
+          const created = ([] as FakeContactInput[]).concat(data.contacts.create)
+          const contacts = created.map((c, i) => ({
+            id: i === 0 ? `c_${id}` : `c_${id}_${i}`, name: c.name, displayName: c.displayName, title: c.title ?? null,
+            phones: (c.phones?.create ?? []).map((p) => p.phone),
+          }))
           leads.push({
             id, seq: ++seq, by: tag,
-            phones: c.phones.create.map((p) => p.phone),
+            phones: [...new Set(contacts.flatMap((c) => c.phones))],
             name: (data.name as string | null) ?? null,
             displayName: data.displayName as string,
             primaryAddressFull: (data.primaryAddressFull as string | null) ?? null,
             mojoId: (data.mojoId as string | null) ?? null,
             statusLabel: (data.statusLabel as string | null) ?? null,
-            contacts: [{ id: `c_${id}`, name: c.name, displayName: c.displayName }],
+            contacts,
           })
           return { id }
         },
@@ -301,10 +317,10 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
           const l = leads.find((x) => x.id === where.leadId)
           return l?.contacts[0] ? { id: l.contacts[0].id } : null
         },
-        async create({ data }: { data: { leadId: string; name: string | null; displayName: string } }) {
+        async create({ data }: { data: { leadId: string } & FakeContactInput }) {
           await step('contact.create', data)
           const l = leads.find((x) => x.id === data.leadId)!
-          const c = { id: `c_${l.id}_${l.contacts.length}`, name: data.name, displayName: data.displayName }
+          const c = { id: `c_${l.id}_${l.contacts.length}`, name: data.name, displayName: data.displayName, title: data.title ?? null, phones: [] as string[] }
           l.contacts.push(c)
           return { id: c.id }
         },
@@ -315,6 +331,8 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
           for (const p of data) {
             const l = leads.find((x) => x.contacts.some((c) => c.id === p.contactId))
             if (l && !l.phones.includes(p.phone)) l.phones.push(p.phone)
+            const c = l?.contacts.find((x) => x.id === p.contactId)
+            if (c && !(c.phones ??= []).includes(p.phone)) c.phones.push(p.phone)
           }
           return { count: data.length }
         },
