@@ -240,7 +240,8 @@ export async function getQueue(
     staleReason = 'Compliance service unavailable'
   } else {
     // The morning update's clock: rows an upload's scoring wrote don't count, so
-    // an upload can't hide a morning sync that stopped (Brief 45 PR F).
+    // an upload can't hide a morning sync that stopped (Brief 45 PR F)
+    // [engineering precaution].
     const [latest] = await prisma.$queryRaw<{ rankedAt: Date | null }[]>`SELECT ${rankingTimesSql(organizationId)}`
     const syncedAt = latest?.rankedAt ?? null
     if (syncedAt) {

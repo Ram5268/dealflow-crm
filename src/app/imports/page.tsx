@@ -116,6 +116,7 @@ export default function ImportsPage() {
             error={destinationError}
             disabled={busy}
             loading={!sidebar.data && !sidebar.error}
+            loadFailed={!!sidebar.error && !sidebar.data}
           />
           {sidebar.error && !sidebar.data && (
             // The store's plain-English error, then "Try again" (PR C's pattern).

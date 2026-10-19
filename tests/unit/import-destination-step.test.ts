@@ -105,3 +105,11 @@ describe('DestinationStep: validation before anything is sent', () => {
     expect(destinationJson({ mode: 'new', name: 'Expireds', folderId: 'f_exp' })).toEqual({ newList: { name: 'Expireds', folderId: 'f_exp' } })
   })
 })
+
+describe('DestinationStep: when the lists failed to load (PR F review)', () => {
+  it('does not say "No lists yet" when the lists could not be loaded', () => {
+    const v: DestinationChoice = { mode: 'new', name: '', folderId: '' }
+    expect(text(renderToStaticMarkup(h(DestinationStep, { folders: [], lists: [], value: v, onChange: () => {}, loadFailed: true })))).not.toContain('No lists yet')
+    expect(text(renderToStaticMarkup(h(DestinationStep, { folders: [], lists: [], value: v, onChange: () => {} })))).toContain('No lists yet. Name a new one below.')
+  })
+})

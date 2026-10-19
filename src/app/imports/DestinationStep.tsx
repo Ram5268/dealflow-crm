@@ -27,11 +27,13 @@ export interface DestinationStepProps {
   disabled?: boolean
   /** The lists are still loading. */
   loading?: boolean
+  /** The lists couldn't be loaded (the page says so, with "Try again"): don't claim there are none. */
+  loadFailed?: boolean
 }
 
 const people = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'person' : 'people'}`
 
-export function DestinationStep({ folders, lists, value, onChange, error, disabled, loading }: DestinationStepProps) {
+export function DestinationStep({ folders, lists, value, onChange, error, disabled, loading, loadFailed }: DestinationStepProps) {
   const headingId = useId()
   const errorId = useId()
   const active = lists.filter((l) => l.archivedAt === null)
@@ -59,7 +61,7 @@ export function DestinationStep({ folders, lists, value, onChange, error, disabl
           { value: 'new', label: 'A new list' },
         ]}
       />
-      {noLists && <p className="text-xs text-subtle">No lists yet. Name a new one below.</p>}
+      {noLists && !loadFailed && <p className="text-xs text-subtle">No lists yet. Name a new one below.</p>}
       {value.mode === 'list' ? (
         <Field label="List" htmlFor="import-list">
           <select
