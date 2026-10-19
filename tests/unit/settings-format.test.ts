@@ -22,15 +22,23 @@ import { ABANDONMENT_BANDS } from '@/lib/telephony/pacing/computeNewLineCount'
 import { evaluateCallingWindow } from '@/lib/compliance/timezone/windowCheck'
 
 describe('settings nav', () => {
-  it('exposes the five sections the brief names, profile first', () => {
+  it('exposes the five sections the brief names plus Do not contact, profile first', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.slug)).toEqual([
       'profile',
       'connected-accounts',
       'calling',
       'compliance',
+      'do-not-contact',
       'usage',
     ])
     expect(DEFAULT_SETTINGS_SLUG).toBe('profile')
+  })
+
+  it('Brief 47 (PR 5): "Do not contact" has its own section and page', () => {
+    const section = findSettingsSection('do-not-contact')
+    expect(section).toMatchObject({ label: 'Do not contact' })
+    expect(section?.blurb).toBeTruthy()
+    expect(settingsHref('do-not-contact')).toBe('/settings/do-not-contact')
   })
 
   it('lights exactly one row, even when a slug prefixes another', () => {

@@ -1,4 +1,4 @@
-import { CreditCard, Link2, Phone, ShieldCheck, User, type LucideIcon } from 'lucide-react'
+import { CreditCard, Link2, Phone, PhoneOff, ShieldCheck, User, type LucideIcon } from 'lucide-react'
 
 export interface SettingsSection {
   slug: string
@@ -10,7 +10,7 @@ export interface SettingsSection {
 
 /**
  * The settings left rail (M5 §3). Close groups ~28 sub-pages under seven
- * headers; with five sections a flat rail is clearer, so we keep Close's visual
+ * headers; with six sections a flat rail is clearer, so we keep Close's visual
  * treatment (accent bar on the active row) without the grouping. See §13.2.
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
@@ -37,6 +37,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     label: 'Compliance',
     icon: ShieldCheck,
     blurb: 'Calling windows and suppression vendors.',
+  },
+  // Brief 47 (PR 5): its own section, because Compliance is display-only by
+  // design (M5 §7). Adding an opt-out is the one thing this page writes.
+  {
+    slug: 'do-not-contact',
+    label: 'Do not contact',
+    icon: PhoneOff,
+    blurb: 'Numbers this CRM will never call or text.',
   },
   {
     slug: 'usage',

@@ -8,6 +8,7 @@ import { monthlyCapStatus } from '@/lib/telephony/cost/monthlyCap'
 import { getEnv, isDncVendorConfigured, isLitigatorVendorConfigured } from '@/lib/compliance/env'
 import { graphEnabled } from '@/lib/comms/graph-switch'
 import { isMailboxConnected, mailboxCardActions, type MailboxCardActions } from '@/lib/settings/format'
+import { readDoNotContactList, type DoNotContactDb, type DoNotContactList } from '@/lib/settings/doNotContact'
 
 /* ---------------------------------------------------------------- profile -- */
 
@@ -212,6 +213,18 @@ export async function getComplianceInfo(at = new Date()): Promise<ComplianceInfo
       },
     ],
   }
+}
+
+/* --------------------------------------------------------- do not contact -- */
+
+/**
+ * Brief 47 (PR 5): the internal opt-out list for Settings → Do not contact.
+ * Read only. The full numbers are read here, on the server, and only their
+ * last 4 digits are returned (readDoNotContactList) [engineering precaution].
+ */
+export async function getDoNotContactList(): Promise<DoNotContactList> {
+  const organizationId = await getCurrentOrgId()
+  return readDoNotContactList(prisma as unknown as DoNotContactDb, organizationId)
 }
 
 /* ------------------------------------------------------------------ usage -- */

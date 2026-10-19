@@ -17,10 +17,11 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: path.join(SHOT_DIR, `${name}.png`), fullPage: true })
 }
 
-const SECTIONS = ['Profile', 'Connected Accounts', 'Calling', 'Compliance', 'Usage'] as const
+// Brief 47 (PR 5) adds Do not contact.
+const SECTIONS = ['Profile', 'Connected Accounts', 'Calling', 'Compliance', 'Do not contact', 'Usage'] as const
 
 test.describe('M5 settings', () => {
-  test('bare /settings lands on Profile and the rail lists all five sections', async ({ page }) => {
+  test('bare /settings lands on Profile and the rail lists every section', async ({ page }) => {
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/settings\/profile$/)
