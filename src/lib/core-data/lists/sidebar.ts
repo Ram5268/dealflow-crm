@@ -9,11 +9,13 @@ import { listFolders } from './folders'
 import { listLists } from './lists'
 import { listGroups } from './groups'
 import { listWorkflows } from './workflows'
+import { rankingTimesSql } from './sql'
 
 export async function getSidebar(organizationId: string, db: PrismaClient = prisma): Promise<SidebarData> {
-  const [count, synced, folders, lists, archivedCount, groups, workflows] = await Promise.all([
+  const [count, [synced], folders, lists, archivedCount, groups, workflows] = await Promise.all([
     db.lead.count({ where: { organizationId } }),
-    db.dealFlowDerivedSignal.aggregate({ where: { organizationId }, _max: { syncedAt: true } }),
+    // The morning update's "ranked 7:02" (rankingTimesSql: an upload's scoring doesn't move it, Brief 45 PR F).
+    db.$queryRaw<{ rankedAt: Date | null }[]>`SELECT ${rankingTimesSql(organizationId)}`,
     listFolders(organizationId, db),
     listLists(organizationId, {}, db),
     db.callList.count({ where: { organizationId, archivedAt: { not: null } } }),
@@ -21,7 +23,7 @@ export async function getSidebar(organizationId: string, db: PrismaClient = pris
     listWorkflows(organizationId, db),
   ])
   return {
-    allLeads: { count, rankedAt: synced._max.syncedAt?.toISOString() ?? null },
+    allLeads: { count, rankedAt: synced?.rankedAt?.toISOString() ?? null },
     folders,
     lists,
     archivedCount,

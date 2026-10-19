@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { cleanImportedLeads, disconnectFixtures } from './fixtures'
+import { MARK_IMPORT_LIST, cleanImportLists, cleanImportedLeads, disconnectFixtures } from './fixtures'
 
 // M9 acceptance (brief §9): upload a 500-row synthetic CSV, review the AI
 // mapping (rows visible + ≥1 auto-suggested new_custom_field), commit, wait for
@@ -31,6 +31,7 @@ async function writeSyntheticCsv(): Promise<string> {
 // suite no longer starts from a clean database (M5.1).
 test.afterAll(async () => {
   await cleanImportedLeads()
+  await cleanImportLists()
   await disconnectFixtures()
 })
 
@@ -38,7 +39,11 @@ test('import happy path: upload → map → commit → lead visible with import:
   const csv = await writeSyntheticCsv()
 
   await page.goto('/imports')
+  // Brief 45 PR F: where these people go comes first (a new list here).
+  await expect(page.getByText(/where should these people go\?/i)).toBeVisible()
+  await page.getByRole('radio', { name: 'A new list' }).click()
   await page.setInputFiles('input[type=file]', csv)
+  await page.getByLabel('New list name').fill(`${MARK_IMPORT_LIST} ${Date.now()}`)
   await page.getByRole('button', { name: /upload/i }).click()
 
   // Mapping review. The original assertion here waited for /new custom/i, but
