@@ -113,10 +113,19 @@ export default function ImportsPage() {
             lists={sidebar.data?.lists ?? []}
             value={destination}
             onChange={chooseDestination}
-            error={destinationError ?? (sidebar.error ? `Your lists couldn't be loaded (${sidebar.error}). You can still make a new list.` : null)}
+            error={destinationError}
             disabled={busy}
             loading={!sidebar.data && !sidebar.error}
           />
+          {sidebar.error && !sidebar.data && (
+            // The store's plain-English error, then "Try again" (PR C's pattern).
+            <p className="-mt-3 flex flex-wrap items-center gap-x-1.5 text-sm" data-testid="lists-load-error">
+              <span className="text-danger">{sidebar.error} You can still make a new list.</span>
+              <button type="button" onClick={() => void sidebar.reload()} className="text-link hover:underline">
+                Try again
+              </button>
+            </p>
+          )}
           <section aria-labelledby="import-file-heading" className="space-y-4">
             <h3 id="import-file-heading" className="text-lg font-semibold text-fg">
               The file
