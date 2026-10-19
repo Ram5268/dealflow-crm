@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { UnavailableFilterError, firstUnavailableFilter, unavailableFilterMessage } from './compliance-filters'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Advanced Filtering DSL — recursive s_query schema (Close-CRM style).
@@ -31,6 +32,9 @@ export const fieldRefSchema = z.discriminatedUnion('kind', [
     kind: z.literal('custom'),
     definitionId: z.string(),
   }),
+  // Both names stay in the shape so a view saved with either still reads;
+  // 'callable_now' is hidden (Brief 50 PR 4, compliance-filters.ts), so
+  // sQuerySchema and parseSavedViewQuery refuse it. The condition is ignored.
   z.object({
     kind: z.literal('compliance'),
     predicate: z.enum(['callable_now', 'dnc_clean']),
@@ -83,10 +87,12 @@ export type SQuery =
   | { type: 'field_condition'; field: FieldRef; condition: Condition }
   | { type: 'has_related'; object_type: DslObjectType; query: SQuery }
 
-export const sQuerySchema: z.ZodType<SQuery> = z.lazy(() =>
+// The tree's shape only. A view saved before a filter was hidden still has
+// this shape, so saved views are read with it (parseSavedViewQuery below).
+export const sQueryShapeSchema: z.ZodType<SQuery> = z.lazy(() =>
   z.union([
-    z.object({ type: z.literal('and'), queries: z.array(sQuerySchema) }),
-    z.object({ type: z.literal('or'), queries: z.array(sQuerySchema) }),
+    z.object({ type: z.literal('and'), queries: z.array(sQueryShapeSchema) }),
+    z.object({ type: z.literal('or'), queries: z.array(sQueryShapeSchema) }),
     z.object({ type: z.literal('match_all') }),
     z.object({
       type: z.literal('object_type'),
@@ -100,10 +106,34 @@ export const sQuerySchema: z.ZodType<SQuery> = z.lazy(() =>
     z.object({
       type: z.literal('has_related'),
       object_type: objectTypeSchema,
-      query: sQuerySchema,
+      query: sQueryShapeSchema,
     }),
   ])
 )
+
+// What the Smart View API accepts (POST/PUT /api/smart-views, POST
+// /api/data/search): the shape, minus the hidden filters. Brief 50 PR 4: a
+// query naming "Callable now" is refused (400) with a plain message instead of
+// being saved, or searched, as if it filtered anything (compliance-filters.ts).
+export const sQuerySchema: z.ZodType<SQuery> = sQueryShapeSchema.superRefine((q, ctx) => {
+  const hidden = firstUnavailableFilter(q)
+  if (hidden) ctx.addIssue({ code: 'custom', message: unavailableFilterMessage(hidden) })
+})
+
+/**
+ * Read a saved view's stored query. Malformed → the zod error, as before.
+ * Brief 50 PR 4: a view saved with a hidden filter → UnavailableFilterError,
+ * whose message is plain English, so the page says so instead of applying the
+ * rest of the view as if the filter had run.
+ */
+export function parseSavedViewQuery(raw: unknown): SQuery {
+  const q = sQueryShapeSchema.parse(raw)
+  const hidden = firstUnavailableFilter(q)
+  if (hidden) throw new UnavailableFilterError(hidden)
+  return q
+}
+
+export { UnavailableFilterError }
 
 // Sort spec attached to a SavedView (separate from the s_query tree).
 export const sortSpecSchema = z.array(

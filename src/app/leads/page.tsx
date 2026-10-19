@@ -60,6 +60,7 @@ export default async function LeadsPage({
         viewId={sp.viewId ?? ''}
         views={views}
         viewError={result.viewError}
+        viewNote={result.viewNote}
         // Brief 41.2 (PR E): the switches are server settings, so the reason is decided here.
         sequencesOffReason={sequencesOffReason()}
         group={result.group ?? null}
