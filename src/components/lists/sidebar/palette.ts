@@ -67,3 +67,6 @@ export function paletteGroupEntries(data: SidebarData | null): PaletteGroupEntry
  * leads filtered to the group; /leads?group=<id> still works for old links.
  */
 export const groupHref = (groupId: string) => `/pipeline?groups=${encodeURIComponent(groupId)}`
+
+/** Where a saved Pipeline workflow opens: its tab, as saved (the sidebar's Workflows and the Pipeline's tabs). */
+export const workflowHref = (workflowId: string) => `/pipeline?wf=${encodeURIComponent(workflowId)}`

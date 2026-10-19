@@ -3,12 +3,10 @@
 // [brief §5.6]. PR A stores them (SavedView type 'pipeline'); these are the
 // pure conversions between a workflow and what's on screen. Client-safe.
 import type { PipelineQuery, WorkflowDTO, WorkflowInput } from '@/lib/core-data/lists/types'
-import { PIPELINE_PATH, normalizeQuery, sameQuery } from './url'
+import { normalizeQuery, sameQuery } from './url'
 
-/** A tab opens its workflow as saved (the server fills in the rest). */
-export function workflowHref(id: string): string {
-  return `${PIPELINE_PATH}?wf=${encodeURIComponent(id)}`
-}
+/** A tab opens its workflow as saved (the server fills in the rest); the sidebar's Workflows use the same link. */
+export { workflowHref } from '@/components/lists/sidebar/palette'
 
 /**
  * What a workflow shows. A group deleted since it was saved is left out; if

@@ -11,12 +11,15 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
  * server that isn't on this machine [engineering precaution; Ryan, 2026-10-18:
  * groups are never created in production]. Nothing here contacts anyone.
  *
+ *   next dev -H localhost -p 3148   (on the throwaway database)
  *   E2E_BASE_URL=http://localhost:3148 PW_CHROMIUM_PATH=<chrome-headless-shell> \
  *     npx playwright test tests/e2e/pipeline.spec.ts
  *
- * Use `localhost`, not 127.0.0.1: Next's dev server serves its dev resources
- * only to its own origin, so on 127.0.0.1 the page never comes alive and no
- * key or drag does anything.
+ * Start the dev server with `-H localhost`: without it, it listens on the
+ * whole network, with the login gate off locally. Use `localhost`, not
+ * 127.0.0.1, in E2E_BASE_URL: Next's dev server serves its dev resources only
+ * to its own origin, so on 127.0.0.1 the page never comes alive and no key or
+ * drag does anything.
  */
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000'
 const LOCAL = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)
@@ -165,6 +168,36 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     await page.unroute(MOVE)
   })
 
+  test('] then the key of the group it left: the chip waits for the move, so the person ends in both groups', async ({ page, request }) => {
+    await onlyIn(request, lead[1], G.a)
+    const order = (await getJson<{ groups: { id: string }[] }>(request, '/api/core-data/groups')).groups.map((g) => g.id)
+    const digit = order.indexOf(G.a) + 1
+    expect(digit).toBeGreaterThan(0)
+    expect(digit).toBeLessThanOrEqual(9)
+    await page.goto(board, { waitUntil: 'networkidle' })
+    // The move is slow (a cold start); the chip's request must not overtake it.
+    let moveAnswered = 0
+    let chipSent = 0
+    page.on('request', (r) => {
+      if (r.method() === 'PUT' && r.url().includes(`/api/core-data/groups/${G.a}/members/${lead[1]}`)) chipSent = Date.now()
+    })
+    await page.route(MOVE, async (route) => {
+      await new Promise((r) => setTimeout(r, 1500))
+      const response = await route.fetch()
+      moveAnswered = Date.now()
+      await route.fulfill({ response })
+    })
+    await card(page, G.a, lead[1]).focus()
+    await page.keyboard.press(']')
+    await expect.poll(() => focusedCardKey(page)).toBe(`${G.b}:${lead[1]}`)
+    await page.keyboard.press(String(digit)) // back into A as well
+    await expect.poll(() => groupIdsOf(request, lead[1]), { timeout: 10_000 }).toEqual([G.a, G.b])
+    expect(chipSent).toBeGreaterThanOrEqual(moveAnswered)
+    await expect.poll(() => columnsShowing(page, lead[1])).toEqual([G.a, G.b])
+    await page.unroute(MOVE)
+    await onlyIn(request, lead[1], G.a) // later tests count who is in two groups
+  })
+
   test('a refused move: the card goes back, a toast gives the reason, focus returns to it, and the moves queued behind it are not sent', async ({ page, request }) => {
     await onlyIn(request, lead[2], G.a)
     const sent = recordMoves(page)
@@ -289,6 +322,7 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
 
   test("a card's group chips: one click adds the person to that group (the card joins that column); keys 1–9 on the focused card", async ({ page, request }) => {
     await onlyIn(request, lead[3], G.b)
+    await onlyIn(request, lead[0], G.b) // a second card in that column: keys must not reach it
     await page.goto(board, { waitUntil: 'networkidle' })
     const chips = card(page, G.b, lead[3]).getByTestId('group-chips')
     const chipC = chips.locator(`[data-group-id="${G.c}"]`)
@@ -303,13 +337,93 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     const digit = order.indexOf(G.a) + 1
     expect(digit).toBeGreaterThan(0)
     expect(digit).toBeLessThanOrEqual(9)
+    // Every chip request the page sends from here on (PUT/DELETE …/groups/<id>/members/<lead>).
+    const chipWrites: string[] = []
+    page.on('request', (r) => {
+      if (/\/api\/core-data\/groups\/[^/]+\/members\/[^/?]+$/.test(r.url())) chipWrites.push(`${r.method()} ${new URL(r.url()).pathname}`)
+    })
     await card(page, G.b, lead[3]).focus()
     await page.keyboard.press(String(digit))
     await expect.poll(() => groupIdsOf(request, lead[3])).toEqual([G.a, G.b, G.c])
-    // Only that card: the person's other card (column C) didn't send a second toggle.
+    // Only that card: one request, for that person. The person's other card
+    // (column C) and the other cards around it sent nothing.
     await page.waitForTimeout(600)
-    expect(await groupIdsOf(request, lead[3])).toEqual([G.a, G.b, G.c])
+    expect(chipWrites).toEqual([`PUT /api/core-data/groups/${G.a}/members/${lead[3]}`])
     await onlyIn(request, lead[3], G.b)
+  })
+
+  test("a chip key that takes the person out of the focused card's column keeps focus on the board", async ({ page, request }) => {
+    const order = (await getJson<{ groups: { id: string }[] }>(request, '/api/core-data/groups')).groups.map((g) => g.id)
+    const digitOf = (g: string) => String(order.indexOf(g) + 1)
+    // In A and C: the A card goes, and focus moves to the same person's C card.
+    await onlyIn(request, lead[5], G.a)
+    await request.put(`/api/core-data/groups/${G.c}/members/${lead[5]}`)
+    await page.goto(board, { waitUntil: 'networkidle' })
+    await card(page, G.a, lead[5]).focus()
+    await page.keyboard.press(digitOf(G.a))
+    await expect.poll(() => groupIdsOf(request, lead[5])).toEqual([G.c])
+    await expect.poll(() => focusedCardKey(page)).toBe(`${G.c}:${lead[5]}`)
+    // Only in B, after someone else: the card goes, and focus moves to the card that took its place.
+    await onlyIn(request, lead[0], G.b)
+    await onlyIn(request, lead[3], G.b)
+    await page.goto(board, { waitUntil: 'networkidle' })
+    await card(page, G.b, lead[3]).focus()
+    await page.keyboard.press(digitOf(G.b))
+    await expect.poll(() => groupIdsOf(request, lead[3])).toEqual([])
+    await expect.poll(() => focusedCardKey(page)).toBe(`${G.b}:${lead[0]}`)
+    // Back as they were (later tests count who is in two groups).
+    await onlyIn(request, lead[5], G.a)
+    await request.put(`/api/core-data/groups/${G.c}/members/${lead[5]}`)
+    await onlyIn(request, lead[3], G.b)
+  })
+
+  test('a page reload that started before a move landed does not put the moved card back', async ({ page, request }) => {
+    await onlyIn(request, lead[3], G.b)
+    await onlyIn(request, lead[0], G.a)
+    await page.goto(board, { waitUntil: 'networkidle' })
+    // Reloads of the page are read at once but answered late (a slow network).
+    const reload = (u: URL) => u.pathname === '/pipeline' && u.searchParams.has('_rsc')
+    await page.route(reload, async (route) => {
+      const response = await route.fetch()
+      await new Promise((r) => setTimeout(r, 1500))
+      await route.fulfill({ response })
+    })
+    // A chip click on one person reloads the page once it lands …
+    await card(page, G.b, lead[3]).getByTestId('group-chips').locator(`[data-group-id="${G.c}"]`).click()
+    await page.waitForTimeout(300)
+    // … and meanwhile someone else moves (A → B).
+    await card(page, G.a, lead[0]).focus()
+    await page.keyboard.press(']')
+    await expect.poll(() => groupIdsOf(request, lead[0])).toEqual([G.b])
+    await page.waitForTimeout(6000) // every reload has arrived
+    expect(await columnsShowing(page, lead[0])).toEqual([G.b])
+    await page.unroute(reload)
+    await onlyIn(request, lead[3], G.b)
+    await onlyIn(request, lead[0], G.a)
+  })
+
+  test('"Load more" cards stay loaded when the page reloads (a chip click elsewhere)', async ({ page, request }) => {
+    // A column longer than one page: made-up people from the seed, in a group of their own.
+    const res = await request.post('/api/core-data/groups', { data: { name: `E2E long ${STAMP}` } })
+    const long = ((await res.json()) as { group: { id: string } }).group.id
+    try {
+      const { ids } = await getJson<{ ids: string[] }>(request, '/api/core-data/all-leads?ids=1')
+      expect(ids.length).toBeGreaterThan(60)
+      await request.post(`/api/core-data/groups/${long}/members`, { data: { leadIds: ids.slice(0, 60) } })
+      await onlyIn(request, lead[3], G.b)
+      await page.goto(`/pipeline?groups=${long},${G.b}`, { waitUntil: 'networkidle' })
+      const longCards = page.locator(`[data-column="${long}"] [data-card]`)
+      await expect(longCards).toHaveCount(50)
+      await page.locator(`[data-column="${long}"]`).getByRole('button', { name: /Load more/ }).click()
+      await expect(longCards).toHaveCount(60)
+      await card(page, G.b, lead[3]).getByTestId('group-chips').locator(`[data-group-id="${G.c}"]`).click()
+      await expect.poll(() => groupIdsOf(request, lead[3])).toEqual([G.b, G.c])
+      await page.waitForTimeout(2500) // the reload after the chip, and the column's pages again
+      await expect(longCards).toHaveCount(60)
+    } finally {
+      await request.delete(`/api/core-data/groups/${long}`)
+      await onlyIn(request, lead[3], G.b)
+    }
   })
 
   test("if the groups can't load, cards keep showing their own groups (read-only); the sidebar says so once", async ({ page }) => {

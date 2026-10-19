@@ -1,9 +1,29 @@
 'use client'
 
+import { createContext, useContext } from 'react'
 import { GroupChips } from '@/components/lists/GroupChips'
+import { CRM_CHIP_API, type ChipApi } from '@/components/lists/group-chips-state'
 import { useSidebarData } from '@/lib/core-data/lists/client'
 import type { GroupChipDTO } from '@/lib/core-data/lists/types'
+import type { PersonQueue } from './move-queue'
 import { GroupBadges } from './GroupBadges'
+
+/**
+ * How the Pipeline's chips reach the CRM: through the page's per-person
+ * queue (move-queue.ts), so a chip click or 1–9 and a card move of the same
+ * person go one after the other. Without a provider: PR A's routes directly.
+ */
+export const PipelineChipApi = createContext<ChipApi | undefined>(undefined)
+
+/** PR C's chip requests, each waiting in that person's line on the Pipeline. */
+export function queuedChipApi(people: PersonQueue, api: ChipApi = CRM_CHIP_API): ChipApi {
+  return {
+    add: (groupId, leadId) => people.run(leadId, () => api.add(groupId, leadId)),
+    remove: (groupId, leadId) => people.run(leadId, () => api.remove(groupId, leadId)),
+    // "+" makes a new group: nothing on the board can be moving into or out of it yet.
+    create: (input) => api.create(input),
+  }
+}
 
 /**
  * A card's or a table row's group chips (PR C) [brief §5.3]: every group as a
@@ -20,6 +40,7 @@ import { GroupBadges } from './GroupBadges'
  */
 export function PipelineGroupChips({ leadId, groups }: { leadId: string; groups: GroupChipDTO[] }) {
   const sidebar = useSidebarData()
+  const api = useContext(PipelineChipApi)
   if (!sidebar.data) {
     return (
       // A click here (a moment before the chips are ready) mustn't open a table row.
@@ -28,5 +49,5 @@ export function PipelineGroupChips({ leadId, groups }: { leadId: string; groups:
       </span>
     )
   }
-  return <GroupChips leadId={leadId} memberOf={groups.map((g) => g.id)} compact hotkeys />
+  return <GroupChips leadId={leadId} memberOf={groups.map((g) => g.id)} compact hotkeys api={api} />
 }

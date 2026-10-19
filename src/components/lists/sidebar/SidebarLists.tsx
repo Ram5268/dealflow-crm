@@ -367,7 +367,8 @@ export function SidebarLists({
       } else {
         const r = await deleteGroup(confirm.id)
         toast({ title: `Deleted the group “${confirm.name}”`, description: `Nobody was deleted. The label came off ${peopleCount(r.membershipsRemoved)}.` })
-        if (activeGroupId === confirm.id) router.push(pathname === '/pipeline' ? '/pipeline' : '/leads')
+        // Replace, not push: Back shouldn't return to the deleted group's page.
+        if (activeGroupId === confirm.id) router.replace(pathname === '/pipeline' ? '/pipeline' : '/leads')
       }
       focusCreate(confirm.kind)
       setConfirm(null)

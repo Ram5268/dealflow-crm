@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { createMoveQueue } from '@/app/pipeline/move-queue'
+import { createMoveQueue, createPersonQueue } from '@/app/pipeline/move-queue'
+import { queuedChipApi } from '@/app/pipeline/PipelineGroupChips'
 import type { MoveRequest, PendingMove } from '@/app/pipeline/board-state'
 import type { PipelineCard } from '@/lib/core-data/lists/types'
 import { APPT, HOT, NOW, NURTURE, OWNER2_HOT, OWNER3_NURTURE } from './helpers/pipeline-fixtures'
@@ -85,5 +86,92 @@ describe('createMoveQueue', () => {
     expect(s.sent).toHaveLength(2)
     s.answers[1].ok()
     expect(await again).toEqual({ ok: true })
+  })
+})
+
+// Brief 45 PR D review 2: a group chip (click or 1–9) and a card move of the
+// same person share that person's line, so neither can undo the other.
+describe('moves and chips share one line per person', () => {
+  /** A stub CRM for chip writes: records each call and answers only when told to. */
+  function stubChips() {
+    const sent: string[] = []
+    const answers: (() => void)[] = []
+    const call = (what: string) => {
+      sent.push(what)
+      return new Promise<unknown>((ok) => answers.push(() => ok({ changed: true })))
+    }
+    const api = {
+      add: (g: string, l: string) => call(`add ${g} ${l}`),
+      remove: (g: string, l: string) => call(`remove ${g} ${l}`),
+      create: async () => ({ group: { ...HOT }, added: 1 }),
+    }
+    return { sent, answers, api }
+  }
+
+  it('] then 1: the chip waits until the move has landed (a slow move can no longer undo it)', async () => {
+    const people = createPersonQueue()
+    const moves = stubServer()
+    const chips = stubChips()
+    const run = createMoveQueue(moves.send, people)
+    const chipApi = queuedChipApi(people, chips.api)
+    const moved = run(pending(OWNER2_HOT, HOT.id, APPT.id))
+    const chip = chipApi.add(HOT.id, 'lead_2') // put them back in Hot
+    await settle()
+    expect(moves.sent).toHaveLength(1)
+    expect(chips.sent).toEqual([]) // held back behind the move
+    moves.answers[0].ok()
+    expect(await moved).toEqual({ ok: true })
+    await settle()
+    expect(chips.sent).toEqual([`add ${HOT.id} lead_2`])
+    chips.answers[0]()
+    await chip
+  })
+
+  it('a slow chip, then a move: the move waits for the chip', async () => {
+    const people = createPersonQueue()
+    const moves = stubServer()
+    const chips = stubChips()
+    const run = createMoveQueue(moves.send, people)
+    const chipApi = queuedChipApi(people, chips.api)
+    const chip = chipApi.remove(APPT.id, 'lead_2')
+    const moved = run(pending(OWNER2_HOT, HOT.id, APPT.id))
+    await settle()
+    expect(chips.sent).toEqual([`remove ${APPT.id} lead_2`])
+    expect(moves.sent).toEqual([]) // waits for the chip
+    chips.answers[0]()
+    await chip
+    await settle()
+    expect(moves.sent).toHaveLength(1)
+    moves.answers[0].ok()
+    expect(await moved).toEqual({ ok: true })
+  })
+
+  it('a refused move: the chip queued behind it is still sent (it does not depend on a column)', async () => {
+    const people = createPersonQueue()
+    const moves = stubServer()
+    const chips = stubChips()
+    const run = createMoveQueue(moves.send, people)
+    const chipApi = queuedChipApi(people, chips.api)
+    const moved = run(pending(OWNER2_HOT, HOT.id, APPT.id))
+    const chip = chipApi.add(NURTURE.id, 'lead_2')
+    await settle()
+    moves.answers[0].refuse(new Error('Group not found.'))
+    expect((await moved).ok).toBe(false)
+    await settle()
+    expect(chips.sent).toEqual([`add ${NURTURE.id} lead_2`])
+    chips.answers[0]()
+    await chip
+  })
+
+  it("other people's chips don't wait", async () => {
+    const people = createPersonQueue()
+    const moves = stubServer()
+    const chips = stubChips()
+    const run = createMoveQueue(moves.send, people)
+    const chipApi = queuedChipApi(people, chips.api)
+    void run(pending(OWNER2_HOT, HOT.id, APPT.id))
+    void chipApi.add(HOT.id, 'lead_3')
+    await settle()
+    expect(chips.sent).toEqual([`add ${HOT.id} lead_3`])
   })
 })

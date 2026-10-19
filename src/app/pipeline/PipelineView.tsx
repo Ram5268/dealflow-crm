@@ -13,7 +13,9 @@ import {
   appendColumnPage, applyMove, boardWithPending, replaceColumn, type BoardContext, type PendingMove,
 } from './board-state'
 import { fetchColumnPage, moveCard, moveFailure, problemText, removeWorkflow, renameWorkflow, saveOverWorkflow, saveWorkflow } from './api'
-import { createMoveQueue, type MoveQueue } from './move-queue'
+import { createMoveQueue, createPersonQueue, type MoveQueue } from './move-queue'
+import { PipelineChipApi, queuedChipApi } from './PipelineGroupChips'
+import type { ChipApi } from '@/components/lists/group-chips-state'
 import {
   DEFAULT_QUERY, PIPELINE_PATH, normalizeQuery, panelFilterCount, pipelineHref, pipelineSearch, sameQuery, withFilter, withFilters,
 } from './url'
@@ -48,11 +50,18 @@ export function PipelineView(props: PipelinePageData) {
   const [loading, startLoading] = useTransition()
 
   // The server's board or table for this URL, plus what changed here since.
+  const queryKey = pipelineSearch({ query, workflowId: null })
   const [result, setResult] = useState<PipelineResult | null>(props.result)
-  const [received, setReceived] = useState(props.result)
+  const [received, setReceived] = useState({ result: props.result, key: queryKey })
   const [notices, setNotices] = useState(props.notices)
-  if (props.result !== received) {
-    setReceived(props.result)
+  // After a reload of the same view, the columns that had "Load more" pages
+  // load them again (the server's board has each column's first page only).
+  const [deepen, setDeepen] = useState<{ groupId: string; pages: number }[]>([])
+  if (props.result !== received.result) {
+    if (received.key === queryKey && result?.view === 'board') {
+      setDeepen(result.columns.filter((c) => c.page > 1).map((c) => ({ groupId: c.group.id, pages: c.page })))
+    }
+    setReceived({ result: props.result, key: queryKey })
     setResult(props.result)
     setNotices(props.notices)
   }
@@ -63,7 +72,6 @@ export function PipelineView(props: PipelinePageData) {
 
   // The latest result and query, for callbacks that finish after an await
   // (a page that arrives after the filters changed is dropped).
-  const queryKey = pipelineSearch({ query, workflowId: null })
   const latest = useRef(result)
   const latestKey = useRef(queryKey)
   useLayoutEffect(() => {
@@ -133,9 +141,13 @@ export function PipelineView(props: PipelinePageData) {
   )
 
   const moveSeq = useRef(0)
-  // One person's moves reach the server one at a time (move-queue.ts).
-  const sendMove = useRef<MoveQueue | null>(null)
-  if (!sendMove.current) sendMove.current = createMoveQueue(moveCard)
+  // One person's group changes — card moves and chip clicks — reach the server
+  // one at a time (move-queue.ts).
+  const queues = useRef<{ moves: MoveQueue; chips: ChipApi } | null>(null)
+  if (!queues.current) {
+    const people = createPersonQueue()
+    queues.current = { moves: createMoveQueue(moveCard, people), chips: queuedChipApi(people) }
+  }
   /** Resolves true when the server took the move, false when it was rolled back. */
   const move = useCallback(
     async (card: PipelineCard, fromGroupId: string, toGroupId: string): Promise<boolean> => {
@@ -143,17 +155,18 @@ export function PipelineView(props: PipelinePageData) {
       const m: PendingMove = { id: ++moveSeq.current, leadId: card.leadId, fromGroupId, toGroupId, at: new Date().toISOString(), card }
       const moveCtx = ctx
       setPending((p) => [...p, m])
-      const settled = await sendMove.current!(m)
+      const settled = await queues.current!.moves(m)
       if (settled.ok) {
-        const current = latest.current
-        const longer = current?.view === 'board'
-          ? current.columns.filter((c) => (c.group.id === fromGroupId || c.group.id === toGroupId) && (c.hasMore || c.page > 1))
-          : []
         setResult((r) => (r?.view === 'board' ? applyMove(r, m, moveCtx) : r))
         setPending((p) => p.filter((x) => x.id !== m.id))
         setAnnouncement(`Moved ${card.displayName} to ${groupName(toGroupId)}.`)
         notifyOwn()
-        for (const c of longer) void reloadColumn(c.group.id, c.page)
+        // A reload already on its way (e.g. after a chip click) may have read
+        // the board before this move landed; the page's reloads run one after
+        // another, so asking for one more now means the last board has the
+        // move. Longer columns load their extra pages again after it. (Quietly:
+        // the board already shows the move, so it isn't dimmed meanwhile.)
+        router.refresh()
         return true
       }
       // Rollback: drop the move, so the card is back where it was. A move
@@ -163,8 +176,14 @@ export function PipelineView(props: PipelinePageData) {
       setAnnouncement(`${card.displayName} was not moved.`)
       return false
     },
-    [ctx, groupName, notifyOwn, reloadColumn, toast],
+    [ctx, groupName, notifyOwn, router, toast],
   )
+
+  useEffect(() => {
+    if (deepen.length === 0) return
+    setDeepen([])
+    for (const c of deepen) void reloadColumn(c.groupId, c.pages)
+  }, [deepen, reloadColumn])
 
   const loadMore = useCallback(
     async (groupId: string) => {
@@ -217,7 +236,8 @@ export function PipelineView(props: PipelinePageData) {
     const name = workflows.find((w) => w.id === id)?.name ?? 'the workflow'
     await removeWorkflow(id)
     notifyOwn()
-    if (id === workflowId) startLoading(() => router.push(PIPELINE_PATH, { scroll: false }))
+    // Replace, not push: Back shouldn't return to the deleted workflow's tab.
+    if (id === workflowId) startLoading(() => router.replace(PIPELINE_PATH, { scroll: false }))
     else refresh()
     toast({ title: `Deleted “${name}”`, description: "Nobody's groups or lists changed." })
   }
@@ -240,6 +260,7 @@ export function PipelineView(props: PipelinePageData) {
   }
 
   return (
+    <PipelineChipApi.Provider value={queues.current.chips}>
     <div className="flex h-full min-h-0 flex-col" data-testid="pipeline">
       <WorkflowTabs
         workflows={workflows}
@@ -303,6 +324,7 @@ export function PipelineView(props: PipelinePageData) {
         {announcement}
       </p>
     </div>
+    </PipelineChipApi.Provider>
   )
 }
 

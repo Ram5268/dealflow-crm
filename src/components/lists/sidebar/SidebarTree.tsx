@@ -22,8 +22,7 @@ import { GROUP_COLOR_OPTIONS, groupColorStyle } from '@/lib/ui/groupColors'
 import type { FolderDTO, GroupColor, GroupDTO, ListDTO, SidebarData, WorkflowDTO } from '@/lib/core-data/lists/types'
 import { formatCount, rankedHeadline, rankedStamp } from '../format'
 import { buildTree, canStep, type Direction } from './tree'
-import { groupHref } from './palette'
-import { workflowHref } from '@/app/pipeline/workflows'
+import { groupHref, workflowHref } from './palette'
 import type { CreateKind } from './createRequest'
 
 // ─── The interactive state, provided by SidebarLists ─────────────────────────

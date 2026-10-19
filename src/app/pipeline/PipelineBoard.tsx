@@ -63,6 +63,8 @@ export function PipelineBoard({
   const wantFocus = useRef<string[] | null>(null)
   const dragKey = useRef<string | null>(null)
   const wantFocusAfterMenu = useRef<string[] | null>(null)
+  // The card that last had focus on the board, and where it sat.
+  const lastFocus = useRef<{ key: string; leadId: string; groupId: string; index: number } | null>(null)
 
   const keys = board.columns.flatMap((c) => c.cards.map((card) => keyOf(c.group.id, card.leadId)))
   const tabStop = focused && keys.includes(focused) ? focused : (keys[0] ?? null)
@@ -87,6 +89,21 @@ export function PipelineBoard({
     if (!want) return
     wantFocus.current = null
     focusFirstOf(want)
+  })
+
+  // A focused card that goes away in a reload (a chip key took the person out
+  // of this column) leaves focus on the page: it goes to the same person's
+  // card in another column, else the card that took its place, else the one
+  // before it. Not when focus has moved somewhere else on purpose.
+  useLayoutEffect(() => {
+    const last = lastFocus.current
+    if (!last || keys.includes(last.key)) return
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    const elsewhere = board.columns.filter((c) => c.cards.some((x) => x.leadId === last.leadId)).map((c) => keyOf(c.group.id, last.leadId))
+    const cards = board.columns.find((c) => c.group.id === last.groupId)?.cards ?? []
+    const near = cards.length > 0 ? [keyOf(last.groupId, cards[Math.min(last.index, cards.length - 1)].leadId)] : []
+    focusFirstOf([...elsewhere, ...near])
   })
 
   const move = (card: PipelineCard, from: string, to: string, followFocus: boolean) => {
@@ -159,6 +176,10 @@ export function PipelineBoard({
   return (
     <div
       ref={boardRef}
+      // Focus that leaves the board on purpose (a click or Tab elsewhere) isn't brought back.
+      onBlur={(e) => {
+        if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget)) lastFocus.current = null
+      }}
       data-testid="pipeline-board"
       // Phone width: the columns become a swipeable row, one column per
       // swipe (scroll-snap); wider screens scroll freely.
@@ -228,7 +249,10 @@ export function PipelineBoard({
                         }
                       }}
                       onKeyDown={(e) => onCardKeyDown(e, card, groupId)}
-                      onFocus={() => setFocused(key)}
+                      onFocus={() => {
+                        setFocused(key)
+                        lastFocus.current = { key, leadId: card.leadId, groupId, index: col.cards.indexOf(card) }
+                      }}
                       onDragStart={(e) => {
                         e.dataTransfer.effectAllowed = 'move'
                         e.dataTransfer.setData(DRAG_TYPE, card.leadId)
