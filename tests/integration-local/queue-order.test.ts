@@ -40,17 +40,20 @@ const RANKED = [
   { k: 'b', rank: 6, priority: 70, fit: 70, by: 'crmLeadId' },
 ] as const
 // Scored by an upload after the morning copy: a priority, but no place on
-// DealFlow's list yet (queueRank NULL until the next morning).
+// DealFlow's list yet (queueRank NULL until the next morning). They keep their
+// place by priority (Brief 45: new people are ranked within minutes).
 const UNRANKED = [
-  { k: 'c', priority: 99, fit: 99 },
+  { k: 'c', priority: 99, fit: 99 }, // above everyone DealFlow ranked
+  { k: 'h', priority: 87, fit: 99 }, // ties 'k' and 'j' at 87, best fit, id first: still after both
   { k: 'y', priority: 40, fit: 40 },
   { k: 'd', priority: 40, fit: 40 }, // tie with 'y': lead id decides (d before y)
 ] as const
 // Never scored at all: no priority, no signal.
 const UNSCORED = ['f', 'e'] as const
 
-const DEALFLOW_ORDER = ['k', 'j', 'z', 'a', 'm', 'b'].map(id)
-const UPLOAD_ORDER = ['c', 'd', 'y'].map(id)
+// DealFlow's own order for the ranked ones (k j z a m b), with the upload's
+// people where their priority puts them.
+const SCORED_ORDER = ['c', 'k', 'j', 'h', 'z', 'a', 'm', 'b', 'd', 'y'].map(id)
 const UNSCORED_ORDER = ['e', 'f'].map(id)
 
 let org: string
@@ -90,12 +93,17 @@ describe.runIf(enabled)('Queue order = DealFlow rank (Brief 50 PR 10)', () => {
     // rounds the priority) → applySync.
     const signals = buildSignals({
       includeTestBuyers: true,
-      rows: RANKED.map((r) =>
-        row({
-          mojo_id: id(`mojo_${r.k}`), crm_lead_id: r.by === 'crmLeadId' ? id(r.k) : null,
-          queue_rank: r.rank, priority_score: r.priority, primary_match_id: `m_${r.k}`, primary_match_fit: r.fit,
-        }),
-      ),
+      rows: [
+        ...RANKED.map((r) =>
+          row({
+            mojo_id: id(`mojo_${r.k}`), crm_lead_id: r.by === 'crmLeadId' ? id(r.k) : null,
+            queue_rank: r.rank, priority_score: r.priority, primary_match_id: `m_${r.k}`, primary_match_fit: r.fit,
+          }),
+        ),
+        // DealFlow names 'z' a second time, further down its list: the best
+        // rank (3) is z's, as the morning copy takes it, so z stays before 'a'.
+        row({ mojo_id: id('mojo_z2'), crm_lead_id: id('z'), queue_rank: 9, priority_score: 80, primary_match_id: 'm_z2', primary_match_fit: 50 }),
+      ],
     })
     await applySync(org, signals, prisma)
 
@@ -145,23 +153,23 @@ describe.runIf(enabled)('Queue order = DealFlow rank (Brief 50 PR 10)', () => {
     expect(p).toEqual({ [id('k')]: 87, [id('j')]: 87, [id('m')]: 80 })
   })
 
-  it('the review list (/queue while calling is off) is in DealFlow\'s rank order, then the unranked by priority', async () => {
+  it('the review list (/queue while calling is off) is in DealFlow\'s rank order, with the upload\'s people by priority', async () => {
     const r = await getReviewList(priorityView, org)
-    expect(r.leads.map((l) => l.leadId)).toEqual([...DEALFLOW_ORDER, ...UPLOAD_ORDER])
-    expect(r.total).toBe(9)
+    expect(r.leads.map((l) => l.leadId)).toEqual(SCORED_ORDER)
+    expect(r.total).toBe(10)
     // The priority shown is unchanged: the stored whole number.
-    expect(r.leads.slice(0, 2).map((l) => l.priorityScore)).toEqual([87, 87])
+    expect(r.leads.slice(0, 4).map((l) => l.priorityScore)).toEqual([99, 87, 87, 87])
   })
 
   it('the dialer\'s queue (getQueue) is in the same order', async () => {
     const q = await getQueue(priorityView, org, { caller: yes })
-    expect(q.leads.map((l) => l.leadId)).toEqual([...DEALFLOW_ORDER, ...UPLOAD_ORDER])
-    expect(q.leads[0].ammunition.priorityScore).toBe(87)
+    expect(q.leads.map((l) => l.leadId)).toEqual(SCORED_ORDER)
+    expect(q.leads[1].ammunition.priorityScore).toBe(87)
   })
 
   it('a view with no saved sort (priority first) also follows DealFlow\'s rank; never-scored leads come last, by lead id', async () => {
     const q = await getQueue(everyoneView, org, { caller: yes })
-    expect(q.leads.map((l) => l.leadId)).toEqual([...DEALFLOW_ORDER, ...UPLOAD_ORDER, ...UNSCORED_ORDER])
+    expect(q.leads.map((l) => l.leadId)).toEqual([...SCORED_ORDER, ...UNSCORED_ORDER])
   })
 
   it('the order is stable: same answer twice, and every shorter queue is the start of the longer one', async () => {
@@ -184,8 +192,8 @@ describe.runIf(enabled)('Queue order = DealFlow rank (Brief 50 PR 10)', () => {
       })
       seen.push(...page.map((p) => p.id))
     }
-    expect(total).toBe(11)
-    expect(seen).toEqual([...DEALFLOW_ORDER, ...UPLOAD_ORDER, ...UNSCORED_ORDER])
+    expect(total).toBe(12)
+    expect(seen).toEqual([...SCORED_ORDER, ...UNSCORED_ORDER])
     expect(new Set(seen).size).toBe(seen.length)
   })
 })

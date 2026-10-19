@@ -5,34 +5,34 @@ import { buildSql } from '@/lib/core-data/query-dsl/executor'
 import { DEFAULT_VIEW } from '@/lib/core-data/smart-view/defaultView'
 import type { SortSpec } from '@/lib/core-data/query-dsl/schema'
 
-// Brief 50 PR 10 (open item 6.8): the Queue's ORDER BY. DealFlow's rank leads
-// whenever the view is ordered by DealFlow's priority; the view's own sort and
-// lead.id still follow, so leads with no rank keep a stable place after the
-// ranked ones. The DB-backed proof is tests/integration-local/queue-order.test.ts.
+// Brief 50 PR 10 (open item 6.8): the Queue's ORDER BY. Whenever the view is
+// ordered by DealFlow's priority, DealFlow's rank breaks ties in the rounded
+// priority (right after it); the rest of the view's sort and lead.id still
+// follow, so leads with no rank keep their place by priority, after ranked
+// leads of the same whole number. The DB-backed proof is
+// tests/integration-local/queue-order.test.ts.
 const ORG = 'org_unit_test'
 const compiled = () => compile(DEFAULT_VIEW.sQuery, { organizationId: ORG, customFieldTypes: {} })
-const RANK_FIRST = /^ORDER BY \(\(SELECT jsonb_object_agg\(/
+const RANK_FIRST = /^ORDER BY lead\."priorityScore" DESC NULLS LAST, \(\(SELECT jsonb_object_agg\(/
 
 describe('queueOrder', () => {
-  it('the "DealFlow priority" view: DealFlow rank first (no rank last), then the view\'s sort, then lead.id', () => {
+  it('the "DealFlow priority" view: priority, then DealFlow rank (no rank last), then the rest of the view\'s sort, then lead.id', () => {
     const c = compiled()
     const { orderBySql } = queueOrder(c, DEFAULT_VIEW.sort, ORG)
     expect(orderBySql).toMatch(RANK_FIRST)
-    expect(orderBySql).toMatch(/->> lead\.id\)::int ASC NULLS LAST, /)
-    expect(orderBySql.endsWith(compileOrderBy(DEFAULT_VIEW.sort).replace(/^ORDER BY /, ', '))).toBe(true)
-    expect(orderBySql).toMatch(/, lead\.id ASC$/)
+    expect(orderBySql.endsWith('->> lead.id)::int ASC NULLS LAST, lead."topMatchFit" DESC NULLS LAST, lead.id ASC')).toBe(true)
   })
 
-  it('no saved sort means priority first (compileOrderBy\'s default), so the rank leads there too', () => {
+  it('no saved sort means priority first (compileOrderBy\'s default), so the rank breaks its ties there too', () => {
     const { orderBySql } = queueOrder(compiled(), [], ORG)
     expect(orderBySql).toMatch(RANK_FIRST)
-    expect(orderBySql).toMatch(/ASC NULLS LAST, lead\."priorityScore" DESC NULLS LAST, lead\.id ASC$/)
+    expect(orderBySql).toMatch(/->> lead\.id\)::int ASC NULLS LAST, lead\.id ASC$/)
   })
 
-  it('lowest priority first reads the rank backwards; unranked still last', () => {
+  it('lowest priority first reads the rank backwards; unranked still last within a priority', () => {
     const { orderBySql } = queueOrder(compiled(), [{ field: 'priorityScore', direction: 'asc' }], ORG)
-    expect(orderBySql).toMatch(RANK_FIRST)
-    expect(orderBySql).toMatch(/->> lead\.id\)::int DESC NULLS LAST, lead\."priorityScore" ASC NULLS LAST, lead\.id ASC$/)
+    expect(orderBySql).toMatch(/^ORDER BY lead\."priorityScore" ASC NULLS LAST, \(\(SELECT jsonb_object_agg\(/)
+    expect(orderBySql).toMatch(/->> lead\.id\)::int DESC NULLS LAST, lead\.id ASC$/)
   })
 
   it('a view sorted by something else keeps its own order and adds no parameter', () => {

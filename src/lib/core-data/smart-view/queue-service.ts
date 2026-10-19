@@ -127,17 +127,22 @@ export async function loadCustomFieldTypes(organizationId: string): Promise<Comp
 // the CRM stores that priority as a whole number (sync.ts rounds it into an
 // Int column), so sorting by it tied sellers DealFlow had told apart and broke
 // the tie by "top match" and lead id instead. When a view is ordered by
-// DealFlow's priority, its leads now go in DealFlow's own rank order (the
-// signal's queueRank); the stored whole-number priority is still what's shown.
+// DealFlow's priority, leads with the same whole-number priority now go in
+// DealFlow's own rank order (the signal's queueRank); the stored whole-number
+// priority is still what's shown, and still the first key. DealFlow numbers
+// its list by sorting on that same priority (best first), and rounding never
+// swaps two numbers, so for every ranked lead this IS DealFlow's order.
 //
 // A lead's rank is its signal's, found the way the morning copy assigns
 // signals to leads (dealflow-sync/write.ts MAPPED_LEADS): the lead DealFlow
 // names (crmLeadId), else the lead with the signal's Mojo ID; the best rank if
-// two reach one lead. Leads with no rank — scored by an upload since the
-// morning copy (a priority but no place on DealFlow's list until tomorrow), or
-// never scored — come after every ranked lead, in the view's own order, then
-// by lead id. lead.id is always the last key, so the order is total: the same
-// on every load, and pages neither repeat nor skip a lead.
+// two reach one lead. Leads with no rank keep their place by priority: one an
+// upload scored since the morning copy (a priority, but no place on DealFlow's
+// list until tomorrow) sits where its score puts it, as on every list (Brief
+// 45: new people are ranked within minutes), after any ranked lead with the
+// same whole number; never-scored leads come last. Then the view's own order,
+// then lead id: lead.id is always the last key, so the order is total: the
+// same on every load, and pages neither repeat nor skip a lead.
 //
 // One read of the org's signals per query: an uncorrelated scalar subquery, so
 // Postgres runs it once (an InitPlan) and each lead is a key lookup in the
@@ -155,10 +160,11 @@ function dealflowRankSql(org: string): string {
 /**
  * The ORDER BY for a view's leads on the Queue, and the query to run it with.
  * A view ordered first by DealFlow's priority (the "DealFlow priority" view,
- * or no saved sort: compileOrderBy's default) gets DealFlow's rank in front of
- * its own sort; the rank's organization travels as one extra bound parameter,
- * so `compiled` comes back with it appended (the caller's is left as it was).
- * Any other sort is compileOrderBy's, unchanged.
+ * or no saved sort: compileOrderBy's default) gets DealFlow's rank right after
+ * the priority, in front of the rest of its sort; the rank's organization
+ * travels as one extra bound parameter, so `compiled` comes back with it
+ * appended (the caller's is left as it was). Any other sort is
+ * compileOrderBy's, unchanged.
  */
 export function queueOrder(
   compiled: CompiledQuery,
@@ -168,12 +174,15 @@ export function queueOrder(
   const orderBySql = compileOrderBy(sort)
   const first = sort[0] ?? { field: 'priorityScore', direction: 'desc' }
   if (first.field !== 'priorityScore') return { compiled, orderBySql }
+  const asc = first.direction === 'asc'
+  const priority = `ORDER BY lead."priorityScore" ${asc ? 'ASC' : 'DESC'} NULLS LAST, `
+  if (!orderBySql.startsWith(priority)) throw new Error('queueOrder: unexpected ORDER BY from compileOrderBy')
   const org = `$${compiled.params.length + 1}`
   // Rank 1 is DealFlow's top seller: best first reads the rank upwards.
-  const dir = first.direction === 'asc' ? 'DESC' : 'ASC'
+  const rank = `${dealflowRankSql(org)} ${asc ? 'DESC' : 'ASC'} NULLS LAST, `
   return {
     compiled: { ...compiled, params: [...compiled.params, organizationId] },
-    orderBySql: orderBySql.replace(/^ORDER BY /, `ORDER BY ${dealflowRankSql(org)} ${dir} NULLS LAST, `),
+    orderBySql: priority + rank + orderBySql.slice(priority.length),
   }
 }
 
