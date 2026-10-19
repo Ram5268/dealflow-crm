@@ -67,9 +67,9 @@ describe("dnc/internal: the CRM's own pages and non-browser clients get through"
     ['an older browser: Origin matches the address', { origin: 'http://localhost' }],
     ['an older browser: Origin matches the Host header', { origin: 'https://crm.example.test', host: 'crm.example.test' }],
     ['an older browser: Origin matches X-Forwarded-Host', { origin: 'https://crm.example.test', 'x-forwarded-host': 'crm.example.test' }],
-    // Every browser sends Origin on a POST, so a request with neither header
-    // isn't a browser riding on Ryan's saved login: it's a script that had to
-    // send the password itself (the middleware's gate runs first).
+    // Browsers send Origin on every cross-site POST, so a request with neither
+    // header isn't another site riding on Ryan's saved login: it's a script
+    // that had to send the password itself (the middleware's gate runs first).
     ['a script with no Origin and no Sec-Fetch-Site', {}],
   ])('%s', async (_label, headers) => {
     await expectLetThrough(headers)

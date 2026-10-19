@@ -13,7 +13,9 @@ import type { NextRequest } from 'next/server'
 // BASIC_AUTH_* settings), see the BASIC_AUTH notes in .env.example.
 //
 // Brief 47 (PR 3): no password on a Vercel deployment LOCKS the app (503 "not
-// configured") instead of opening it; see basicAuth() below.
+// configured") instead of opening it; see basicAuth() below. Brief 50 (PR 16)
+// closes two gaps: a password of only spaces counts as missing, and with no
+// VERCEL_ENV at all a production build counts as deployed.
 
 const DEFAULT_USER = 'ryan'
 const REALM = 'DealFlow CRM'
@@ -68,7 +70,17 @@ let warnedNotConfigured = false
 // `next build` on Next 16.2.5 keeps it as a runtime read in the Edge bundle.
 function isVercelDeployment(): boolean {
   const vercelEnv = process.env.VERCEL_ENV
-  return vercelEnv === 'production' || vercelEnv === 'preview'
+  if (vercelEnv) return vercelEnv === 'production' || vercelEnv === 'preview'
+  // Brief 50 (PR 16), engineering precaution (Brief 40 audit M5): no
+  // VERCEL_ENV at all can also mean Vercel didn't expose its system variables
+  // to this project. A production build (Next inlines NODE_ENV) then still
+  // counts as deployed, so a missing password locks rather than opens.
+  // `next dev` (local dev, and E2E through boot-standalone / boot-all) is a
+  // development build and keeps the no-prompt path; so do vitest and GitHub
+  // CI, which never run a production build. A local `next build` + `next
+  // start` now needs a (made-up) BASIC_AUTH_PASSWORD or VERCEL_ENV=development.
+  // Same fallback as dealflowAppBase() (Brief 45 PR F).
+  return process.env.NODE_ENV === 'production'
 }
 
 // Returns { ok: true } to let the request through, or { ok: false, response }
@@ -77,7 +89,10 @@ function isVercelDeployment(): boolean {
 export function basicAuth(req: NextRequest): BasicAuthResult {
   const password = process.env.BASIC_AUTH_PASSWORD ?? ''
 
-  if (password === '') {
+  // Brief 50 (PR 16), engineering precaution (Brief 40 audit M5): a
+  // whitespace-only value is a mistyped setting, not a password: treat it as
+  // missing. The comparison below still uses the value exactly as set.
+  if (password.trim() === '') {
     // Brief 47 (PR 3), engineering precaution (Brief 40 audit M5): on a Vercel
     // deployment a missing password LOCKS the app instead of opening it. One
     // deleted or mistyped Vercel setting would otherwise open every homeowner's
@@ -90,14 +105,15 @@ export function basicAuth(req: NextRequest): BasicAuthResult {
       if (!warnedNotConfigured) {
         warnedNotConfigured = true
         console.error(
-          'Basic auth NOT CONFIGURED on a Vercel deployment: BASIC_AUTH_PASSWORD is empty, so every non-exempt route returns 503',
+          'Basic auth NOT CONFIGURED on a deployment: BASIC_AUTH_PASSWORD is empty or only spaces, so every non-exempt route returns 503',
         )
       }
       return { ok: false, response: notConfigured() }
     }
 
-    // Off Vercel (no VERCEL_ENV, or 'development') an unset or empty password
-    // disables the gate. This is the local-dev and E2E path: no prompt, no
+    // Off a deployment (VERCEL_ENV 'development', or no VERCEL_ENV and not a
+    // production build) an unset, empty or whitespace-only password disables
+    // the gate. This is the local-dev and E2E path (`next dev`): no prompt, no
     // credentials to thread through Playwright.
     if (!warnedDisabled) {
       warnedDisabled = true

@@ -26,6 +26,9 @@
                 "schema": { "$ref": "#/components/schemas/DncInternalResponse" }
               }
             }
+          },
+          "403": {
+            "description": "Brief 50 (PR 16), engineering precaution: a cross-site browser request (Sec-Fetch-Site other than same-origin, or an Origin whose host isn't this request's host). Body: {\"error\": \"cross_site_request\"}. Nothing is read or written. A request with neither header (a script sending the Basic-auth password itself) is not refused."
           }
         }
       }
@@ -39,7 +42,10 @@
         "properties": {
           "phone": { "type": "string", "description": "E.164 phone number" },
           "reason": { "type": "string", "description": "Optional (Brief C §7.4)" },
-          "addedBy": { "type": "string", "description": "Optional; User.id | \"user-request\"" }
+          "addedBy": {
+            "type": "string",
+            "description": "Optional free-text label for who or what added the number, stored as sent on a new entry (re-adding a number changes nothing). It is not a User.id and is not checked. The CRM's Settings > Do not contact screen sends \"settings-do-not-contact\". When it is missing or not a string, \"user-request\" is stored. (SMS STOP and the Brief 41.1 sweep add in-process, not through this route, as \"sms-inbound-handler\" and \"brief41-1-stop-sweep\".)"
+          }
         }
       },
       "DncInternalResponse": {
