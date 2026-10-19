@@ -18,6 +18,8 @@ export interface Column<T> {
   /** Any CSS width; omit to let the column flex. */
   width?: string
   align?: 'left' | 'right'
+  /** Extra classes on the column's header and cells (Brief 50: hide a column below a width). */
+  className?: string
   cell: (row: T) => React.ReactNode
 }
 
@@ -137,6 +139,7 @@ export function DataTable<T>({
                     'h-[41px] border-b border-r border-line px-3 text-base font-bold text-fg',
                     'last:border-r-0',
                     c.align === 'right' ? 'text-right' : 'text-left',
+                    c.className,
                   )}
                 >
                   {c.sortable && onSortChange ? (
@@ -196,6 +199,7 @@ export function DataTable<T>({
                     className={cn(
                       'border-r border-line px-3 text-base text-fg last:border-r-0',
                       c.align === 'right' ? 'text-right' : 'text-left',
+                      c.className,
                     )}
                   >
                     {c.cell(row)}

@@ -77,7 +77,8 @@ const renderList = (data: RankedPage) =>
 describe('list page: the "Our value" column [brief §5.4]', () => {
   it('shows "$1.83M" with "likely $1.54M–$2.12M" under it, after name and property, and says whose estimate it is', () => {
     const html = renderList(listPage([row(1, { value: VALUE }), row(2)]))
-    expect(headersOf(html)).toEqual(['#', 'Name and property', 'Our value', 'Why now', 'Best buyer', 'Groups', 'Attempts', 'Last result', 'Local time'])
+    // Brief 50 PR 7: attempts and last result are one "Calls" column.
+    expect(headersOf(html)).toEqual(['#', 'Name and property', 'Our value', 'Why now', 'Best buyer', 'Groups', 'Calls', 'Local time'])
     const t = text(html)
     expect(t).toContain('$1.83M')
     expect(t).toContain('likely $1.54M–$2.12M')

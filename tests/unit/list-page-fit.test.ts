@@ -15,12 +15,14 @@ import { ListView } from '@/app/lists/[id]/ListView'
 // box is a CSS size container; as it gets narrower, the less-used columns
 // fold into a neighbouring cell instead of disappearing, so every fact is
 // still on the row:
-//   ≥ 1320 px  every column;
-//   < 1320 px  local time goes under the calls;
-//   < 1200 px  the best buyer goes under "why now";
-//   < 1000 px  our value and the calls (with local time) go under the name;
+//   ≥ 1408 px  every column;
+//   < 1408 px  local time goes under the calls;
+//   < 1248 px  the best buyer goes under "why now";
+//   < 1024 px  our value and the calls (with local time) go under the name;
 //   <  768 px  (phones) "why now" (with the best buyer) and the groups go
 //              under the name too: the row is #, name and the facts beneath.
+// (Widths of the table's box: about 1,028 px in a 1,280 px window with the
+// sidebar, 1,188 px at 1,440 px, the whole width on a phone.)
 // Attempts and last result are one "Calls" column. The real widths are
 // checked in a browser (logs/pr7-width-*.log); this pins the rules. Made-up
 // names only.
@@ -105,13 +107,17 @@ function folded(html: string, cls: string): string[] {
 const SHOW = {
   always: null,
   phone: 'hidden @min-[48rem]:table-cell',
-  narrow: 'hidden @min-[62.5rem]:table-cell',
-  medium: 'hidden @min-[75rem]:table-cell',
-  wide: 'hidden @min-[82.5rem]:table-cell',
+  narrow: 'hidden @min-[64rem]:table-cell',
+  medium: 'hidden @min-[78rem]:table-cell',
+  wide: 'hidden @min-[88rem]:table-cell',
 } as const
 
 describe('the list table fits its page [open item 6.12]', () => {
-  const html = render([row(101), row(102, { rankState: 'scoring', priorityScore: null, whyNow: null, bestBuyer: null, value: null, groups: [], attempts: 0, lastResult: null })])
+  const html = render([
+    row(101),
+    row(102, { rankState: 'scoring', priorityScore: null, whyNow: null, bestBuyer: null, value: null, groups: [], attempts: 0, lastResult: null }),
+    row(103, { whyNow: null, bestBuyer: null, groups: [HOT], timezone: null, lastResult: null, attempts: 1 }),
+  ])
 
   it('the table sits in a size container, so the columns follow the room the table has (not the window)', () => {
     expect(html).toMatch(/<div class="[^"]*@container[^"]*"[^>]*>\s*<div class="overflow-x-auto/)
@@ -140,23 +146,28 @@ describe('the list table fits its page [open item 6.12]', () => {
 
   it('a folded column\'s facts show in its neighbour, only while its own column is hidden', () => {
     const [, , name, , whyNow, , , calls] = cells(html, 101)
-    // Under the name (< 1000 px): our value, then the calls with local time.
-    expect(folded(name.html, '@min-[62.5rem]:hidden')).toEqual(['$1.83M · likely $1.54M–$2.12M', '2 calls · Left Message · 12:00 pm Eastern'])
+    // Under the name (< 1024 px): our value, then the calls with local time.
+    expect(folded(name.html, '@min-[64rem]:hidden')).toEqual(['$1.83M · likely $1.54M–$2.12M', '2 calls · Left Message 12:00 pm Eastern'])
     // Under the name (phones): why now with the best buyer, and the groups (read-only there).
     expect(folded(name.html, '@min-[48rem]:hidden')).toEqual(['Right neighborhood, price fits budget Best buyer: Sample Buyer Agent 91 Test', 'Hot Nurture'])
-    // Under "why now" (< 1200 px): the best buyer.
-    expect(folded(whyNow.html, '@min-[75rem]:hidden')).toEqual(['Best buyer: Sample Buyer Agent 91 Test'])
-    // Under the calls (< 1320 px): local time.
-    expect(folded(calls.html, '@min-[82.5rem]:hidden')).toEqual(['12:00 pm Eastern'])
+    // Under "why now" (< 1248 px): the best buyer.
+    expect(folded(whyNow.html, '@min-[78rem]:hidden')).toEqual(['Best buyer: Sample Buyer Agent 91 Test'])
+    // Under the calls (< 1408 px): local time.
+    expect(folded(calls.html, '@min-[88rem]:hidden')).toEqual(['12:00 pm Eastern'])
     expect(text(calls.html)).toMatch(/^2 calls · Left Message/)
   })
 
   it('a row with little to say folds only what it has', () => {
     const [, , name, , whyNow, , , calls] = cells(html, 102)
-    expect(folded(name.html, '@min-[62.5rem]:hidden')).toEqual(['No calls yet · 12:00 pm Eastern'])
+    expect(folded(name.html, '@min-[64rem]:hidden')).toEqual(['No calls yet 12:00 pm Eastern'])
     expect(folded(name.html, '@min-[48rem]:hidden')).toEqual(['scoring…'])
-    expect(folded(whyNow.html, '@min-[75rem]:hidden')).toEqual([])
+    expect(folded(whyNow.html, '@min-[78rem]:hidden')).toEqual([])
     expect(text(calls.html)).toMatch(/^No calls yet/)
+    // Ranked with no reason given: no dash under the name (the column keeps its dash).
+    const [, , name103, , whyNow103] = cells(html, 103)
+    expect(folded(name103.html, '@min-[48rem]:hidden')).toEqual(['Hot'])
+    expect(folded(name103.html, '@min-[64rem]:hidden')).toEqual(['$1.83M · likely $1.54M–$2.12M', '1 call'])
+    expect(text(whyNow103.html)).toBe('—')
   })
 
   it('cells that could push the table wide are capped: names and buyers truncate, long reasons wrap', () => {

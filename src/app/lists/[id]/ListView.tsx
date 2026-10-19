@@ -11,7 +11,7 @@
 // links to the dialer.
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, useTransition, type ReactNode } from 'react'
 import { AlertTriangle, Archive, Check, ChevronLeft, ChevronRight, Download, ListX, Phone, Search } from 'lucide-react'
 import {
   Badge,
@@ -29,7 +29,8 @@ import { BOROUGHS, type BestBuyerDTO, type CallingWindowDTO, type GroupChipDTO, 
 import { LISTS_CHANGED_EVENT, getListMemberIds, listExportUrl, notifyListsChanged, updateList } from '@/lib/core-data/lists/client'
 import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
 import { RowGroupChips } from '@/components/lists/RowGroupChips'
-import { OurValueCell, valuesNote } from '@/components/lists/OurValue'
+import { OUR_VALUE_LABEL, OurValueCell, ourValueParts, valuesNote } from '@/components/lists/OurValue'
+import { chipClassName } from '@/components/lists/GroupChips'
 import { SelectAllMatching } from '@/components/lists/SelectAllMatching'
 import { selectAllOffer } from '@/components/lists/bulk-actions'
 import { timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
@@ -53,17 +54,44 @@ function useClock(fixed?: string): Date | null {
   return now
 }
 
+// ─── Fitting the page ─────────────────────────────────────────────────────────
+
+// Brief 50 PR 7 (open item 6.12): the table fits its box instead of scrolling
+// sideways (Brief 45 measured 228 px too wide at 1280 px, more with the value
+// column, and most of the table on a phone). The box is a CSS size container;
+// as it narrows, the less-used columns fold into a neighbouring cell instead
+// of disappearing, so every fact stays on the row:
+//   ≥ 1408 px  every column;
+//   < 1408 px  local time goes under the calls;
+//   < 1248 px  the best buyer goes under "why now";
+//   < 1024 px  our value and the calls (with local time) go under the name;
+//   <  768 px  (phones) "why now" (with the best buyer) and the groups go under
+//              the name too, read-only: the row is #, name and the facts beneath.
+// The widths leave room for the longest name, value, group and badge a cell
+// allows (names and buyers truncate, reasons and badges wrap), so each tier
+// fits from its first width: in a 1,280 px window the box is about 1,028 px,
+// at 1,440 px about 1,188 px, on a phone the whole width. Tailwind needs each
+// class written out, so every tier is a literal pair: its column, and its
+// facts folded.
+export const FIT = {
+  phone: { column: 'hidden @min-[48rem]:table-cell', folded: '@min-[48rem]:hidden' },
+  narrow: { column: 'hidden @min-[64rem]:table-cell', folded: '@min-[64rem]:hidden' },
+  medium: { column: 'hidden @min-[78rem]:table-cell', folded: '@min-[78rem]:hidden' },
+  wide: { column: 'hidden @min-[88rem]:table-cell', folded: '@min-[88rem]:hidden' },
+} as const
+
 // ─── Cells ────────────────────────────────────────────────────────────────────
 
-/** Why now, or why this person isn't ranked (they sit at the bottom). */
-function WhyNowCell({ row }: { row: RankedRow }) {
+/** Why now, or why this person isn't ranked (they sit at the bottom). Folded under the name, nothing instead of a dash. */
+function WhyNow({ row, folded = false }: { row: RankedRow; folded?: boolean }) {
   const badge = rankBadge(row)
   if (badge) {
     return (
       <Tooltip content={badge.help}>
         <span
           className={cn(
-            'inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-xs',
+            // Brief 50 PR 7: may wrap in a narrow column rather than widen the table.
+            'inline-block rounded-[0.625rem] px-2 py-0.5 text-xs leading-4',
             row.rankState === 'scoring' ? 'bg-accent-subtle text-accent' : 'bg-active text-muted',
           )}
         >
@@ -72,19 +100,103 @@ function WhyNowCell({ row }: { row: RankedRow }) {
       </Tooltip>
     )
   }
-  return row.whyNow ? <span className="line-clamp-2 min-w-[180px] text-sm">{row.whyNow}</span> : <span className="text-subtle">—</span>
+  if (row.whyNow) return <span className="line-clamp-2 text-sm">{row.whyNow}</span>
+  return folded ? null : <span className="text-subtle">—</span>
+}
+
+/**
+ * "Best buyer: Sample Buyer Agent 91 Test" for a folded cell: at most two
+ * lines, then cut short with "…". It wraps, so it never sets the cell's width
+ * the way an unbreakable line would.
+ */
+function BestBuyerLine({ buyer, className }: { buyer: BestBuyerDTO; className?: string }) {
+  return (
+    <span className={cn('line-clamp-2 text-xs', className)} title={buyer.name}>
+      <span className="text-subtle">Best buyer:</span> {buyer.name}
+      {buyer.score != null && <span className="tabular-nums text-muted"> {buyer.score}</span>}
+      {buyer.isTestData && <Badge className="ml-1.5 align-middle">Test</Badge>}
+    </span>
+  )
+}
+
+function WhyNowCell({ row }: { row: RankedRow }) {
+  return (
+    <div className="flex min-w-[9rem] flex-col items-start gap-0.5 py-1">
+      <WhyNow row={row} />
+      {row.bestBuyer && <BestBuyerLine buyer={row.bestBuyer} className={FIT.medium.folded} />}
+    </div>
+  )
 }
 
 function BestBuyerCell({ buyer }: { buyer: BestBuyerDTO | null }) {
   if (!buyer) return <span className="text-subtle">—</span>
   return (
-    <span className="flex w-[220px] min-w-0 items-center gap-1.5 whitespace-nowrap text-sm">
+    <span className="flex w-[11rem] min-w-0 items-center gap-1.5 whitespace-nowrap text-sm">
       <span className="min-w-0 truncate" title={buyer.name}>
         {buyer.name}
       </span>
       {buyer.score != null && <span className="shrink-0 tabular-nums text-muted">{buyer.score}</span>}
       {buyer.isTestData && <Badge className="shrink-0">Test</Badge>}
     </span>
+  )
+}
+
+/** "2 calls", "1 call", "No calls yet". */
+export const callsText = (attempts: number) => (attempts > 0 ? `${formatCount(attempts)} ${attempts === 1 ? 'call' : 'calls'}` : 'No calls yet')
+
+/** Calls made and the last result; "called today" only while calling is on [brief §5.1 rule 3]. */
+function CallsCell({ row, localTime }: { row: RankedRow; localTime: ReactNode }) {
+  return (
+    <span className="flex w-[8rem] flex-col py-1">
+      <span className="truncate text-sm" title={row.lastResult ?? undefined}>
+        <span className="tabular-nums">{callsText(row.attempts)}</span>
+        {row.lastResult && ` · ${row.lastResult}`}
+      </span>
+      {/* Shown only while calling is on (always false otherwise) [brief §5.1 rule 3]. */}
+      {row.calledToday && <span className="text-xs text-accent">called today</span>}
+      {row.timezone && <span className={cn('text-xs', FIT.wide.folded)}>{localTime}</span>}
+    </span>
+  )
+}
+
+/** The person, and beneath, the facts of the columns folded at this width. */
+function NameCell({ row, localTime }: { row: RankedRow; localTime: ReactNode }) {
+  return (
+    // On a phone the cell takes the box's width less the checkbox and # columns (cqw: the box's width).
+    <div className="flex min-w-0 max-w-[calc(100cqw-8.5rem)] flex-col gap-0.5 py-1 @min-[48rem]:max-w-[13rem]">
+      <Link href={`/leads/${row.leadId}`} onClick={(e) => e.stopPropagation()} className="block truncate text-link hover:underline" title={row.displayName}>
+        {row.displayName}
+      </Link>
+      {row.address && <p className="truncate text-xs text-muted">{row.address}</p>}
+      {row.value && (
+        <span className={cn('truncate text-xs tabular-nums', FIT.narrow.folded)} title={OUR_VALUE_LABEL}>
+          {`${ourValueParts(row.value).value} · ${ourValueParts(row.value).range}`}
+        </span>
+      )}
+      {(rankBadge(row) || row.whyNow || row.bestBuyer) && (
+        <span className={cn('flex min-w-0 flex-col items-start gap-0.5', FIT.phone.folded)}>
+          <WhyNow row={row} folded />
+          {row.bestBuyer && <BestBuyerLine buyer={row.bestBuyer} />}
+        </span>
+      )}
+      {row.groups.length > 0 && (
+        <span className={cn('flex flex-wrap gap-1', FIT.phone.folded)}>
+          {row.groups.map((g) => (
+            <span key={g.id} className={chipClassName(g.color, true, true)}>
+              <span className="min-w-0 max-w-[9rem] truncate">{g.name}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      <span className={cn('flex flex-col text-xs text-muted', FIT.narrow.folded)}>
+        <span className="line-clamp-2">
+          <span className="tabular-nums">{callsText(row.attempts)}</span>
+          {row.lastResult && ` · ${row.lastResult}`}
+          {row.calledToday && <span className="text-accent"> · called today</span>}
+        </span>
+        {row.timezone && localTime}
+      </span>
+    </div>
   )
 }
 
@@ -316,62 +428,41 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
   const showValues = data.rows.some((r) => r.value)
   const valueNote = valuesNote(data)
 
+  const localTime = (r: RankedRow) => (
+    <LocalTimeCell timezone={r.timezone} window={r.timezone ? data.callingWindows[r.timezone] : undefined} now={now} />
+  )
+  // Brief 50 PR 7: each column's FIT tier says from what width it shows; below
+  // it, its facts are folded into a neighbouring cell (see FIT).
   const columns: Column<RankedRow>[] = [
     {
       key: 'rank',
       header: '#',
-      width: '64px',
+      width: '56px',
       align: 'right',
       cell: (r) => <span className="tabular-nums text-muted">{formatCount(r.rank)}</span>,
     },
-    {
-      key: 'name',
-      header: 'Name and property',
-      cell: (r) => (
-        <div className="min-w-0 max-w-[280px] py-1">
-          <Link href={`/leads/${r.leadId}`} onClick={(e) => e.stopPropagation()} className="block truncate text-link hover:underline">
-            {r.displayName}
-          </Link>
-          {r.address && <p className="truncate text-xs text-muted">{r.address}</p>}
-        </div>
-      ),
-    },
+    { key: 'name', header: 'Name and property', cell: (r) => <NameCell row={r} localTime={localTime(r)} /> },
     // Brief 45 PR G: our value and range (Brief 44's estimate, the lead
     // page's), shown only when someone on this page has one; the header says
     // why otherwise. Ryan's own screen: never in the CSV export [Ryan,
     // 2026-10-17: our value estimates never reach anything a buyer or
     // homeowner sees].
     ...(showValues
-      ? [{ key: 'ourValue', header: 'Our value', width: '140px', cell: (r: RankedRow) => <OurValueCell value={r.value} /> }]
+      ? [{ key: 'ourValue', header: 'Our value', width: '140px', className: FIT.narrow.column, cell: (r: RankedRow) => <OurValueCell value={r.value} /> }]
       : []),
-    { key: 'whyNow', header: 'Why now', cell: (r) => <WhyNowCell row={r} /> },
-    { key: 'bestBuyer', header: 'Best buyer', width: '240px', cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
+    { key: 'whyNow', header: 'Why now', className: FIT.phone.column, cell: (r) => <WhyNowCell row={r} /> },
+    { key: 'bestBuyer', header: 'Best buyer', width: '200px', className: FIT.medium.column, cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
     {
       key: 'groups',
       header: 'Groups',
-      width: '260px',
+      width: '200px',
+      className: FIT.phone.column,
       // Brief 45 (PR C): one click on, one click off; keys 1–9 while the row has focus.
       cell: (r) => <RowGroupChips key={`${r.leadId}:${chipsVersion}`} leadId={r.leadId} groups={r.groups} />,
     },
-    { key: 'attempts', header: 'Attempts', width: '96px', align: 'right', cell: (r) => <span className="tabular-nums">{r.attempts}</span> },
-    {
-      key: 'lastResult',
-      header: 'Last result',
-      width: '150px',
-      cell: (r) => (
-        <span className="flex flex-col">
-          <span className={cn('truncate text-sm', !r.lastResult && 'text-subtle')}>{r.lastResult ?? '—'}</span>
-          {/* Shown only while calling is on (always false otherwise) [brief §5.1 rule 3]. */}
-          {r.calledToday && <span className="text-xs text-accent">called today</span>}
-        </span>
-      ),
-    },
-    {
-      key: 'localTime',
-      header: 'Local time',
-      width: '160px',
-      cell: (r) => <LocalTimeCell timezone={r.timezone} window={r.timezone ? data.callingWindows[r.timezone] : undefined} now={now} />,
-    },
+    // Brief 50 PR 7: attempts and the last result in one column.
+    { key: 'calls', header: 'Calls', width: '152px', className: FIT.narrow.column, cell: (r) => <CallsCell row={r} localTime={localTime(r)} /> },
+    { key: 'localTime', header: 'Local time', width: '150px', className: FIT.wide.column, cell: localTime },
   ]
 
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
@@ -513,8 +604,9 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
         </div>
       )}
 
-      {/* Close runs the grid edge to edge — no card inset. */}
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* Close runs the grid edge to edge — no card inset. Brief 50 PR 7: a size
+          container, so the columns follow the room the table has (FIT). */}
+      <div className="@container min-h-0 flex-1 overflow-auto">
         <DataTable
           columns={columns}
           rows={data.rows}
