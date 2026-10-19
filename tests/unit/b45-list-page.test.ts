@@ -50,6 +50,7 @@ function row(rank: number, patch: Partial<RankedRow> = {}): RankedRow {
     timezone: 'America/New_York',
     calledToday: false,
     addedAt: '2026-10-18T14:00:00.000Z',
+    value: null,
     ...patch,
   }
 }
@@ -71,6 +72,7 @@ function page(patch: Partial<RankedPage> = {}, listPatch: Partial<NonNullable<Ra
       'America/New_York': { earliestHour: 9, latestHour: 20, allowedDaysOfWeek: [1, 2, 3, 4, 5], confirmed: false },
       'America/Chicago': { earliestHour: 9, latestHour: 20, allowedDaysOfWeek: [1, 2, 3, 4, 5], confirmed: true },
     },
+    hasValues: false,
     rows: [
       row(101, { groups: [HOT, NURTURE] }),
       row(102, { rankState: 'scoring', priorityScore: null, topMatchFit: null, whyNow: null, bestBuyer: null, timezone: 'America/Chicago' }),

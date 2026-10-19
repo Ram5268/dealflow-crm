@@ -19,6 +19,8 @@ const ONE_OF_EACH: [keyof PipelineFilters, string][] = [
   ['units', '5+'],
   ['tier', 'possible'],
   ['strongBuyer', '1'],
+  ['valueMin', '1500000'],
+  ['valueMax', '2500000'],
   ['lastContact', 'over90'],
   ['taskDue', 'overdue'],
   ['timeInGroup', '60'],
@@ -112,10 +114,10 @@ describe('the Pipeline URL', () => {
     expect(page('7')).toBe(7)
   })
 
-  it('value filters are not offered yet: the link loads without them and says why', () => {
+  it('Brief 45 PR G: a value range in the link is read; the old single "value" parameter is left out with a note', () => {
     const r = parse('?value=1000000&valueMin=1&borough=Queens')
-    expect(r.query.filters).toEqual({ borough: 'Queens' })
-    expect(r.ignored).toEqual(["Filtering by value isn't available yet: our estimates aren't in the CRM."])
+    expect(r.query.filters).toEqual({ borough: 'Queens', valueMin: '1' })
+    expect(r.ignored).toEqual(["This link had a value filter the Pipeline doesn't know (1000000), so it was ignored."])
   })
 
   it('normalizes: rank ascending is the default sort, page 1 is no page, blank search is no search', () => {

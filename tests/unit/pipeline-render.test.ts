@@ -68,7 +68,8 @@ describe('the board', () => {
       expect(t).toContain(s)
     }
     expect(text(element(c, 'data-testid', 'card-groups'))).toMatch(/Hot\s*Nurture/)
-    // Our value estimate isn't shown until Brief 44's data exists.
+    // No value line on a card without our estimate (Brief 45 PR G: the line
+    // shows once DealFlow's morning update brings one in).
     expect(t).not.toMatch(/\$|value/i)
   })
 
@@ -180,7 +181,7 @@ describe('filters [brief §5.6]', () => {
     expect(text(element(gone, 'data-testid', 'filter-chips'))).toContain('List: (deleted list)')
   })
 
-  it('the panel offers every filter but value range (not until Brief 44), and nothing about personal circumstances', () => {
+  it('the panel offers every filter (value range once estimates exist), and nothing about personal circumstances', () => {
     const panel = wrap(h(FiltersPanel, {
       query: { view: 'board', filters: {} }, lists: pageData().lists, folders: pageData().folders, archivedLists: [],
       filterOptions: makeBoard().filterOptions, onChange: () => {}, onClear: () => {}, onHelp: () => {},
@@ -190,7 +191,7 @@ describe('filters [brief §5.6]', () => {
       'Last contact', 'Task due', 'Time in group', 'In more than one group', 'How these filters work']) {
       expect(t).toContain(label)
     }
-    expect(t).toMatch(/Value range.*not available yet/i)
+    expect(t).toMatch(/Value range.*appear after DealFlow's morning update/i) // these fixtures have no estimates yet
     expect(t).not.toMatch(/estate|probate|divorce|illness|\bage\b/i)
   })
 
@@ -199,7 +200,7 @@ describe('filters [brief §5.6]', () => {
     const covered = FILTER_HELP.flatMap((row) => row.keys)
     for (const key of PIPELINE_FILTER_KEYS) expect(covered).toContain(key)
     for (const s of ['Property Zip Code', 'Property City', 'Property Type', 'Last Contacted Date', 'never contacted', 'today through Sunday',
-      'New York', 'active lists', '80', '65', 'not offered yet', 'Called today']) {
+      'New York', 'active lists', '80', '65', 'without an estimate are left out', 'Called today']) {
       expect(t).toContain(s)
     }
   })
@@ -271,8 +272,8 @@ describe('getting there and the keys', () => {
 
 describe('notices', () => {
   it('shows what the server ignored in the link', () => {
-    const html = render({ notices: ["Filtering by value isn't available yet: our estimates aren't in the CRM."] })
-    expect(text(element(html, 'data-testid', 'pipeline-notices'))).toContain("Filtering by value isn't available yet")
+    const html = render({ notices: ["This link had a value filter the Pipeline doesn't know (900000), so it was ignored."] })
+    expect(text(element(html, 'data-testid', 'pipeline-notices'))).toContain("This link had a value filter the Pipeline doesn't know")
   })
 
   it('workflows fixture sanity', () => {

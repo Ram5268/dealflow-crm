@@ -160,7 +160,7 @@ describe("loadPipelinePage", () => {
     expect(r.query.filters).toEqual({ units: "5+" });
     expect(r.notices).toEqual([
       "This link had a DealFlow tier the Pipeline doesn't know (scorching), so it was ignored.",
-      "Filtering by value isn't available yet: our estimates aren't in the CRM.",
+      "This link had a value filter the Pipeline doesn't know (900000), so it was ignored.",
     ]);
     expect(r.result?.view).toBe("board");
   });

@@ -66,6 +66,7 @@ const FILTER_OPTIONS = {
   propertyTypes: ['Apartment House (5+ Units)', 'Duplex', 'Single Family Residence', 'Triplex'],
   neighborhoods: ['Bedford-Stuyvesant', 'Park Slope', 'Tribeca'],
   boroughs: ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island'],
+  hasValues: false,
 }
 
 /** A fresh board each call (tests mutate nothing, but compare against it). */
