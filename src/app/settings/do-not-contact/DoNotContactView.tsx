@@ -11,7 +11,7 @@ const SECTION = findSettingsSection('do-not-contact')!
  * only the last 4 digits of each number (readDoNotContactList), so the full
  * number is in neither the HTML nor the page data [engineering precaution].
  * No remove button [engineering precaution]: removing an opt-out allows
- * contact again, so it stays API-only.
+ * contact again, so removing one stays a deliberate database job.
  */
 export function DoNotContactView({ list }: { list: DoNotContactList }) {
   return (

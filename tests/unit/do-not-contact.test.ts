@@ -86,6 +86,18 @@ describe('the list shows the last 4 digits only', () => {
     expectNoFullNumber(JSON.stringify(row))
   })
 
+  it('a number pasted with a slash, an underscore or a Unicode dash is masked too', () => {
+    const forms = ['212/555/0123', '212_555_0123', '212\u2013555\u20130123', '212\u2011555\u20110123', '\uff12\uff11\uff12\uff15\uff15\uff15\uff10\uff11\uff12\uff13']
+    for (const f of forms) expect(redactPhoneNumbers(`Wife ${f} too`), f).toMatch(/^Wife ••••( 0123)? too$/)
+    expect(redactPhoneNumbers('Called 10/19/2026')).toBe('Called 10/19/2026')
+  })
+
+  it('a reason that is an Object.prototype key is shown as typed', () => {
+    for (const r of ['constructor', 'toString', '__proto__']) {
+      expect(toOptOutRow({ phone: '+12125550123', reason: r, addedAt: new Date() }).reason, r).toBe(r)
+    }
+  })
+
   it('the date added is shown as a New York calendar date', () => {
     expect(formatAddedDate('2026-10-19T14:00:00.000Z')).toBe('Oct 19, 2026')
     expect(formatAddedDate('2026-10-19T02:00:00.000Z')).toBe('Oct 18, 2026') // 10 pm the evening before in New York

@@ -12,7 +12,7 @@ import { DISPLAY_TZ } from '@/lib/ui/time'
  *   here, on the server, before anything reaches the page [engineering
  *   precaution].
  * - There is no way to remove an opt-out on this screen: removing one allows
- *   contact again, so it stays API-only [engineering precaution].
+ *   contact again, so removing one stays a deliberate database job (there is no remove route) [engineering precaution].
  *
  * Pure (no database, no `server-only`): the list read takes its db, and the
  * client form imports `submitOptOut` from here.
@@ -61,9 +61,10 @@ export function maskedPhone(last4: string | null): string {
   return last4 ? `•••• ${last4}` : '••••'
 }
 
-// A run of digits, possibly split by spaces, dots, hyphens or parentheses, with
-// an optional leading "+".
-const DIGIT_RUN = /\+?\(?\d[\d\s().-]*\d/g
+// A run of digits, possibly split by spaces, dots, slashes, underscores,
+// parentheses or any dash (en dash, non-breaking hyphen... as pasted from a web
+// page or a phone), with an optional leading "+". Any script's digits count.
+const DIGIT_RUN = /\+?\(?\p{Nd}[\p{Nd}\s\p{Pd}()./_\u00b7]*\p{Nd}/gu
 
 /**
  * A reason is free text, so a number typed into it is masked like the list's
@@ -72,23 +73,25 @@ const DIGIT_RUN = /\+?\(?\d[\d\s().-]*\d/g
  */
 export function redactPhoneNumbers(text: string): string {
   return text.replace(DIGIT_RUN, (run) => {
-    const n = run.replace(/\D/g, '').length
+    const n = run.match(/\p{Nd}/gu)?.length ?? 0
     return n === 7 || n >= 10 ? maskedPhone(last4Of(run)) : run
   })
 }
 
 // The codes the SMS STOP handler stores (comms/sms/stop-handler.ts), in plain
 // English. Anything else was typed by a person and is shown as typed.
-const REASON_TEXT: Record<string, string> = {
-  sms_stop_received: 'Texted STOP',
-  sms_stop_phrase: 'A text with a stop word in it',
-}
+// A Map, not an object: a reason typed as "constructor" or "__proto__" must not
+// read Object.prototype (it would break the page's render).
+const REASON_TEXT = new Map<string, string>([
+  ['sms_stop_received', 'Texted STOP'],
+  ['sms_stop_phrase', 'A text with a stop word in it'],
+])
 
 export function toOptOutRow(row: { phone: string | null; reason: string | null; addedAt: Date }): OptOutRow {
   const reason = row.reason?.trim()
   return {
     last4: last4Of(row.phone),
-    reason: reason ? (REASON_TEXT[reason] ?? redactPhoneNumbers(reason)) : null,
+    reason: reason ? (REASON_TEXT.get(reason) ?? redactPhoneNumbers(reason)) : null,
     addedAt: row.addedAt.toISOString(),
   }
 }
