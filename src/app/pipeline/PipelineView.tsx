@@ -17,7 +17,7 @@ import { createMoveQueue, createPersonQueue, type MoveQueue } from './move-queue
 import { PipelineChipApi, queuedChipApi } from './PipelineGroupChips'
 import type { ChipApi } from '@/components/lists/group-chips-state'
 import {
-  DEFAULT_QUERY, PIPELINE_PATH, normalizeQuery, panelFilterCount, pipelineHref, pipelineSearch, sameQuery, withFilter, withFilters,
+  DEFAULT_QUERY, PIPELINE_PATH, normalizeQuery, panelFilterCount, pipelineHref, pipelineSearch, sameQuery, withFilters,
 } from './url'
 import { matchesWorkflow } from './workflows'
 import type { PipelinePageData } from './types'
@@ -289,7 +289,7 @@ export function PipelineView(props: PipelinePageData) {
       <FilterChips
         filters={query.filters}
         names={{ lists: props.lists, archivedLists: props.archivedLists, folders: props.folders }}
-        onRemove={(key) => navigate(withFilter(query, key, undefined))}
+        onRemove={(keys) => navigate(withFilters(query, Object.fromEntries(keys.map((k) => [k, undefined]))))}
         onClear={clearFilters}
       />
       <Notices notices={notices} onDismiss={() => setNotices([])} />

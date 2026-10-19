@@ -217,7 +217,10 @@ describe("only an estimate toPropertyFacts would keep counts", () => {
 
   it("agrees with the lead page's card (toPropertyFacts) on every one of them", async () => {
     const page = await getRankedPage(o, listId, {}, db);
-    for (const [k] of cases) {
+    // "huge" and "tiny" are numbers the sync can't write (it stores JSON.stringify
+    // output); the lead page's own lookup can't even read "huge" (Prisma: "number
+    // out of range"). They're here to prove the list page never errors on them.
+    for (const [k] of cases.filter(([key]) => key !== "huge" && key !== "tiny")) {
       const card = valueOf(await getLeadProperty(o, { id: ids[k], mojoId: `${TAG}_ms_${k}` }, db));
       expect([k, page.rows.find((r) => r.leadId === ids[k])!.value]).toEqual([k, card]);
     }

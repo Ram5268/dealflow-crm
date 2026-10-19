@@ -105,6 +105,20 @@ export interface BestBuyerDTO {
   isTestData: boolean
 }
 
+/**
+ * Our value estimate of the home (Brief 44): DealFlow's own, the one on the
+ * lead page's "Property value and facts" card. Ryan's screens only: never in a
+ * CSV export or a message [Ryan, 2026-10-17: our value estimates never reach
+ * anything a buyer or homeowner sees].
+ */
+export interface OurValueDTO {
+  /** Dollars. */
+  value: number
+  /** The likely range: it holds the sale price about 2 times in 3 (Brief 44). */
+  low: number
+  high: number
+}
+
 export interface CallingWindowDTO {
   earliestHour: number
   latestHour: number
@@ -135,6 +149,8 @@ export interface RankedRow {
   calledToday: boolean
   /** When the lead joined this list; null for All leads. */
   addedAt: string | null
+  /** Brief 45 PR G: our value estimate (the lead page's); null when DealFlow has none for this home. */
+  value: OurValueDTO | null
 }
 
 export interface RankedPage {
@@ -148,6 +164,11 @@ export interface RankedPage {
   rankedAt: string | null
   callingOffReason: string | null
   callingWindows: Record<string, CallingWindowDTO>
+  /**
+   * Brief 45 PR G: DealFlow's estimates are in the CRM (some lead of the org
+   * has one). False until a morning update brings them in.
+   */
+  hasValues: boolean
   rows: RankedRow[]
 }
 
@@ -184,10 +205,17 @@ export interface PipelineFilters {
   timeInGroup?: '30' | '60' | '90'
   multiGroup?: '1'
   q?: string
+  /**
+   * Brief 45 PR G: our value at least / at most this many whole dollars
+   * ("1500000"), both ends included. People without an estimate are left out
+   * while either is set.
+   */
+  valueMin?: string
+  valueMax?: string
 }
 
 export const PIPELINE_FILTER_KEYS = [
-  'list', 'folder', 'borough', 'neighborhood', 'propertyType', 'units', 'tier', 'strongBuyer',
+  'list', 'folder', 'borough', 'neighborhood', 'propertyType', 'units', 'tier', 'strongBuyer', 'valueMin', 'valueMax',
   'lastContact', 'taskDue', 'timeInGroup', 'multiGroup', 'q',
 ] as const satisfies readonly (keyof PipelineFilters)[]
 
@@ -213,8 +241,8 @@ export interface PipelineCard {
   leadId: string
   displayName: string
   address: string | null
-  /** Our value estimate: not shown until Brief 44 data exists. */
-  value: null
+  /** Our value estimate (Brief 44, the lead page's); null when DealFlow has none for this home. */
+  value: OurValueDTO | null
   bestBuyer: BestBuyerDTO | null
   lastContactAt: string | null
   nextTask: { text: string; dueDate: string | null } | null
@@ -241,6 +269,8 @@ export interface PipelineFilterOptions {
   propertyTypes: string[]
   neighborhoods: string[]
   boroughs: string[]
+  /** Brief 45 PR G: DealFlow's estimates are in the CRM, so the value range is offered. */
+  hasValues: boolean
 }
 
 export interface PipelineBoard {
@@ -253,7 +283,7 @@ export interface PipelineRow {
   leadId: string
   displayName: string
   address: string | null
-  value: null
+  value: OurValueDTO | null
   bestBuyer: BestBuyerDTO | null
   lastContactAt: string | null
   nextTask: { text: string; dueDate: string | null } | null

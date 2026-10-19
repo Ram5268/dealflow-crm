@@ -29,6 +29,7 @@ import { BOROUGHS, type BestBuyerDTO, type CallingWindowDTO, type GroupChipDTO, 
 import { LISTS_CHANGED_EVENT, getListMemberIds, listExportUrl, notifyListsChanged, updateList } from '@/lib/core-data/lists/client'
 import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
 import { RowGroupChips } from '@/components/lists/RowGroupChips'
+import { OurValueCell, valuesNote } from '@/components/lists/OurValue'
 import { SelectAllMatching } from '@/components/lists/SelectAllMatching'
 import { selectAllOffer } from '@/components/lists/bulk-actions'
 import { timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
@@ -312,6 +313,9 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
     }
   }
 
+  const showValues = data.rows.some((r) => r.value)
+  const valueNote = valuesNote(data)
+
   const columns: Column<RankedRow>[] = [
     {
       key: 'rank',
@@ -332,9 +336,14 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
         </div>
       ),
     },
-    // Seam: "our value and range" goes here once Brief 44's estimates exist
-    // (Ryan-only screens; never anything a buyer or homeowner sees [Ryan,
-    // 2026-10-17]). No column until that data is present.
+    // Brief 45 PR G: our value and range (Brief 44's estimate, the lead
+    // page's), shown only when someone on this page has one; the header says
+    // why otherwise. Ryan's own screen: never in the CSV export [Ryan,
+    // 2026-10-17: our value estimates never reach anything a buyer or
+    // homeowner sees].
+    ...(showValues
+      ? [{ key: 'ourValue', header: 'Our value', width: '140px', cell: (r: RankedRow) => <OurValueCell value={r.value} /> }]
+      : []),
     { key: 'whyNow', header: 'Why now', cell: (r) => <WhyNowCell row={r} /> },
     { key: 'bestBuyer', header: 'Best buyer', width: '240px', cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
     {
@@ -385,6 +394,11 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
             {sourceLine(list)} ·{' '}
             <span suppressHydrationWarning>{rankedHeadline(data.rankedAt, now ?? new Date())}</span>
           </p>
+          {valueNote && (
+            <p data-testid="values-note" className="mt-0.5 text-xs text-subtle">
+              {valueNote}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-start gap-2">
           <Button asChild>

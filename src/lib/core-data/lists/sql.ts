@@ -260,6 +260,87 @@ export function bestBuyerJoins(leadAlias: string): Prisma.Sql {
   )
 }
 
+// ─── Our value estimate, for one page of leads (Brief 45 PR G) ──────────────
+// DealFlow's estimate of the seller's home (Brief 44), which the 7:00 sync
+// stores on the seller's signal as dealflowRawJson.property {asOf, value, low,
+// high, …} (dealflow-sync/property.ts). The signal is the lead page's
+// (getLeadProperty in dealflow-sync/property-lookup.ts): the best-ranked of the
+// org's signals that name this lead (crmLeadId) or carry its Mojo ID while
+// naming no other lead of the org; on a tie, the one naming the lead. That
+// signal's estimate or none: another signal's is never borrowed. Like best
+// buyers, only the scope's signals are read. Ryan's own screens only: never in
+// a CSV export or a message [Ryan, 2026-10-17: our value estimates never reach
+// anything a buyer or homeowner sees].
+
+// toPropertyFacts' rule for a value, in SQL (a stored estimate already passed
+// it at the sync; this keeps anything else off the page): three JSON numbers,
+// low ≤ value ≤ high, low at least half the value, high at most twice it, at
+// most $1,000,000,000, and a real as-of day. One difference [engineering
+// precaution]: under $1 counts as no value (toPropertyFacts takes anything
+// above 0), so every amount converts to a float exactly as JavaScript reads it
+// and a vanishingly small one can't break the page's query. Each CASE keeps
+// the casts behind their checks.
+const ESTIMATE_MAX = 1_000_000_000 // DealFlow's import cap (toPropertyFacts' dollars)
+const AS_OF_DAY = '^(19[0-9]{2}|20[0-9]{2}|2100)-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
+
+/** float8[] {value, low, high} from the property JSON `p` (SQL), or NULL. */
+function ourValueSql(p: string): Prisma.Sql {
+  const n = (key: string) => `(${p}->'${key}')::numeric`
+  const day = `(${p}->>'asOf')`
+  return Prisma.raw(`CASE WHEN jsonb_typeof(${p}->'value') = 'number' AND jsonb_typeof(${p}->'low') = 'number'
+      AND jsonb_typeof(${p}->'high') = 'number' AND ${day} ~ '${AS_OF_DAY}'
+    THEN CASE WHEN ${n('low')} >= 1 AND ${n('high')} <= ${ESTIMATE_MAX} AND ${n('low')} <= ${n('value')}
+        AND ${n('value')} <= ${n('high')} AND ${n('low')} * 2 >= ${n('value')} AND ${n('high')} <= ${n('value')} * 2
+        AND ${day} = to_char(((left(${day}, 7) || '-01')::date + (right(${day}, 2)::int - 1))::timestamp, 'YYYY-MM-DD')
+      THEN ARRAY[${n('value')}::float8, ${n('low')}::float8, ${n('high')}::float8] END
+  END`)
+}
+
+/** CTEs value_signal and our_value(lead_id, value, low, high) for the leads (id, "mojoId") of CTE `scopeCte`. */
+export function ourValueCtes(organizationId: string, scopeCte: string): Prisma.Sql {
+  const scope = Prisma.raw(scopeCte)
+  // OFFSET 0: each signal's "property" is read once, not once per use in ourValueSql.
+  return Prisma.sql`value_signal AS (
+    SELECT * FROM (
+      SELECT s."dealflowRawJson"->>'crmLeadId' AS lead_id, 0 AS by_mojo, s."queueRank" AS queue_rank, s.id,
+        s."dealflowRawJson"->'property' AS p
+      FROM "DealFlowDerivedSignal" s
+      WHERE s."organizationId" = ${organizationId} AND s."dealflowRawJson"->>'crmLeadId' IN (SELECT id FROM ${scope})
+      UNION ALL
+      SELECT sc.id, 1, s."queueRank", s.id, s."dealflowRawJson"->'property'
+      FROM (SELECT DISTINCT id, "mojoId" FROM ${scope} WHERE "mojoId" IS NOT NULL) sc
+      JOIN "DealFlowDerivedSignal" s ON s."mojoId" = sc."mojoId"
+      WHERE s."organizationId" = ${organizationId}
+        -- Not when DealFlow named another lead of this org for this signal.
+        AND NOT EXISTS (SELECT 1 FROM "Lead" o
+          WHERE o.id = s."dealflowRawJson"->>'crmLeadId' AND o."organizationId" = ${organizationId})
+    ) found OFFSET 0
+  ),
+  our_value AS (
+    SELECT lead_id, est[1] AS value, est[2] AS low, est[3] AS high
+    FROM (SELECT DISTINCT ON (lead_id) lead_id, ${ourValueSql('p')} AS est
+          FROM value_signal ORDER BY lead_id, queue_rank NULLS LAST, by_mojo, id) chosen
+    WHERE est IS NOT NULL
+  )`
+}
+
+/** The join for ourValueCtes; select ov.value, ov.low, ov.high. */
+export function ourValueJoin(leadAlias: string): Prisma.Sql {
+  return Prisma.raw(`LEFT JOIN our_value ov ON ov.lead_id = ${leadAlias}.id`)
+}
+
+/** Whether any of the org's signals holds a usable estimate: has a morning update brought them in yet? */
+export function hasValuesSql(organizationId: string): Prisma.Sql {
+  return Prisma.sql`EXISTS (SELECT 1 FROM (SELECT s."dealflowRawJson"->'property' AS p FROM "DealFlowDerivedSignal" s
+      WHERE s."organizationId" = ${organizationId} OFFSET 0) sig WHERE ${ourValueSql('sig.p')} IS NOT NULL)`
+}
+
+/** The estimate as a page shows it (lists/types.ts OurValueDTO), or null. */
+export function ourValueDTO(value: number | null, low: number | null, high: number | null): { value: number; low: number; high: number } | null {
+  const ok = (n: number | null): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0
+  return ok(value) && ok(low) && ok(high) ? { value, low, high } : null
+}
+
 /** The stored buyer as the page shows it: a name, a score, and whether it's test data. Never a phone or email. */
 export function bestBuyerDTO(raw: unknown): BestBuyerDTO | null {
   const [b] = toBuyers([raw])

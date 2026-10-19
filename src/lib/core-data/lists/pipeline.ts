@@ -15,9 +15,14 @@
 //   taskDue         an open task due today / by this Sunday / before today (New York dates)
 //   timeInGroup     joined the column's group (table: any shown group) at least N days ago
 //   multiGroup      in two or more groups
-// Value range is not offered until Brief 44's estimates are in the CRM.
-// Sensitive life details are never filters [engineering precaution; fair-housing
-// and NY human-rights law].
+//   valueMin/Max    our value estimate (Brief 44, the lead page's), in whole
+//                   dollars, both ends included; people without one are left
+//                   out (Brief 45 PR G; the page offers it once the org has
+//                   estimates, filterOptions.hasValues)
+// Cards and rows carry that estimate too, for Ryan's own screen only [Ryan,
+// 2026-10-17: our value estimates never reach anything a buyer or homeowner
+// sees]. Sensitive life details are never filters [engineering precaution;
+// fair-housing and NY human-rights law].
 import { z } from 'zod'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
@@ -27,12 +32,12 @@ import {
   type GroupChipDTO, type PipelineCard, type PipelineColumn, type PipelineFilterOptions,
   type PipelineFilters, type PipelineQuery, type PipelineResult, type PipelineRow, type PipelineSortKey, type SortDir,
 } from './types'
-import { HOT_MIN_FIT, STRONG_BUYER_MIN_FIT, WARM_MIN_FIT } from './rules'
+import { HOT_MIN_FIT, STRONG_BUYER_MIN_FIT, WARM_MIN_FIT, canonicalDollars } from './rules'
 import { NEIGHBORHOODS, cleanText } from './geo'
 import { listGroups } from './groups'
 import {
   FIELD, NY, attemptsOf, badRequest, bestBuyerCtes, bestBuyerDTO, bestBuyerJoins, boroughSql, cleanSql, defsCte, fieldValue,
-  groupChipsSql, leadInOrg, likePattern, neighborhoodSql, unitsSql, utc, zipOf,
+  groupChipsSql, hasValuesSql, leadInOrg, likePattern, neighborhoodSql, ourValueCtes, ourValueDTO, ourValueJoin, unitsSql, utc, zipOf,
 } from './sql'
 
 // ─── The filters, as the query string spells them ────────────────────────────
@@ -43,6 +48,8 @@ const LAST_CONTACT = ['never', 'over7', 'over30', 'over60', 'over90'] as const
 const TASK_DUE = ['today', 'week', 'overdue'] as const
 const TIME_IN_GROUP = ['30', '60', '90'] as const
 const id = z.string().min(1).max(64)
+// Whole dollars, written one way (rules.ts canonicalDollars).
+const dollars = z.string().refine((v) => canonicalDollars(v) === v, 'Whole dollars from 0 to 1,000,000,000.')
 
 /** A saved workflow's filters: exactly these keys, nothing else [CONTRACT §6b]. */
 export const pipelineFiltersSchema = z.strictObject({
@@ -59,7 +66,22 @@ export const pipelineFiltersSchema = z.strictObject({
   timeInGroup: z.enum(TIME_IN_GROUP).optional(),
   multiGroup: z.literal('1').optional(),
   q: z.string().max(200).optional(),
+  valueMin: dollars.optional(),
+  valueMax: dollars.optional(),
+}).refine((f) => f.valueMin === undefined || f.valueMax === undefined || Number(f.valueMin) <= Number(f.valueMax), {
+  message: 'The value range is backwards: the lowest value is above the highest.',
 })
+
+/** One end of the value range from the query string, written one way; 400 in plain English otherwise. */
+function valueEnd(raw: string | undefined, which: 'lowest' | 'highest'): string | undefined {
+  if (raw === undefined) return undefined
+  const dollars = canonicalDollars(raw)
+  if (dollars === null) throw badRequest(`The ${which} value must be whole dollars from 0 to 1,000,000,000 (not ${raw.slice(0, 40)}).`)
+  return dollars
+}
+
+/** The value range is on: our estimate is then read for every candidate (and people without one are left out). */
+const valueFilterOn = (f: PipelineFilters) => f.valueMin !== undefined || f.valueMax !== undefined
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly T[], what: string): T | undefined {
   if (value === undefined) return undefined
@@ -75,9 +97,10 @@ function flag(value: string | undefined, what: string): '1' | undefined {
 
 /** GET /api/core-data/pipeline's query string → a PipelineQuery (400 on anything unknown). */
 export function parsePipelineQuery(sp: URLSearchParams): PipelineQuery {
-  for (const key of ['value', 'valueMin', 'valueMax']) {
-    if (sp.has(key)) throw badRequest("Filtering by value isn't available yet: our estimates aren't in the CRM.")
-  }
+  // Brief 45 PR G: the range is valueMin / valueMax; a bare `value` is refused
+  // (never guessed at) rather than ignored, so a hand-made link can't quietly
+  // show everyone.
+  if (sp.has('value')) throw badRequest('Filter by value with valueMin and valueMax, in whole dollars.')
   const get = (key: string) => sp.get(key)?.trim() || undefined
   const filters: PipelineFilters = {}
   const set = <K extends keyof PipelineFilters>(key: K, value: PipelineFilters[K] | undefined) => {
@@ -106,6 +129,15 @@ export function parsePipelineQuery(sp: URLSearchParams): PipelineQuery {
   set('taskDue', oneOf(get('taskDue'), TASK_DUE, 'task filter'))
   set('timeInGroup', oneOf(get('timeInGroup'), TIME_IN_GROUP, 'time-in-group filter'))
   set('multiGroup', flag(get('multiGroup'), 'multi-group filter'))
+  const valueMin = valueEnd(get('valueMin'), 'lowest')
+  const valueMax = valueEnd(get('valueMax'), 'highest')
+  // Backwards is refused, not swapped: the page never writes it (the Filters
+  // panel says so as you type), so a backwards link is a mistake to show.
+  if (valueMin !== undefined && valueMax !== undefined && Number(valueMin) > Number(valueMax)) {
+    throw badRequest('The value range is backwards: the lowest value is above the highest.')
+  }
+  set('valueMin', valueMin)
+  set('valueMax', valueMax)
   set('q', get('q')?.slice(0, 200)) // like list pages' search box
   const page = Number.parseInt(get('page') ?? '1', 10)
   return {
@@ -139,7 +171,9 @@ const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_
 
 // defs → allrank (every lead's All-leads rank) → cand (one row per shown
 // group and member) → open tasks (one pass: due flags and the next task per
-// lead) → info (per lead: what the filters read).
+// lead) → info (per lead: what the filters read) → with the value range on,
+// our_value for every candidate (otherwise each query reads it for the shown
+// page only, after paging).
 function ctes(ctx: Ctx): Prisma.Sql {
   return Prisma.sql`WITH ${defsCte(ctx.org)},
   allrank AS (
@@ -185,8 +219,11 @@ function ctes(ctx: Ctx): Prisma.Sql {
     JOIN allrank ar ON ar.id = l.id
     LEFT JOIN task_agg ta ON ta."leadId" = l.id
     WHERE ${leadInOrg('l', ctx.org)}
-  )`
+  )${valueFilterOn(ctx.filters) ? Prisma.sql`, ${ourValueCtes(ctx.org, 'info')}` : Prisma.empty}`
 }
+
+/** our_value for the page or cards shown (`scope`), unless ctes() already read it for every candidate. */
+const shownValues = (ctx: Ctx, scope: string) => (valueFilterOn(ctx.filters) ? Prisma.empty : Prisma.sql`, ${ourValueCtes(ctx.org, scope)}`)
 
 // Not an index condition (see leadInOrg): the lead's own activity index is the
 // cheap way in; ANDing it with the org's index scans every org activity per lead.
@@ -231,6 +268,17 @@ function leadConditions(ctx: Ctx): Prisma.Sql[] {
   if (f.taskDue === 'week') conds.push(Prisma.sql`i.due_week`)
   if (f.taskDue === 'overdue') conds.push(Prisma.sql`i.overdue`)
   if (f.multiGroup) conds.push(Prisma.sql`i.group_count >= 2`)
+  if (valueFilterOn(f)) {
+    // Both ends included; no estimate, no match (our_value has no row).
+    const bounds: Prisma.Sql[] = []
+    for (const [raw, op] of [[f.valueMin, '>='], [f.valueMax, '<=']] as const) {
+      if (raw === undefined) continue
+      const dollars = canonicalDollars(raw)
+      if (dollars === null) throw badRequest('The value range must be whole dollars from 0 to 1,000,000,000.')
+      bounds.push(Prisma.sql`ov.value ${Prisma.raw(op)} ${Number(dollars)}::float8`)
+    }
+    conds.push(Prisma.sql`EXISTS (SELECT 1 FROM our_value ov WHERE ov.lead_id = i.id AND ${Prisma.join(bounds, ' AND ')})`)
+  }
   return conds
 }
 
@@ -258,6 +306,9 @@ interface CardSql {
   next_text: string | null
   next_due_date: Date | null
   best_buyer: unknown
+  our_value: number | null
+  our_low: number | null
+  our_high: number | null
 }
 
 interface RowSql extends Omit<CardSql, 'group_id' | 'col_count' | 'added_at'> {
@@ -316,21 +367,22 @@ export async function getPipeline(
       f AS (SELECT p.in_group_since, i.* FROM per_lead p JOIN info i ON i.id = p.id
             WHERE ${and([...leadConditions(ctx), ...timeInGroup(ctx, 'p.in_group_since')])}),
       page AS (SELECT * FROM f ORDER BY ${sortSql('f', sort, dir)} LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}),
-      ${bestBuyerCtes(organizationId, 'page')}
+      ${bestBuyerCtes(organizationId, 'page')}${shownValues(ctx, 'page')}
       SELECT t.total, p.id, p."displayName", p."primaryAddressSummary" AS address, p.in_group_since, p.rank, p."mojoId",
         p."priorityScore", p."topMatchFit", p.last_contact_at, p.next_due,
         ${groupChipsSql('p.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date,
-        COALESCE(bl.best, bm.best) AS best_buyer
+        COALESCE(bl.best, bm.best) AS best_buyer, ov.value AS our_value, ov.low AS our_low, ov.high AS our_high
       FROM (SELECT count(*)::int AS total FROM f) t
       LEFT JOIN page p ON true
       ${nextTaskJoin('p.id')}
       ${bestBuyerJoins('p')}
+      ${ourValueJoin('p')}
       ORDER BY ${sortSql('p', sort, dir)}`
     const out: PipelineRow[] = rows.filter((r) => r.id !== null).map((r) => ({
       leadId: r.id as string,
       displayName: r.displayName,
       address: r.address,
-      value: null,
+      value: ourValueDTO(r.our_value, r.our_low, r.our_high),
       bestBuyer: bestBuyerDTO(r.best_buyer),
       lastContactAt: r.last_contact_at?.toISOString() ?? null,
       nextTask: nextTask(r),
@@ -355,16 +407,17 @@ export async function getPipeline(
     numbered AS (SELECT f.*, (row_number() OVER (PARTITION BY f.group_id ORDER BY f.rank))::int AS pos FROM f),
     counts AS (SELECT group_id, count(*)::int AS n FROM f GROUP BY group_id),
     shown_cards AS (SELECT * FROM numbered WHERE pos > ${offset} AND pos <= ${offset + BOARD_PAGE_SIZE}),
-    ${bestBuyerCtes(organizationId, 'shown_cards')}
+    ${bestBuyerCtes(organizationId, 'shown_cards')}${shownValues(ctx, 'shown_cards')}
     SELECT g.gid AS group_id, COALESCE(counts.n, 0) AS col_count, n.id, n."displayName", n."primaryAddressSummary" AS address,
       n.added_at, n.rank, n."mojoId", n.last_contact_at,
       ${groupChipsSql('n.id')} AS groups, nt.text AS next_text, nt."dueDate" AS next_due_date,
-      COALESCE(bl.best, bm.best) AS best_buyer
+      COALESCE(bl.best, bm.best) AS best_buyer, ov.value AS our_value, ov.low AS our_low, ov.high AS our_high
     FROM unnest(${columnIds}::text[]) AS g(gid)
     LEFT JOIN counts ON counts.group_id = g.gid
     LEFT JOIN shown_cards n ON n.group_id = g.gid
     ${nextTaskJoin('n.id')}
     ${bestBuyerJoins('n')}
+    ${ourValueJoin('n')}
     ORDER BY g.gid, n.pos`
   const columns: PipelineColumn[] = columnGroups.map((group) => {
     const mine = cards.filter((c) => c.group_id === group.id)
@@ -375,7 +428,7 @@ export async function getPipeline(
         leadId: c.id as string,
         displayName: c.displayName,
         address: c.address,
-        value: null,
+        value: ourValueDTO(c.our_value, c.our_low, c.our_high),
         bestBuyer: bestBuyerDTO(c.best_buyer),
         lastContactAt: c.last_contact_at?.toISOString() ?? null,
         nextTask: nextTask(c),
@@ -390,16 +443,21 @@ export async function getPipeline(
   return { view: 'board', columns, filterOptions }
 }
 
+// One query: the property types in the org, and (Brief 45 PR G) whether
+// DealFlow's estimates are in yet, which decides if the value range is offered.
 async function loadFilterOptions(organizationId: string, db: PrismaClient): Promise<PipelineFilterOptions> {
-  const rows = await db.$queryRaw<{ t: string }[]>`
-    SELECT DISTINCT btrim(regexp_replace(v."valueText", ${'\\s+'}, ' ', 'g')) AS t
-    FROM "CustomFieldValue" v JOIN "CustomFieldDefinition" d ON d.id = v."definitionId"
-    WHERE d."organizationId" = ${organizationId} AND d."objectType" = 'lead' AND d.name = ${FIELD.propertyType}
-      AND btrim(coalesce(v."valueText", '')) <> ''
-    LIMIT 500`
+  const [row] = await db.$queryRaw<{ types: string[]; hasValues: boolean }[]>`
+    SELECT ARRAY(
+        SELECT DISTINCT btrim(regexp_replace(v."valueText", ${'\\s+'}, ' ', 'g'))
+        FROM "CustomFieldValue" v JOIN "CustomFieldDefinition" d ON d.id = v."definitionId"
+        WHERE d."organizationId" = ${organizationId} AND d."objectType" = 'lead' AND d.name = ${FIELD.propertyType}
+          AND btrim(coalesce(v."valueText", '')) <> ''
+        LIMIT 500) AS types,
+      ${hasValuesSql(organizationId)} AS "hasValues"`
   return {
-    propertyTypes: rows.map((r) => r.t).sort((a, b) => a.localeCompare(b)),
+    propertyTypes: [...(row?.types ?? [])].sort((a, b) => a.localeCompare(b)),
     neighborhoods: [...NEIGHBORHOODS],
     boroughs: [...BOROUGHS],
+    hasValues: row?.hasValues === true,
   }
 }

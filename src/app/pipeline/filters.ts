@@ -3,12 +3,14 @@
 // filter reads; the same table is in the PR description). Every filter is
 // PR A's (CONTRACT §6b, src/lib/core-data/lists/pipeline.ts).
 //
-// Value range is not offered until Brief 44's estimates are in the CRM.
-// Sensitive life details (estate, probate, divorce, illness, age) are never
-// filters [engineering precaution; fair-housing and NY human-rights law].
-// Client-safe.
-import type { FolderDTO, ListDTO, PipelineFilters } from '@/lib/core-data/lists/types'
+// Brief 45 PR G: the value range (our value estimate, Brief 44) is offered
+// once DealFlow's morning update has brought estimates in; it is one chip for
+// its two ends. Sensitive life details (estate, probate, divorce, illness, age)
+// are never filters [engineering precaution; fair-housing and NY human-rights
+// law]. Client-safe.
+import { PIPELINE_FILTER_KEYS, type FolderDTO, type ListDTO, type PipelineFilters } from '@/lib/core-data/lists/types'
 import { HOT_MIN_FIT, STRONG_BUYER_MIN_FIT, WARM_MIN_FIT } from '@/lib/core-data/lists/rules'
+import { valueRangeText } from './value-range'
 
 export interface FilterOption {
   value: string
@@ -91,11 +93,37 @@ export function chipLabel(key: keyof PipelineFilters, value: string, names: Filt
       return `Neighborhood: ${value}`
     case 'propertyType':
       return `Property type: ${value}`
+    case 'valueMin':
+      return `Value: ${valueRangeText(value, undefined)}`
+    case 'valueMax':
+      return `Value: ${valueRangeText(undefined, value)}`
   }
 }
 
+export interface FilterChip {
+  /** The filters its × clears: the value range is one chip for both ends. */
+  keys: (keyof PipelineFilters)[]
+  label: string
+}
+
+/** The removable chips for the filters in use, in the panel's order. Search has its own box. */
+export function filterChips(filters: PipelineFilters, names: FilterNames): FilterChip[] {
+  const chips: FilterChip[] = []
+  for (const key of PIPELINE_FILTER_KEYS) {
+    const value = filters[key]
+    if (key === 'q' || !value) continue
+    if (key === 'valueMin' || key === 'valueMax') {
+      if (chips.some((c) => c.keys.includes('valueMin'))) continue
+      chips.push({ keys: ['valueMin', 'valueMax'], label: `Value: ${valueRangeText(filters.valueMin, filters.valueMax)}` })
+      continue
+    }
+    chips.push({ keys: [key], label: chipLabel(key, value, names) })
+  }
+  return chips
+}
+
 export interface FilterHelpRow {
-  /** The query-string filters this row explains (none for the two that aren't offered). */
+  /** The query-string filters this row explains (none for "Called today", which isn't a Pipeline filter). */
   keys: (keyof PipelineFilters)[]
   filter: string
   reads: string
@@ -142,6 +170,12 @@ export const FILTER_HELP: FilterHelpRow[] = [
     reads: `A buyer match with a fit of ${STRONG_BUYER_MIN_FIT} or more (DealFlow's Hot).`,
   },
   {
+    keys: ['valueMin', 'valueMax'],
+    filter: 'Value range',
+    reads:
+      "DealFlow's estimate of the home (the value on the lead page), in dollars; both ends count. Homes without an estimate are left out while this filter is on. It's offered once DealFlow's morning update has brought estimates in. Only you see these values: they're never in an export.",
+  },
+  {
     keys: ['lastContact'],
     filter: 'Last contact',
     reads:
@@ -166,11 +200,6 @@ export const FILTER_HELP: FilterHelpRow[] = [
     keys: ['q'],
     filter: 'Search',
     reads: 'Name and property address.',
-  },
-  {
-    keys: [],
-    filter: 'Value range',
-    reads: "Coming later: it's not offered yet because our value estimates aren't in the CRM (Brief 44 adds them).",
   },
   {
     keys: [],

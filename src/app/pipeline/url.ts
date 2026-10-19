@@ -12,6 +12,8 @@ import {
   type PipelineFilters, type PipelineQuery, type SortDir,
 } from '@/lib/core-data/lists/types'
 import { NEIGHBORHOODS, cleanText } from '@/lib/core-data/lists/geo'
+import { canonicalDollars } from '@/lib/core-data/lists/rules'
+import { valueRangeText } from './value-range'
 
 export const PIPELINE_PATH = '/pipeline'
 
@@ -23,10 +25,6 @@ export const TIERS = ['hot', 'warm', 'possible', 'none'] as const
 export const LAST_CONTACT = ['never', 'over7', 'over30', 'over60', 'over90'] as const
 export const TASK_DUE = ['today', 'week', 'overdue'] as const
 export const TIME_IN_GROUP = ['30', '60', '90'] as const
-
-/** PR A's words, so the page and the API say the same thing. */
-export const VALUE_FILTER_NOTE = "Filtering by value isn't available yet: our estimates aren't in the CRM."
-const VALUE_KEYS = ['value', 'valueMin', 'valueMax']
 
 // Ids are cuids; anything else in an id slot is ignored.
 const ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -41,6 +39,7 @@ const WHAT: Record<string, string> = {
   propertyType: 'a property type', units: 'a unit count', tier: 'a DealFlow tier', strongBuyer: 'a strong-buyer setting',
   lastContact: 'a last-contact filter', taskDue: 'a task filter', timeInGroup: 'a time-in-group filter',
   multiGroup: 'a multi-group setting', sort: 'a sort', dir: 'a sort direction',
+  valueMin: 'a lowest value', valueMax: 'a highest value', value: 'a value filter',
 }
 const ignoredNote = (key: string, value: string) =>
   `This link had ${WHAT[key]} the Pipeline doesn't know (${value.slice(0, 40)}), so it was ignored.`
@@ -134,6 +133,21 @@ export function parsePipelineUrl(input: Search): ParsedPipelineUrl {
     multiGroup: flag('multiGroup'),
     q: get('q')?.slice(0, 200),
   } satisfies PipelineFilters)
+  // Brief 45 PR G: the value range, in whole dollars. A backwards one (the
+  // page never writes it) is left out whole, rather than guessed at.
+  const dollars = (key: 'valueMin' | 'valueMax'): string | undefined => {
+    const v = get(key)
+    if (v === undefined) return undefined
+    const d = canonicalDollars(v)
+    if (d === null) ignored.push(ignoredNote(key, v))
+    return d ?? undefined
+  }
+  const [valueMin, valueMax] = [dollars('valueMin'), dollars('valueMax')]
+  if (valueMin !== undefined && valueMax !== undefined && Number(valueMin) > Number(valueMax)) {
+    ignored.push(`This link's value range was backwards (${valueRangeText(valueMin, valueMax).replace('–', ' to ')}), so it was ignored.`)
+  } else {
+    Object.assign(filters, { valueMin, valueMax } satisfies PipelineFilters)
+  }
   const sort = oneOf('sort', PIPELINE_SORT_KEYS)
   const dir = oneOf<SortDir>('dir', ['asc', 'desc'])
   // A whole number from 1 to MAX_PAGE (a bigger one would overflow the
@@ -142,7 +156,9 @@ export function parsePipelineUrl(input: Search): ParsedPipelineUrl {
   const page = rawPage !== undefined && /^[0-9]+$/.test(rawPage) ? Number(rawPage) : NaN
   const pageOk = Number.isSafeInteger(page) && page >= 1 && page <= MAX_PAGE
   if (rawPage !== undefined && !pageOk) ignored.push(ignoredNote('page', rawPage))
-  if (VALUE_KEYS.some((k) => sp.has(k))) ignored.push(VALUE_FILTER_NOTE)
+  // The range is valueMin / valueMax; a bare `value` isn't one of the Pipeline's.
+  const bare = get('value')
+  if (bare !== undefined) ignored.push(ignoredNote('value', bare))
 
   const wf = get('wf')
   if (wf !== undefined && !ID.test(wf)) ignored.push(ignoredNote('wf', wf))
@@ -224,7 +240,7 @@ export function withFilters(q: PipelineQuery, patch: Partial<PipelineFilters>): 
   return normalizeQuery({ ...q, filters: { ...q.filters, ...patch }, page: undefined })
 }
 
-/** The filters set in the panel (search is the box above it, so it isn't counted). */
+/** The filters set in the panel (search is the box above it, so it isn't counted; the value range counts once). */
 export function panelFilterCount(f: PipelineFilters): number {
-  return PIPELINE_FILTER_KEYS.filter((k) => k !== 'q' && f[k]).length
+  return PIPELINE_FILTER_KEYS.filter((k) => k !== 'q' && f[k]).length - (f.valueMin && f.valueMax ? 1 : 0)
 }
