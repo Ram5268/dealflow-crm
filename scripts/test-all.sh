@@ -45,6 +45,12 @@ echo ""
 echo "===GATE SUMMARY==="
 echo "suite 1 (shared):  exit $E1"
 echo "suite 2 (agent-d): exit $E2"
+# Brief 50 (6.14): a local run without DATABASE_URL_MAIN skips suite 1's
+# tests/integration-local files (in CI that is a failure instead). Say so here
+# too, so a green summary can't hide it.
+if [ -z "${DATABASE_URL_MAIN:-}" ]; then
+  echo "NOTE: DATABASE_URL_MAIN was not set, so suite 1's tests/integration-local files were SKIPPED (CI's db-suite runs them)."
+fi
 
 if [ $E1 -ne 0 ] || [ $E2 -ne 0 ]; then
   echo "RESULT: FAILED"

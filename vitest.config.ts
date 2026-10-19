@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { configDefaults, defineConfig } from 'vitest/config'
+import { DB_RETRY_LOG_FILE, DB_TEST_RETRY } from './tests/setup/db-retry'
 
 export default defineConfig({
   test: {
@@ -22,6 +23,12 @@ export default defineConfig({
     // worker (avoids the concurrent `db push` collision when parallel files
     // each push). Additive `db push` — non-destructive to A/C test state.
     globalSetup: ['tests/setup/globalSetup.ts'],
+    // Brief 50 (6.14): the shared Railway perf DB drops connections at times.
+    // A test is retried (at most twice, 2 s apart) only when its error is a
+    // dropped connection — never for an assertion or any other error — and the
+    // setup file logs every retry. See tests/setup/db-retry.ts.
+    retry: DB_TEST_RETRY,
+    setupFiles: [DB_RETRY_LOG_FILE],
     // Every DB-backed suite hits ONE remote Railway DB with a small connection
     // cap. Per-file isolation would open a fresh Prisma pool per file and leak
     // connections until Railway's limit is hit (30s pool_timeout stalls). So run

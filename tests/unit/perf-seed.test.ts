@@ -8,11 +8,11 @@ import { PERF_QUERIES } from '../../scripts/perf-25k'
 describe('the 25k speed-test seed (scripts/seed-dev.ts)', () => {
   const rows = buildPerfRows()
 
-  it('has 25,000 leads with ~28k contacts, ~22k phones and 50k custom values', () => {
+  it('has 25,000 leads with ~25k contacts, ~33k phones and 50k custom values', () => {
     expect(PERF_TOTAL_LEADS).toBe(25_000)
     expect(rows.leads).toHaveLength(25_000)
     expect(rows.contacts.length).toBeGreaterThan(24_000)
-    expect(rows.phones.length).toBeGreaterThan(20_000)
+    expect(rows.phones.length).toBeGreaterThan(30_000)
     expect(rows.values).toHaveLength(50_000)
   })
 
@@ -38,5 +38,6 @@ describe('the 25k speed-test seed (scripts/seed-dev.ts)', () => {
     expect(rows.contacts.some((c) => c.title === 'Owner')).toBe(true)
     expect(rows.phones.some((p) => p.type === 'mobile')).toBe(true)
     expect(rows.values.some((v) => v.definitionId === 'cf_seed_1' && v.valueText?.startsWith('note 5'))).toBe(true)
+    expect(rows.values.some((v) => v.definitionId === 'cf_seed_0' && (v.valueNumber ?? 0) >= 1_000_000)).toBe(true)
   })
 })

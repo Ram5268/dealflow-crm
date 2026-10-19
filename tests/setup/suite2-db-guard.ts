@@ -43,8 +43,10 @@ export function assertSuite2Database(env: Env = process.env, root: string = REPO
 
 // What a test's real client would see: constructing one (it doesn't connect)
 // makes Prisma load its recorded .env files into process.env, the same way.
-async function loadPrismaEnv(): Promise<void> {
-  const { PrismaClient } = await import('@prisma/client')
+// `clientModule` is only for tests/unit/db-guard.test.ts (Brief 50), which
+// passes a client generated in a temporary checkout to test this real loading.
+export async function loadPrismaEnv(clientModule = '@prisma/client'): Promise<void> {
+  const { PrismaClient } = (await import(clientModule)) as typeof import('@prisma/client')
   new PrismaClient()
 }
 

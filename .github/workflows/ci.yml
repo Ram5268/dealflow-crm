@@ -77,6 +77,11 @@ jobs:
       # database, so they get a second one (no rows shared with the rest of
       # suite 1).
       DATABASE_URL_MAIN: postgresql://crm:crm@localhost:5432/dealflow_crm_main_test
+      # Brief 50 (6.14): with this (or GitHub's own CI=true), a missing
+      # DATABASE_URL_PERF / DATABASE_URL_MAIN fails the run with a plain message
+      # instead of letting the database suites skip without a word
+      # (tests/setup/live-guard.ts).
+      CRM_TEST_DB_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v5
 
@@ -126,5 +131,6 @@ jobs:
           corepack pnpm@9 exec tsx scripts/seed-main.ts
 
       - name: Test — DB-backed suite (suite 1)
-        # tests/perf/25k needs a 25k-lead seed, which this database doesn't have.
-        run: corepack pnpm@9 exec vitest run --exclude tests/perf/25k.test.ts
+        # Brief 50 (6.14): includes tests/perf/25k, which now seeds its own
+        # 25,000 made-up leads into its own schema of this database.
+        run: corepack pnpm@9 exec vitest run
