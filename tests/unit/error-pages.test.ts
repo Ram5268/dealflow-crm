@@ -106,7 +106,7 @@ describe('the page error screen (src/app/error.tsx)', () => {
   const draw = (digest?: string) => html(h(PageError, { error: boom(digest), reset: () => {}, unstable_retry: () => {} }))
 
   it('says what happened in plain English, with "Try again" and a way back to Leads', () => {
-    const markup = draw('2481937465')
+    const markup = draw('987654')
     const text = textOf(markup)
     expect(text).toContain('Something went wrong on this page')
     expect(markup).toMatch(/<button[^>]*>\s*Try again\s*<\/button>/)
@@ -115,8 +115,8 @@ describe('the page error screen (src/app/error.tsx)', () => {
   })
 
   it("shows Next's short digest as a reference, and nothing technical", () => {
-    const markup = draw('2481937465')
-    expect(textOf(markup)).toContain('Reference: 2481937465')
+    const markup = draw('987654')
+    expect(textOf(markup)).toContain('Reference: 987654')
     expect(decode(markup)).not.toContain(MESSAGE)
     expect(decode(markup)).not.toContain('does not exist')
     expect(decode(markup)).not.toContain('page.js')
@@ -223,12 +223,12 @@ describe('the page-not-found screen (src/app/not-found.tsx)', () => {
 describe('logPageError (the browser-console line the error screens write)', () => {
   it("logs where it happened and the digest, so it matches the server's log line", () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const err = boom('2481937465')
+    const err = boom('987654')
     logPageError('page', err)
     expect(spy).toHaveBeenCalledTimes(1)
     const [first, second, third] = spy.mock.calls[0]
     expect(first).toContain('page')
-    expect(second).toContain('2481937465')
+    expect(second).toContain('987654')
     expect(third).toBe(err)
   })
 
