@@ -3,15 +3,12 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, ChevronLeft, ChevronRight, Download, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
 import {
   Badge,
   Button,
   DataTable,
-  DropdownContent,
   DropdownItem,
-  DropdownRoot,
-  DropdownTrigger,
   EmptyState,
   Input,
   Select,
@@ -24,6 +21,10 @@ import type { AppliedGroup, AppliedSort, LeadRow } from '@/lib/leads/list'
 import { cn } from '@/lib/ui/cn'
 import { groupColorStyle } from '@/lib/ui/groupColors'
 import { formatCount, rankedHeadline } from '@/components/lists/format'
+import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
+import { SelectAllMatching } from '@/components/lists/SelectAllMatching'
+import { selectAllOffer } from '@/components/lists/bulk-actions'
+import { allLeadsExportUrl, getAllLeadIds } from '@/lib/core-data/lists/client'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -145,6 +146,50 @@ export function LeadsView({
     URL.revokeObjectURL(url)
     toast({ title: `Exported ${chosen.length} lead${chosen.length === 1 ? '' : 's'}` })
   }, [rows, selected, toast])
+
+  // Brief 45 (PR C): a selection never outlives the search, Smart View or group
+  // it was made in, so a bulk action can't reach people the list no longer
+  // shows [engineering precaution: "Select all N matching" can select thousands].
+  const filterKey = `${q}\u0000${viewId}\u0000${group?.id ?? ''}`
+  // What "Select all N matching" and its export cover: the search box and the
+  // group (?group=), exactly what this page shows [PR C review: without the
+  // group, "Select all" on a group's page would select the whole CRM].
+  const matching = { q: q || undefined, group: group?.id }
+  const selectedFor = useRef(filterKey)
+  useEffect(() => {
+    if (selectedFor.current === filterKey) return
+    selectedFor.current = filterKey
+    setSelected(new Set())
+  }, [filterKey])
+
+  // "Select all N matching" reaches past this page through the all-leads
+  // `ids=1` call, which knows the search box but not Smart Views, so it's
+  // offered only without a Smart View.
+  const pageIds = rows.map((r) => r.id)
+  const everyoneSelected = !viewId && selectAllOffer({ pageIds, selected, total }).kind === 'all'
+  const exportForMenu = useCallback(() => {
+    if (!everyoneSelected) {
+      // This page's rows are all the browser has: never export part of a
+      // selection that reaches other pages without saying so.
+      const elsewhere = selected.size - rows.filter((r) => selected.has(r.id)).length
+      if (elsewhere > 0) {
+        toast({
+          tone: 'danger',
+          title: 'Nothing exported',
+          description: `${elsewhere.toLocaleString('en-US')} of the ${selected.size.toLocaleString('en-US')} selected ${elsewhere === 1 ? 'is on another page' : 'are on other pages'}. Select all matching to export everyone, or export one page at a time.`,
+        })
+        return
+      }
+      return exportSelected()
+    }
+    // Everyone matching is selected, most of them not on this page: the
+    // ranked CSV of all of them (no phones or emails, like this export).
+    const a = document.createElement('a')
+    a.href = allLeadsExportUrl(matching)
+    a.click()
+    toast({ title: `Exporting all ${selected.size.toLocaleString('en-US')} matching leads` })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [everyoneSelected, exportSelected, filterKey, rows, selected, toast])
 
   const columns: Column<LeadRow>[] = [
     // Brief 45: in rank order, each person's place in All leads (the same
@@ -270,12 +315,11 @@ export function LeadsView({
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 && (
             <>
-              <span className="text-sm text-muted">{selected.size} selected</span>
-              <DropdownRoot>
-                <DropdownTrigger asChild>
-                  <Button size="sm">Bulk actions</Button>
-                </DropdownTrigger>
-                <DropdownContent>
+              <span className="text-sm text-muted">{selected.size.toLocaleString('en-US')} selected</span>
+              {/* Brief 45 (PR C): Add to group · Remove from group · Add to list
+                  · Export CSV [brief §5.4]. Organization only; nothing here
+                  contacts anyone. */}
+              <BulkActionsMenu leadIds={[...selected]} onDone={() => router.refresh()} onExport={exportForMenu}>
                   {/* Sequences ship in M4; the entry is visible but inert so the
                       menu shape does not change when it goes live. */}
                   <Tooltip content={sequencesOffReason ? null : 'Sequences ship in M4'} side="left">
@@ -296,14 +340,7 @@ export function LeadsView({
                       {sequencesOffReason}
                     </p>
                   )}
-                  <DropdownItem onSelect={exportSelected}>
-                    <span className="flex items-center gap-2">
-                      <Download size={13} className="text-subtle" />
-                      Export CSV
-                    </span>
-                  </DropdownItem>
-                </DropdownContent>
-              </DropdownRoot>
+              </BulkActionsMenu>
             </>
           )}
           <span className="text-sm text-subtle" aria-live="polite">
@@ -316,6 +353,17 @@ export function LeadsView({
           )}
         </div>
       </div>
+
+      {!viewId && (
+        <SelectAllMatching
+          pageIds={pageIds}
+          selected={selected}
+          total={total}
+          scope={filterKey}
+          onSelect={setSelected}
+          loadAll={() => getAllLeadIds(matching)}
+        />
+      )}
 
       {groupError && (
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">

@@ -156,6 +156,18 @@ function setState(next: Partial<SidebarState>): void {
   for (const fn of subscribers) fn()
 }
 
+/**
+ * Shown when the sidebar's data can't load because of a server error (5xx) or
+ * no connection: plain English, never the server's own text. Every place that
+ * shows it adds a "Try again" button right after it (Brief 45 PR C review).
+ */
+export const SIDEBAR_LOAD_FAILED = "Couldn't load your lists and groups just now."
+
+/** The store's error for a failed load: the API's own words for a refusal it wrote for people, plain English otherwise. */
+export function sidebarLoadError(err: unknown): string {
+  return err instanceof ListsApiError && err.status > 0 && err.status < 500 ? err.message : SIDEBAR_LOAD_FAILED
+}
+
 /** Load the sidebar again (keeps showing the old data meanwhile); the newest load wins. */
 export function reloadSidebar(): Promise<void> {
   const gen = ++generation
@@ -165,9 +177,14 @@ export function reloadSidebar(): Promise<void> {
       if (gen === generation) setState({ data, error: null, loading: false })
     },
     (err: unknown) => {
-      if (gen === generation) setState({ error: err instanceof Error ? err.message : 'Your lists could not be loaded.', loading: false })
+      if (gen === generation) setState({ error: sidebarLoadError(err), loading: false })
     },
   )
+}
+
+/** The shared sidebar data as it is now (for callers outside React, and the tests). */
+export function getSidebarState(): SidebarState {
+  return state
 }
 
 const onChanged = () => void reloadSidebar()

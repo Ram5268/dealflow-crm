@@ -17,10 +17,6 @@ import {
   Badge,
   Button,
   DataTable,
-  DropdownContent,
-  DropdownItem,
-  DropdownRoot,
-  DropdownTrigger,
   EmptyState,
   Input,
   Select,
@@ -29,9 +25,12 @@ import {
   type Column,
 } from '@/components/ui'
 import { cn } from '@/lib/ui/cn'
-import { groupColorStyle } from '@/lib/ui/groupColors'
 import { BOROUGHS, type BestBuyerDTO, type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow } from '@/lib/core-data/lists/types'
-import { LISTS_CHANGED_EVENT, listExportUrl, notifyListsChanged, updateList } from '@/lib/core-data/lists/client'
+import { LISTS_CHANGED_EVENT, getListMemberIds, listExportUrl, notifyListsChanged, updateList } from '@/lib/core-data/lists/client'
+import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
+import { RowGroupChips } from '@/components/lists/RowGroupChips'
+import { SelectAllMatching } from '@/components/lists/SelectAllMatching'
+import { selectAllOffer } from '@/components/lists/bulk-actions'
 import { timezoneLabel } from '@/lib/core-data/dealflow-sync/labels'
 import { formatCount, localTimeInfo, rankBadge, rankedHeadline, sourceLine } from '@/components/lists/format'
 import { downloadText, messageOf } from '@/components/lists/browser'
@@ -84,20 +83,6 @@ function BestBuyerCell({ buyer }: { buyer: BestBuyerDTO | null }) {
       </span>
       {buyer.score != null && <span className="shrink-0 tabular-nums text-muted">{buyer.score}</span>}
       {buyer.isTestData && <Badge className="shrink-0">Test</Badge>}
-    </span>
-  )
-}
-
-/** Read-only group badges, in sidebar order. PR C swaps these for <GroupChips compact> (click to add/remove). */
-function GroupBadges({ groups }: { groups: GroupChipDTO[] }) {
-  if (groups.length === 0) return <span className="text-subtle">—</span>
-  return (
-    <span className="flex flex-wrap gap-1">
-      {groups.map((g) => (
-        <span key={g.id} className={cn('inline-flex h-5 items-center whitespace-nowrap rounded-full px-2 text-xs', groupColorStyle(g.color).chip)}>
-          {g.name}
-        </span>
-      ))}
     </span>
   )
 }
@@ -219,10 +204,19 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
   // filter or page starts with nothing picked.
   const viewKey = listSearchString(filters, data.page)
   const lastViewKey = useRef(viewKey)
+  // Brief 45 (PR C): each row's group chips keep their own state once shown
+  // (RowGroupChips). After a bulk change they start again from the first rows
+  // that arrive after it: their key carries this number.
+  const [chipsVersion, setChipsVersion] = useState(0)
+  const bulkChanged = useRef(false)
   useEffect(() => {
     const viewChanged = lastViewKey.current !== viewKey
     lastViewKey.current = viewKey
     setSelected((picked) => keepSelection(picked, data.rows, viewChanged))
+    if (bulkChanged.current) {
+      bulkChanged.current = false
+      setChipsVersion((v) => v + 1)
+    }
   }, [data, viewKey])
 
   // A rename, archive or group change elsewhere (the sidebar) shows here too.
@@ -279,6 +273,32 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
     toast({ title: `Exported ${chosen.length} ${chosen.length === 1 ? 'person' : 'people'}` })
   }, [data.rows, selected, list.name, toast])
 
+  // Brief 45 (PR C): the bulk menu's Export CSV, with the same rules as All
+  // leads. Everyone matching selected ("Select all N matching"): the list's
+  // ranked CSV with these filters. Some selected on other pages: nothing, and
+  // it says so (this page's rows are all the browser has). Otherwise: the
+  // selected rows of this page.
+  const pageIds = data.rows.map((r) => r.leadId)
+  const everyoneSelected = selectAllOffer({ pageIds, selected, total: data.total }).kind === 'all'
+  const exportForMenu = useCallback(() => {
+    if (!everyoneSelected) {
+      const elsewhere = selected.size - data.rows.filter((r) => selected.has(r.leadId)).length
+      if (elsewhere > 0) {
+        toast({
+          tone: 'danger',
+          title: 'Nothing exported',
+          description: `${formatCount(elsewhere)} of the ${formatCount(selected.size)} selected ${elsewhere === 1 ? 'is on another page' : 'are on other pages'}. Select all matching to export everyone, or export one page at a time.`,
+        })
+        return
+      }
+      return exportSelected()
+    }
+    const a = document.createElement('a')
+    a.href = listExportUrl(list.id, filters)
+    a.click()
+    toast({ title: `Exporting all ${formatCount(selected.size)} matching people` })
+  }, [everyoneSelected, exportSelected, data.rows, list.id, filters, selected, toast])
+
   const unarchive = async () => {
     setUnarchiving(true)
     try {
@@ -317,7 +337,13 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
     // 2026-10-17]). No column until that data is present.
     { key: 'whyNow', header: 'Why now', cell: (r) => <WhyNowCell row={r} /> },
     { key: 'bestBuyer', header: 'Best buyer', width: '240px', cell: (r) => <BestBuyerCell buyer={r.bestBuyer} /> },
-    { key: 'groups', header: 'Groups', width: '180px', cell: (r) => <GroupBadges groups={r.groups} /> },
+    {
+      key: 'groups',
+      header: 'Groups',
+      width: '260px',
+      // Brief 45 (PR C): one click on, one click off; keys 1–9 while the row has focus.
+      cell: (r) => <RowGroupChips key={`${r.leadId}:${chipsVersion}`} leadId={r.leadId} groups={r.groups} />,
+    },
     { key: 'attempts', header: 'Attempts', width: '96px', align: 'right', cell: (r) => <span className="tabular-nums">{r.attempts}</span> },
     {
       key: 'lastResult',
@@ -433,21 +459,19 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
           {selected.size > 0 && (
             <>
               <span className="text-sm text-muted">{formatCount(selected.size)} selected</span>
-              {/* PR C puts <BulkActionsMenu leadIds listId onExport={exportSelected} /> here: Add to group,
-                  Remove from group, Add to list, Remove from this list, Export CSV. */}
-              <DropdownRoot>
-                <DropdownTrigger asChild>
-                  <Button size="sm">Bulk actions</Button>
-                </DropdownTrigger>
-                <DropdownContent>
-                  <DropdownItem onSelect={exportSelected}>
-                    <span className="flex items-center gap-2">
-                      <Download size={13} className="text-subtle" />
-                      Export CSV
-                    </span>
-                  </DropdownItem>
-                </DropdownContent>
-              </DropdownRoot>
+              {/* Brief 45 (PR C): Add to group · Remove from group · Add to list ·
+                  Remove from this list · Export CSV [brief §5.4]. Only "Remove
+                  from this list" takes anyone off this list's call order
+                  [Ryan, 2026-10-18]; nobody is ever deleted. */}
+              <BulkActionsMenu
+                leadIds={[...selected]}
+                listId={list.id}
+                onDone={() => {
+                  bulkChanged.current = true
+                  router.refresh()
+                }}
+                onExport={exportForMenu}
+              />
             </>
           )}
           <span className="text-sm text-subtle" aria-live="polite">
@@ -456,6 +480,17 @@ export function ListView({ data, groups, filters, now: fixedNow }: ListViewProps
           </span>
         </div>
       </div>
+
+      {/* Brief 45 (PR C): everyone on the list who matches the filters, past
+          this page. A load that finishes after the view changed is dropped. */}
+      <SelectAllMatching
+        pageIds={pageIds}
+        selected={selected}
+        total={data.total}
+        scope={viewKey}
+        onSelect={setSelected}
+        loadAll={() => getListMemberIds(list.id, filters)}
+      />
 
       {unknownGroup && (
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">
