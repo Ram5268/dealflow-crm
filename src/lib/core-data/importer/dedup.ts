@@ -49,7 +49,7 @@ export function normalizePhoneType(raw: string | null | undefined): NormalizedPh
 // Brief 50 PR 13: the shared parser's reading, so an imported phone, its
 // duplicate key and an opt-out are the same string ("+917 555 0147" is US).
 export function normalizePhoneE164(raw: string | null | undefined): string | null {
-  return toValidE164(raw) // E.164, e.g. +12125551234
+  return toValidE164(raw) // E.164, e.g. +12125550134
 }
 
 // Deterministic dedup key for a row within an org: prefer the E.164 phone;
