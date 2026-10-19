@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mapTwilioStatus, isTerminalLocalStatus } from "../twilio/statusMap";
 import { toEventDisposition } from "../twilio/statusWebhook";
 import { emitOnCallChannel } from "../events/emit";
-import { recordCallCompleted } from "@/lib/core-data/activity/write";
+import { recordCallCompletedSafely } from "@/lib/core-data/activity/write";
 import { logger } from "@/lib/logger";
 
 /** Minimal Twilio REST surface the recon job needs (injectable for tests). */
@@ -48,7 +48,9 @@ function toDecimalAbs(price: string | number | null | undefined): Prisma.Decimal
  * (DB-only). The next scheduled tick is the retry.
  *
  * Brief 50 (PR 3): wherever A or C emits call.completed, the lead's timeline
- * entry (Activity) is written in the same tx, as in the status webhook.
+ * entry (Activity) is written in the same tx (in a savepoint, so a failed
+ * timeline write never rolls back the call's convergence), as in the status
+ * webhook.
  */
 export async function runReconciliation(prisma: PrismaClient, deps: ReconDeps): Promise<ReconResult> {
   const now = deps.now ?? new Date();
@@ -88,7 +90,7 @@ export async function runReconciliation(prisma: PrismaClient, deps: ReconDeps): 
           },
         });
         if (terminal) {
-          await recordCallCompleted(tx, {
+          await recordCallCompletedSafely(tx, {
             callId: call.id,
             disposition: toEventDisposition(local, call.disposition),
             duration: duration ?? null,
@@ -145,7 +147,7 @@ export async function recoverLostEmissions(prisma: PrismaClient, now: Date = new
       const fresh = await tx.call.findUnique({ where: { id: call.id }, select: { emittedAt: true } });
       if (fresh?.emittedAt) return;
       await tx.call.update({ where: { id: call.id }, data: { emittedAt: now } });
-      await recordCallCompleted(tx, {
+      await recordCallCompletedSafely(tx, {
         callId: call.id,
         disposition: (call.disposition ?? "error") as string,
         duration: call.duration ?? null,

@@ -30,8 +30,48 @@ let contactA: string
 let leadB: string
 let contactB: string
 
+let orgFail: string // a throwaway org whose timeline writes fail (TEST_TRIGGER)
+let orgSlow: string // a throwaway org whose timeline inserts are slow (TEST_TRIGGER)
+
 const OWNER_PHONE = '+12125550142' // fictional; on an org-A contact AND an org-B contact
 const OUR_NUMBER = '+12125550100'
+const FAIL_PHONE = '+12125550143' // fictional; texts STOP to orgFail
+const FAIL_SLUG = `${TAG}-org-fail`
+const SLOW_SLUG = `${TAG}-org-slow`
+
+// A test-database trigger on Activity inserts:
+// - for FAIL_SLUG's org it fails, so the tests can prove a failed timeline
+//   write never takes the call's status, its event, or an opt-out down with it;
+// - for SLOW_SLUG's org it waits 0.3 s before inserting, so concurrent writers
+//   really overlap and only the per-call lock keeps them to one entry.
+const TEST_TRIGGER = [
+  `CREATE OR REPLACE FUNCTION ${TAG}_test_activity() RETURNS trigger LANGUAGE plpgsql AS $$
+   BEGIN
+     IF NEW."organizationId" IN (SELECT id FROM "Organization" WHERE slug = '${FAIL_SLUG}') THEN
+       RAISE EXCEPTION '${TAG}: simulated timeline write failure';
+     ELSIF NEW."organizationId" IN (SELECT id FROM "Organization" WHERE slug = '${SLOW_SLUG}') THEN
+       PERFORM pg_sleep(0.3);
+     END IF;
+     RETURN NEW;
+   END $$`,
+  `DROP TRIGGER IF EXISTS ${TAG}_test_activity ON "Activity"`,
+  `CREATE TRIGGER ${TAG}_test_activity BEFORE INSERT ON "Activity" FOR EACH ROW EXECUTE FUNCTION ${TAG}_test_activity()`,
+]
+const DROP_TEST_TRIGGER = [
+  `DROP TRIGGER IF EXISTS ${TAG}_test_activity ON "Activity"`,
+  `DROP FUNCTION IF EXISTS ${TAG}_test_activity()`,
+]
+
+async function dropOrg(slug: string) {
+  const org = await prisma.organization.findUnique({ where: { slug } })
+  if (!org) return
+  await prisma.activity.deleteMany({ where: { organizationId: org.id } })
+  await prisma.dncSuppression.deleteMany({ where: { organizationId: org.id } })
+  await prisma.message.deleteMany({ where: { organizationId: org.id } })
+  await prisma.call.deleteMany({ where: { organizationId: org.id } })
+  await prisma.lead.deleteMany({ where: { organizationId: org.id } }) // contacts + phones cascade
+  await prisma.organization.delete({ where: { id: org.id } })
+}
 
 async function makeCall(sid: string, data: { organizationId: string; leadId?: string | null; contactId?: string | null; status?: string; ageMin?: number }) {
   return prisma.call.create({
@@ -83,6 +123,11 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
       await prisma.organization.delete({ where: { id: stale.id } })
     }
     orgB = (await prisma.organization.create({ data: { slug: `${TAG}-org-b`, name: 'Brief 50 PR 3 second org' } })).id
+    await dropOrg(FAIL_SLUG) // left by an interrupted run
+    await dropOrg(SLOW_SLUG)
+    orgFail = (await prisma.organization.create({ data: { slug: FAIL_SLUG, name: 'Brief 50 PR 3 failing-timeline org' } })).id
+    orgSlow = (await prisma.organization.create({ data: { slug: SLOW_SLUG, name: 'Brief 50 PR 3 slow-timeline org' } })).id
+    for (const sql of TEST_TRIGGER) await prisma.$executeRawUnsafe(sql)
 
     leadA = (await prisma.lead.create({ data: { organizationId: orgA, displayName: `${TAG} Test Owner 1` } })).id
     contactA = (
@@ -105,6 +150,9 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
   })
 
   afterAll(async () => {
+    for (const sql of DROP_TEST_TRIGGER) await prisma.$executeRawUnsafe(sql)
+    await dropOrg(FAIL_SLUG)
+    await dropOrg(SLOW_SLUG)
     await cleanup()
     await prisma.activity.deleteMany({ where: { OR: [{ organizationId: orgB }, { leadId: { in: [leadA, leadB] } }] } })
     await prisma.lead.deleteMany({ where: { id: { in: [leadA, leadB] } } }) // contacts + phones cascade
@@ -150,7 +198,9 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
     })
 
     it('several writers at once still leave one entry', async () => {
-      const call = await makeCall(`${SID}2`, { organizationId: orgA, leadId: leadA, contactId: contactA })
+      // In the slow org each insert waits 0.3 s, so all four writers look for
+      // the entry before any has committed one; only the lock stops duplicates.
+      const call = await makeCall(`${SID}2`, { organizationId: orgSlow })
       const completed = {
         type: 'call.completed', callId: call.id, disposition: 'no-answer', duration: 0, cost: null, correlationId: `${TAG}-c3`,
       }
@@ -162,7 +212,7 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
       ])
       const rows = await callEntries(call.id)
       expect(rows).toHaveLength(1)
-      expect(rows[0]).toMatchObject({ organizationId: orgA, leadId: leadA, type: 'Call' })
+      expect(rows[0]).toMatchObject({ organizationId: orgSlow, type: 'Call' })
     })
 
     it('a call whose status callback never came gets its entry from the reconciliation recovery', async () => {
@@ -194,6 +244,22 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
       const rows = await callEntries(call.id)
       expect(rows).toHaveLength(1)
       expect(rows[0]).toMatchObject({ organizationId: orgB, leadId: leadB, contactId: contactB, type: 'Call' })
+    })
+
+    it("a failing timeline write never rolls back the call's final status or its event", async () => {
+      const call = await makeCall(`${SID}6`, { organizationId: orgFail })
+      const r = await handleStatusWebhook(prisma, { CallSid: `${SID}6`, CallStatus: 'completed', CallDuration: '7' })
+      expect(r.emitted).toBe(true)
+      const after = await prisma.call.findUniqueOrThrow({ where: { id: call.id } })
+      expect(after).toMatchObject({ status: 'completed', disposition: 'answered', duration: 7 })
+      expect(after.emittedAt).not.toBeNull()
+      expect(await callEntries(call.id)).toHaveLength(0)
+
+      // The reconciliation recovery likewise still marks a stranded call emitted.
+      const stranded = await makeCall(`${SID}7`, { organizationId: orgFail, status: 'busy', ageMin: 10 })
+      await recoverLostEmissions(prisma)
+      expect((await prisma.call.findUniqueOrThrow({ where: { id: stranded.id } })).emittedAt).not.toBeNull()
+      expect(await callEntries(stranded.id)).toHaveLength(0)
     })
 
     it('the event consumer writes nothing for a call that does not exist (no made-up organization)', async () => {
@@ -261,6 +327,17 @@ describe.runIf(enabled)('activity history is written where calls and messages ar
       // The event consumer hearing it later adds nothing.
       await dispatch('crm_message', { messageId: msg.id, channel: 'email', leadId: leadA, correlationId: `${TAG}-m3` }, HANDLERS)
       expect(await messageEntries(msg.id)).toHaveLength(1)
+    })
+
+    it("a text's opt-out is recorded even when its timeline write fails", async () => {
+      const r = await handleInboundSms({
+        orgId: orgFail, from: FAIL_PHONE, to: OUR_NUMBER, body: 'STOP', messageSid: `${SMS}3`,
+      })
+      expect(r.action).toBe('stop')
+      expect(await prisma.dncSuppression.findUnique({
+        where: { organizationId_phone_source: { organizationId: orgFail, phone: FAIL_PHONE, source: 'internal' } },
+      })).not.toBeNull()
+      expect(await messageEntries(r.messageId)).toHaveLength(0) // the failed write left nothing behind
     })
 
     it("org scoping: a text to org B is filed under org B's lead even when org A has a contact with the same phone", async () => {

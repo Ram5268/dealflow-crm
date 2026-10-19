@@ -163,8 +163,9 @@ export function callCompletedBody(input: CallCompletedInput): string {
 /**
  * A finished call's entry: updates the "Call in progress" entry when there is
  * one, otherwise writes it (most calls are never answered by a person, and the
- * live-answer path writes nothing). Callers that own the Call row pass their
- * transaction, so the entry commits with the call's final status.
+ * live-answer path writes nothing). Callers that own the Call row use
+ * recordCallCompletedSafely with their transaction, so the entry commits with
+ * the call's final status.
  */
 export async function recordCallCompleted(db: ActivityDb, input: CallCompletedInput): Promise<ActivityWrite> {
   return withEntryLock(db, callKey(input.callId), async (tx) => {
@@ -194,6 +195,30 @@ export async function recordCallCompleted(db: ActivityDb, input: CallCompletedIn
     })
     return 'created'
   })
+}
+
+/**
+ * recordCallCompleted for the code that owns the Call row (the Twilio status
+ * callback and the reconciliation job), inside that code's transaction. The
+ * entry is written in a savepoint: a failed timeline write is rolled back on
+ * its own and logged, and never takes the call's final status, its
+ * call.completed event or the webhook's answer down with it
+ * [engineering precaution].
+ */
+export async function recordCallCompletedSafely(
+  tx: Prisma.TransactionClient,
+  input: CallCompletedInput,
+): Promise<ActivityWrite | 'failed'> {
+  await tx.$executeRaw`SAVEPOINT activity_entry`
+  try {
+    const result = await recordCallCompleted(tx, input)
+    await tx.$executeRaw`RELEASE SAVEPOINT activity_entry`
+    return result
+  } catch (err) {
+    await tx.$executeRaw`ROLLBACK TO SAVEPOINT activity_entry`
+    captureException(err, { event: 'activity.call', callId: input.callId })
+    return 'failed'
+  }
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
