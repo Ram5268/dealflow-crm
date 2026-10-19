@@ -19,8 +19,9 @@ export function RowGroupChips({ leadId, groups }: { leadId: string; groups: Grou
   const sidebar = useSidebarData()
   const [memberOf] = useState(() => groups.map((g) => g.id))
   // Until every group's name is loaded (and on the server), show the row's own
-  // groups as they are, so 100 rows don't all say "Loading groups…".
-  if (!sidebar.data && !sidebar.error) return <RowGroupsAsLoaded groups={groups} />
+  // groups as they are, so 100 rows don't all say "Loading groups…". The same if
+  // they couldn't load: the sidebar says so once, rather than every row.
+  if (!sidebar.data) return <RowGroupsAsLoaded groups={groups} />
   return <GroupChips leadId={leadId} memberOf={memberOf} compact hotkeys />
 }
 

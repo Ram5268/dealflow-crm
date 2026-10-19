@@ -406,35 +406,43 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     const made = await request.post('/api/core-data/groups', { data: { name: `Big ${STAMP}` } })
     expect(made.status()).toBe(201)
     const groupId = ((await made.json()) as { group: { id: string } }).group.id
-    const everyone = (await getJson<{ ids: string[] }>(request, '/api/core-data/all-leads?ids=1')).ids
-    expect(everyone.length).toBeGreaterThan(150)
-    expect((await request.post(`/api/core-data/groups/${groupId}/members`, { data: { leadIds: everyone.slice(0, 150) } })).status()).toBe(200)
-    const group = (await getGroups(request)).find((g) => g.id === groupId)
-    expect(group?.memberCount).toBe(150)
-    const n = group!.memberCount.toLocaleString('en-US')
-    const idsCalls: URLSearchParams[] = []
-    page.on('request', (r) => {
-      const u = new URL(r.url())
-      if (u.pathname === '/api/core-data/all-leads' && u.searchParams.get('ids') === '1') idsCalls.push(u.searchParams)
-    })
-    await page.goto(`/leads?group=${group!.id}`)
-    await expect(page.getByText(`Group: ${group!.name}`, { exact: true })).toBeVisible()
-    await page.locator('thead').getByRole('checkbox').click()
-    const banner = page.getByTestId('select-all-matching')
-    await banner.getByRole('button', { name: `Select all ${n} matching` }).click()
-    await expect(banner).toContainText(`All ${n} matching are selected.`)
-    await expect(page.getByText(`${n} selected`, { exact: true })).toBeVisible()
-    expect(idsCalls).toHaveLength(1)
-    expect(idsCalls[0].get('group')).toBe(group!.id)
+    try {
+      const everyone = (await getJson<{ ids: string[] }>(request, '/api/core-data/all-leads?ids=1')).ids
+      expect(everyone.length).toBeGreaterThan(150)
+      expect((await request.post(`/api/core-data/groups/${groupId}/members`, { data: { leadIds: everyone.slice(0, 150) } })).status()).toBe(200)
+      const group = (await getGroups(request)).find((g) => g.id === groupId)
+      expect(group?.memberCount).toBe(150)
+      const n = group!.memberCount.toLocaleString('en-US')
+      const idsCalls: URLSearchParams[] = []
+      page.on('request', (r) => {
+        const u = new URL(r.url())
+        if (u.pathname === '/api/core-data/all-leads' && u.searchParams.get('ids') === '1') idsCalls.push(u.searchParams)
+      })
+      await page.goto(`/leads?group=${group!.id}`)
+      await expect(page.getByText(`Group: ${group!.name}`, { exact: true })).toBeVisible()
+      await page.locator('thead').getByRole('checkbox').click()
+      const banner = page.getByTestId('select-all-matching')
+      await banner.getByRole('button', { name: `Select all ${n} matching` }).click()
+      await expect(banner).toContainText(`All ${n} matching are selected.`)
+      await expect(page.getByText(`${n} selected`, { exact: true })).toBeVisible()
+      expect(idsCalls).toHaveLength(1)
+      expect(idsCalls[0].get('group')).toBe(group!.id)
 
-    // Exporting everyone selected carries the group too.
-    const exported = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/core-data/all-leads/export')
-    await page.getByRole('button', { name: 'Bulk actions' }).click()
-    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
-    expect(new URL((await exported).url()).searchParams.get('group')).toBe(group!.id)
+      // Exporting everyone selected carries the group too.
+      const exported = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/core-data/all-leads/export')
+      await page.getByRole('button', { name: 'Bulk actions' }).click()
+      await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+      expect(new URL((await exported).url()).searchParams.get('group')).toBe(group!.id)
 
-    // Clean up: deleting the group removes the label, never anyone.
-    expect((await request.delete(`/api/core-data/groups/${groupId}`)).status()).toBe(200)
+      // Removing the group filter is a new view: the selection is cleared, as it
+      // is for a new search, so it can't outlive the view it was made in.
+      await page.getByRole('button', { name: 'Remove the group filter' }).click()
+      await expect(page).not.toHaveURL(/group=/)
+      await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
+    } finally {
+      // Clean up, even when a check above failed: deleting the group removes the label, never anyone.
+      expect((await request.delete(`/api/core-data/groups/${groupId}`)).status()).toBe(200)
+    }
   })
 
   test('list page: compact chips on every row; a click saves without opening the person; keys 1–9 on the focused row', async ({ page, request }) => {
@@ -564,5 +572,86 @@ test.describe('Brief 45 PR C: group chips, bulk actions, timeline', () => {
     await expect(page.getByText('Nothing exported', { exact: true })).toBeVisible()
     // Anchored: the toast's screen-reader copy starts with "Notification …".
     await expect(page.getByText(new RegExp(`^${n(selected - 99)} of the ${n(selected)} selected are on other pages\\.`))).toBeVisible()
+  })
+
+  test('list page: a bulk "Add to group" lights those rows’ chips (the rows start again after a bulk change)', async ({ page, request }) => {
+    const leads = await ungrouped(request, 3)
+    const listId = await makeList(request, `${ROWS_LIST} bulk`, leads.map((l) => l.leadId))
+    const made = await request.post('/api/core-data/groups', { data: { name: `Bulk rows ${STAMP}` } })
+    expect(made.status()).toBe(201)
+    const group = ((await made.json()) as { group: Group }).group
+    try {
+      await page.goto(`/lists/${listId}`)
+      const rowOf = (leadId: string) => page.locator(`tbody tr:has(a[href="/leads/${leadId}"])`)
+      const chipOf = (leadId: string) => rowOf(leadId).locator(`[data-group-id="${group.id}"]`)
+      await expect(chipOf(leads[0].leadId)).toHaveAttribute('aria-pressed', 'false')
+      for (const l of leads.slice(0, 2)) await rowOf(l.leadId).getByRole('checkbox').click()
+      await page.getByRole('button', { name: 'Bulk actions' }).click()
+      await page.getByRole('menuitem', { name: 'Add to group…' }).click()
+      await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^${group.name}`) }).click()
+      await expect(page.getByText(`Added 2 people to ${group.name}`, { exact: true })).toBeVisible()
+      await expect(chipOf(leads[0].leadId)).toHaveAttribute('aria-pressed', 'true')
+      await expect(chipOf(leads[1].leadId)).toHaveAttribute('aria-pressed', 'true')
+      await expect(chipOf(leads[2].leadId)).toHaveAttribute('aria-pressed', 'false')
+    } finally {
+      expect((await request.delete(`/api/core-data/groups/${group.id}`)).status()).toBe(200)
+      expect((await request.delete(`/api/core-data/lists/${listId}`)).status()).toBe(200)
+    }
+  })
+
+  test('list page with filters: "Select all N matching" and its export cover the filtered people only', async ({ page, request }) => {
+    // A list and a filter that both reach past one page of 100 (made-up seed data).
+    const lists = (await getJson<{ lists: { id: string; memberCount: number }[] }>(request, '/api/core-data/lists')).lists
+    let pick: { id: string; filter: string; total: number } | undefined
+    for (const l of lists.filter((x) => x.memberCount > 100)) {
+      for (const filter of ['borough=Brooklyn', 'group=none']) {
+        const { total } = await getJson<{ total: number }>(request, `/api/core-data/lists/${l.id}/members?${filter}`)
+        if (total > 100 && total < l.memberCount && !pick) pick = { id: l.id, filter, total }
+      }
+    }
+    expect(pick, 'the seed has a list and a filter past one page').toBeDefined()
+    const [key, value] = pick!.filter.split('=')
+    const idsCalls: URLSearchParams[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === `/api/core-data/lists/${pick!.id}/members` && u.searchParams.get('ids') === '1') idsCalls.push(u.searchParams)
+    })
+    await page.goto(`/lists/${pick!.id}?${pick!.filter}`)
+    await page.locator('thead').getByRole('checkbox').click()
+    const banner = page.getByTestId('select-all-matching')
+    const n = pick!.total.toLocaleString('en-US')
+    await banner.getByRole('button', { name: `Select all ${n} matching` }).click()
+    await expect(banner).toContainText(`All ${n} matching are selected.`)
+    await expect(page.getByText(`${n} selected`, { exact: true })).toBeVisible()
+    expect(idsCalls).toHaveLength(1)
+    expect(idsCalls[0].get(key)).toBe(value)
+    const exported = page.waitForRequest((r) => new URL(r.url()).pathname === `/api/core-data/lists/${pick!.id}/export`)
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    await page.getByRole('menuitem', { name: 'Export CSV' }).click()
+    expect(new URL((await exported).url()).searchParams.get(key)).toBe(value)
+  })
+
+  test('list page: a "Select all matching" that finishes after a filter change is dropped', async ({ page, request }) => {
+    const lists = (await getJson<{ lists: { id: string; memberCount: number }[] }>(request, '/api/core-data/lists')).lists
+    const big = lists.find((l) => l.memberCount > 100)!
+    await page.goto(`/lists/${big.id}`)
+    await expect(page.locator('tbody tr').first()).toBeVisible()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const idsUrl = (url: URL) => url.pathname === `/api/core-data/lists/${big.id}/members` && url.searchParams.get('ids') === '1'
+    await page.route(idsUrl, async (route) => {
+      await held
+      await route.continue()
+    })
+    await page.locator('thead').getByRole('checkbox').click()
+    const answered = page.waitForResponse((r) => idsUrl(new URL(r.url())))
+    await page.getByTestId('select-all-matching').getByRole('button', { name: /^Select all [\d,]+ matching$/ }).click()
+    await page.getByRole('button', { name: 'Has a strong buyer' }).click() // a new view while the ids are on their way
+    await expect(page).toHaveURL(/strongBuyer=1/)
+    release()
+    await answered
+    await page.waitForTimeout(500)
+    await expect(page.getByText(/^[\d,]+ selected$/)).toHaveCount(0)
+    await page.unroute(idsUrl)
   })
 })
