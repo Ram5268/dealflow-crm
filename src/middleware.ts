@@ -9,8 +9,9 @@ import { CORRELATION_HEADER, newCorrelationId } from '@/lib/shell/correlationId'
 // runWithCorrelationId(id, ...) using this header to populate
 // async-local-storage.
 //
-// A rejected request returns the 401 without a correlation id — there is no
-// downstream work to correlate.
+// A rejected request returns the 401 (or the 503 "not configured" a Vercel
+// deployment with no BASIC_AUTH_PASSWORD gives, Brief 47 PR 3) without a
+// correlation id — there is no downstream work to correlate.
 export function middleware(req: NextRequest) {
   const auth = basicAuth(req)
   if (!auth.ok) return auth.response

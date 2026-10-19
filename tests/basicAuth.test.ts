@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import {
   basicAuth,
@@ -28,9 +28,15 @@ const ORIGINAL_PASSWORD = process.env.BASIC_AUTH_PASSWORD
 beforeEach(() => {
   delete process.env.BASIC_AUTH_USER
   delete process.env.BASIC_AUTH_PASSWORD
+  // Brief 47 (PR 3): every test starts off Vercel (local dev / E2E / CI) unless
+  // it says otherwise, so a VERCEL_ENV in the shell can't change the results.
+  vi.stubEnv('VERCEL_ENV', undefined)
 })
 
 afterEach(() => {
+  // Undo every vi.stubEnv first (VERCEL_ENV and any per-test stubs), then
+  // restore the two hand-managed variables below.
+  vi.unstubAllEnvs()
   // Restore rather than delete: the gate is env-driven and this suite shares a
   // process with every other file (vitest.config sets isolate: false).
   if (ORIGINAL_USER === undefined) delete process.env.BASIC_AUTH_USER
@@ -39,7 +45,7 @@ afterEach(() => {
   else process.env.BASIC_AUTH_PASSWORD = ORIGINAL_PASSWORD
 })
 
-describe('basicAuth — disabled when no password is configured', () => {
+describe('basicAuth — disabled when no password is configured (local dev and E2E: no VERCEL_ENV)', () => {
   it('passes through when BASIC_AUTH_PASSWORD is unset', () => {
     expect(basicAuth(req('/leads')).ok).toBe(true)
   })
@@ -201,5 +207,160 @@ describe('basicAuth — exempt paths', () => {
       new URL('/api/comms/webhook/gmail-push?token=abc', 'http://localhost:3000'),
     )
     expect(basicAuth(request).ok).toBe(true)
+  })
+})
+
+// Brief 47 (PR 3): engineering precaution (Brief 40 audit M5). On a Vercel
+// deployment (VERCEL_ENV is 'production' or 'preview') a missing password locks
+// the app with a 503 "not configured" instead of opening it: one deleted or
+// mistyped Vercel setting must not open every homeowner's name and number to
+// anyone. The exempt webhook and cron routes still pass (they check their own
+// secrets). Local dev and E2E (no VERCEL_ENV, or 'development') keep the
+// no-prompt path above.
+const VERCEL_DEPLOYMENTS = ['production', 'preview'] as const
+
+function expectNotConfigured(result: ReturnType<typeof basicAuth>): Response {
+  expect(result.ok).toBe(false)
+  if (result.ok) throw new Error('expected the not-configured response')
+  expect(result.response.status).toBe(503)
+  return result.response
+}
+
+describe('basicAuth — on Vercel with no password: locked (503), not open', () => {
+  it.each(VERCEL_DEPLOYMENTS)(
+    '503s /leads on %s when BASIC_AUTH_PASSWORD is empty',
+    (vercelEnv) => {
+      vi.stubEnv('VERCEL_ENV', vercelEnv)
+      vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+      expectNotConfigured(basicAuth(req('/leads')))
+    },
+  )
+
+  it.each(VERCEL_DEPLOYMENTS)(
+    '503s /leads on %s when BASIC_AUTH_PASSWORD is unset',
+    (vercelEnv) => {
+      vi.stubEnv('VERCEL_ENV', vercelEnv)
+      vi.stubEnv('BASIC_AUTH_PASSWORD', undefined)
+      expectNotConfigured(basicAuth(req('/leads')))
+    },
+  )
+
+  it('answers in plain text with no Basic prompt (there is no password to ask for)', async () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    const response = expectNotConfigured(basicAuth(req('/leads')))
+    expect(response.headers.get('www-authenticate')).toBeNull()
+    expect(response.headers.get('content-type')).toContain('text/plain')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toBe(
+      "This app isn't configured: its password setting is missing.",
+    )
+  })
+
+  it.each([
+    '/',
+    '/leads/123',
+    '/settings',
+    '/api/leads',
+    '/api/core-data/health',
+    '/api/comms/oauth/gmail/callback',
+    // Not exempt: siblings of exempt routes don't inherit the exemption.
+    '/api/cron',
+    '/api/cron/not-a-real-job',
+  ])('503s the non-exempt route %s on production', (pathname) => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expectNotConfigured(basicAuth(req(pathname)))
+  })
+
+  it('cannot be opened with any credentials, including an empty password', () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expectNotConfigured(basicAuth(req('/leads', basicHeader(USER, ''))))
+    expectNotConfigured(basicAuth(req('/leads', basicHeader(USER, 'anything'))))
+    expectNotConfigured(basicAuth(req('/leads', 'Basic bogus')))
+  })
+
+  it.each([...BASIC_AUTH_EXEMPT_PATHS])(
+    'lets the exempt route %s through on production (it checks its own secret)',
+    (pathname) => {
+      vi.stubEnv('VERCEL_ENV', 'production')
+      vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+      expect(basicAuth(req(pathname)).ok).toBe(true)
+      expect(basicAuth(req(`${pathname}/`)).ok).toBe(true)
+    },
+  )
+
+  it.each([...BASIC_AUTH_EXEMPT_PATHS])(
+    'lets the exempt route %s through on preview with the password unset',
+    (pathname) => {
+      vi.stubEnv('VERCEL_ENV', 'preview')
+      vi.stubEnv('BASIC_AUTH_PASSWORD', undefined)
+      expect(basicAuth(req(pathname)).ok).toBe(true)
+    },
+  )
+})
+
+describe('basicAuth — off Vercel with no password: no prompt (local dev and E2E)', () => {
+  it('passes /leads with no VERCEL_ENV and an empty password', () => {
+    vi.stubEnv('VERCEL_ENV', undefined)
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('passes /leads with VERCEL_ENV=development and an empty password', () => {
+    vi.stubEnv('VERCEL_ENV', 'development')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('passes /leads with VERCEL_ENV=development and the password unset', () => {
+    vi.stubEnv('VERCEL_ENV', 'development')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', undefined)
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+})
+
+describe('basicAuth — on Vercel with a password: unchanged', () => {
+  it.each(VERCEL_DEPLOYMENTS)(
+    '401s with the Basic prompt on %s when no credentials are sent',
+    (vercelEnv) => {
+      vi.stubEnv('VERCEL_ENV', vercelEnv)
+      vi.stubEnv('BASIC_AUTH_PASSWORD', PASSWORD)
+      const result = basicAuth(req('/leads'))
+      if (result.ok) throw new Error('expected rejection')
+      expect(result.response.status).toBe(401)
+      expect(result.response.headers.get('www-authenticate')).toBe(
+        'Basic realm="DealFlow CRM"',
+      )
+    },
+  )
+
+  it.each(VERCEL_DEPLOYMENTS)(
+    '401s wrong credentials on %s',
+    (vercelEnv) => {
+      vi.stubEnv('VERCEL_ENV', vercelEnv)
+      vi.stubEnv('BASIC_AUTH_PASSWORD', PASSWORD)
+      const result = basicAuth(req('/leads', basicHeader(USER, 'wrong')))
+      if (result.ok) throw new Error('expected rejection')
+      expect(result.response.status).toBe(401)
+    },
+  )
+
+  it.each(VERCEL_DEPLOYMENTS)(
+    'passes the right credentials on %s',
+    (vercelEnv) => {
+      vi.stubEnv('VERCEL_ENV', vercelEnv)
+      vi.stubEnv('BASIC_AUTH_PASSWORD', PASSWORD)
+      expect(basicAuth(req('/leads', basicHeader(USER, PASSWORD))).ok).toBe(true)
+    },
+  )
+
+  it('still lets the exempt routes through on production', () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', PASSWORD)
+    for (const pathname of BASIC_AUTH_EXEMPT_PATHS) {
+      expect(basicAuth(req(pathname)).ok).toBe(true)
+    }
   })
 })

@@ -9,7 +9,11 @@ import type { NextRequest } from 'next/server'
 //
 // Runtime note: middleware runs on the Edge runtime, so `node:crypto` (and its
 // timingSafeEqual) is unavailable. constantTimeEquals below is the Edge-safe
-// equivalent. Edge also INLINES process.env at build time — see .env.example.
+// equivalent. For how the Edge bundle reads process.env (VERCEL_ENV and the
+// BASIC_AUTH_* settings), see the BASIC_AUTH notes in .env.example.
+//
+// Brief 47 (PR 3): no password on a Vercel deployment LOCKS the app (503 "not
+// configured") instead of opening it; see basicAuth() below.
 
 const DEFAULT_USER = 'ryan'
 const REALM = 'DealFlow CRM'
@@ -55,15 +59,46 @@ export type BasicAuthResult =
   | { ok: false; response: NextResponse }
 
 let warnedDisabled = false
+let warnedNotConfigured = false
+
+// Brief 47 (PR 3): true on a Vercel deployment. VERCEL_ENV is Vercel's own
+// system variable ('production' | 'preview' | 'development'), set by Vercel at
+// build time and at runtime. Local dev, E2E and GitHub CI don't set it (a
+// `vercel env pull` file sets 'development'). Read per request: a local
+// `next build` on Next 16.2.5 keeps it as a runtime read in the Edge bundle.
+function isVercelDeployment(): boolean {
+  const vercelEnv = process.env.VERCEL_ENV
+  return vercelEnv === 'production' || vercelEnv === 'preview'
+}
 
 // Returns { ok: true } to let the request through, or { ok: false, response }
-// carrying the 401 the middleware should return instead of continuing.
+// carrying the 401 (or, on Vercel with no password, the 503) the middleware
+// should return instead of continuing.
 export function basicAuth(req: NextRequest): BasicAuthResult {
   const password = process.env.BASIC_AUTH_PASSWORD ?? ''
 
-  // Unset or empty password disables the gate entirely. This is the local-dev
-  // and E2E path: no prompt, no credentials to thread through Playwright.
   if (password === '') {
+    // Brief 47 (PR 3), engineering precaution (Brief 40 audit M5): on a Vercel
+    // deployment a missing password LOCKS the app instead of opening it. One
+    // deleted or mistyped Vercel setting would otherwise open every homeowner's
+    // name and number to anyone. Every non-exempt route gets a 503 "not
+    // configured" (no Basic prompt: there is no password to check against).
+    // The exempt webhook and cron routes still pass; each checks its own
+    // secret, exactly as when a password is set.
+    if (isVercelDeployment()) {
+      if (isExemptPath(req.nextUrl.pathname)) return { ok: true }
+      if (!warnedNotConfigured) {
+        warnedNotConfigured = true
+        console.error(
+          'Basic auth NOT CONFIGURED on a Vercel deployment: BASIC_AUTH_PASSWORD is empty, so every non-exempt route returns 503',
+        )
+      }
+      return { ok: false, response: notConfigured() }
+    }
+
+    // Off Vercel (no VERCEL_ENV, or 'development') an unset or empty password
+    // disables the gate. This is the local-dev and E2E path: no prompt, no
+    // credentials to thread through Playwright.
     if (!warnedDisabled) {
       warnedDisabled = true
       console.warn(
@@ -132,6 +167,21 @@ function constantTimeEquals(a: string, b: string): boolean {
   }
 
   return diff === 0
+}
+
+// Brief 47 (PR 3): the locked-because-unconfigured answer. Plain text, no
+// WWW-Authenticate (a prompt could never succeed), not cached.
+function notConfigured(): NextResponse {
+  return new NextResponse(
+    "This app isn't configured: its password setting is missing.",
+    {
+      status: 503,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    },
+  )
 }
 
 function unauthorized(): NextResponse {
