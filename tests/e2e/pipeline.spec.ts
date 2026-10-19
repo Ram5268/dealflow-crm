@@ -312,6 +312,18 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     await onlyIn(request, lead[3], G.b)
   })
 
+  test("if the groups can't load, cards keep showing their own groups (read-only); the sidebar says so once", async ({ page }) => {
+    await page.route('**/api/core-data/sidebar', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }))
+    await page.goto(board, { waitUntil: 'networkidle' })
+    const groups = card(page, G.a, lead[5]).getByTestId('card-groups')
+    await expect(groups).toContainText(`E2E A ${STAMP}`)
+    await expect(groups).toContainText(`E2E C ${STAMP}`)
+    await expect(groups.getByTestId('group-chips')).toHaveCount(0) // no per-card "couldn't load" with its own Try again
+    await expect(page.locator('main').getByText("Couldn't load your lists and groups just now.")).toHaveCount(0)
+    await expect(page.locator('aside').first().getByText("Couldn't load your lists and groups just now.")).toBeVisible()
+    await page.unroute('**/api/core-data/sidebar')
+  })
+
   test('the table: chips on each row, and Bulk actions → "Add to group…" for the selected people', async ({ page, request }) => {
     await onlyIn(request, lead[4], G.c)
     await page.goto(`${board}&view=table`, { waitUntil: 'networkidle' })
