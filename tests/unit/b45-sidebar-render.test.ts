@@ -118,22 +118,23 @@ describe('the sidebar tree', () => {
     expect(link(open, '/lists/a2').text).toContain('Old referrals')
   })
 
-  it('groups show their color dot and count, and open All leads filtered to that group (until the Pipeline lands)', () => {
+  it('groups show their color dot and count, and open the Pipeline on that group (PR D)', () => {
     const html = render({ data: populated() })
-    const hot = link(html, '/leads?group=g1')
+    const hot = link(html, '/pipeline?groups=g1')
     expect(hot.text).toBe('Hot 14')
-    expect(link(html, '/leads?group=g3').text).toBe('Nurture 96')
+    expect(link(html, '/pipeline?groups=g3').text).toBe('Nurture 96')
     // The dot uses the group color tokens (both themes), never a raw color.
-    expect(html).toMatch(/href="\/leads\?group=g1"[^>]*>[\s\S]*?class="[^"]*bg-group-red[^"]*"/)
-    expect(html).toMatch(/href="\/leads\?group=g2"[^>]*>[\s\S]*?class="[^"]*bg-group-green[^"]*"/)
+    expect(html).toMatch(/href="\/pipeline\?groups=g1"[^>]*>[\s\S]*?class="[^"]*bg-group-red[^"]*"/)
+    expect(html).toMatch(/href="\/pipeline\?groups=g2"[^>]*>[\s\S]*?class="[^"]*bg-group-green[^"]*"/)
   })
 
   it('marks the open list, and the group being viewed', () => {
     const onList = render({ data: populated(), pathname: '/lists/l1' })
     expect(link(onList, '/lists/l1').tag).toContain('aria-current="page"')
     expect(link(onList, '/lists/l4').tag).not.toContain('aria-current')
-    const onGroup = render({ data: populated(), pathname: '/leads', activeGroupId: 'g2' })
-    expect(link(onGroup, '/leads?group=g2').tag).toContain('aria-current="page"')
+    const onGroup = render({ data: populated(), pathname: '/pipeline', activeGroupId: 'g2' })
+    expect(link(onGroup, '/pipeline?groups=g2').tag).toContain('aria-current="page"')
+    expect(link(onGroup, '/pipeline?groups=g1').tag).not.toContain('aria-current')
     expect(link(onGroup, '/leads').tag).not.toContain('aria-current')
   })
 
@@ -216,7 +217,7 @@ describe('inline create and rename', () => {
   it('rename turns the row into a box holding the current name', () => {
     const html = render({ data: populated() }, { renaming: { kind: 'group', id: 'g3' } })
     expect(html).toMatch(/<input[^>]*value="Nurture"/)
-    expect(html).not.toContain('href="/leads?group=g3"')
+    expect(html).not.toContain('href="/pipeline?groups=g3"')
   })
 })
 
@@ -231,15 +232,15 @@ describe('⌘K: go to a list or a group, and create', () => {
     expect(paletteListEntries(null)).toEqual([])
   })
 
-  it('groups open All leads filtered to that group (never a dead link)', () => {
+  it('groups open the Pipeline on that group (PR D; before it, All leads filtered to the group)', () => {
     expect(paletteGroupEntries(populated())).toEqual([
-      { id: 'g1', label: 'Hot', color: 'red', count: 14, href: '/leads?group=g1' },
-      { id: 'g2', label: 'Appointment Set', color: 'green', count: 3, href: '/leads?group=g2' },
-      { id: 'g3', label: 'Nurture', color: 'blue', count: 96, href: '/leads?group=g3' },
+      { id: 'g1', label: 'Hot', color: 'red', count: 14, href: '/pipeline?groups=g1' },
+      { id: 'g2', label: 'Appointment Set', color: 'green', count: 3, href: '/pipeline?groups=g2' },
+      { id: 'g3', label: 'Nurture', color: 'blue', count: 96, href: '/pipeline?groups=g3' },
     ])
   })
 
-  it('has Go to list…, Go to group…, New list, New folder and New group, and no Pipeline command yet', () => {
+  it('has Go to list…, Go to group…, New list, New folder and New group ("Open Pipeline" is one of the palette\'s own actions)', () => {
     const labels = LIST_PALETTE_COMMANDS.map((c) => c.label)
     expect(labels).toEqual(['Go to list…', 'Go to group…', 'New list', 'New folder', 'New group'])
     expect(labels.join(' ')).not.toMatch(/pipeline/i)

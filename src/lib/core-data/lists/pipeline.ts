@@ -23,7 +23,7 @@ import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
 import {
-  BOARD_PAGE_SIZE, BOROUGHS, PAGE_SIZE, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
+  BOARD_PAGE_SIZE, BOROUGHS, MAX_PAGE, PAGE_SIZE, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
   type GroupChipDTO, type PipelineCard, type PipelineColumn, type PipelineFilterOptions,
   type PipelineFilters, type PipelineQuery, type PipelineResult, type PipelineRow, type PipelineSortKey, type SortDir,
 } from './types'
@@ -113,7 +113,9 @@ export function parsePipelineQuery(sp: URLSearchParams): PipelineQuery {
     groups: get('groups')?.split(',').map((g) => g.trim()).filter(Boolean),
     filters,
     column: get('column'),
-    page: Number.isInteger(page) && page >= 1 ? page : 1,
+    // Brief 45 PR D review: a 20-digit page overflowed the OFFSET (500); like
+    // any other page value it doesn't understand, the API reads it as page 1.
+    page: Number.isSafeInteger(page) && page >= 1 && page <= MAX_PAGE ? page : 1,
     sort: oneOf(get('sort'), PIPELINE_SORT_KEYS, 'sort'),
     dir: oneOf(get('dir'), ['asc', 'desc'] as const, 'sort direction'),
   }

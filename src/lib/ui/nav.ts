@@ -4,6 +4,7 @@ import {
   FileText,
   Inbox,
   ListOrdered,
+  SquareKanban,
   Target,
   Users,
   Zap,
@@ -27,6 +28,7 @@ export const PRIMARY_NAV: NavItem[] = [
   { href: '/queue', label: 'Call Queue', icon: ListOrdered }, // Brief 38
   { href: '/inbox', label: 'Inbox', icon: Inbox, goKey: 'i', badge: 'inbox-unread' },
   { href: '/leads', label: 'Leads', icon: Users, goKey: 'l' },
+  { href: '/pipeline', label: 'Pipeline', icon: SquareKanban, goKey: 'p' }, // Brief 45
   { href: '/sequences', label: 'Sequences', icon: Zap, goKey: 's' },
   { href: '/templates', label: 'Templates', icon: FileText },
   { href: '/reports', label: 'Reports', icon: BarChart3 },

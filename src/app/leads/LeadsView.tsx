@@ -288,7 +288,8 @@ export function LeadsView({
           />
         </div>
 
-        {/* Brief 45: ?group=<id> from the sidebar narrows All leads to one group. */}
+        {/* Brief 45: ?group=<id> narrows All leads to one group (an older sidebar
+            link; a group now opens the Pipeline on that group). */}
         {group && (
           <span className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-elevated pl-2.5 pr-1 text-sm text-fg">
             <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', groupColorStyle(group.color).dot)} />

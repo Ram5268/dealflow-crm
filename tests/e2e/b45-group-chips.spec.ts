@@ -12,11 +12,14 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
  * contacts anyone: calling stays off, and the dialer test only simulates a
  * call inside the browser (no request reaches Twilio or the CRM's call routes).
  *
+ *   next dev -H localhost -p 3147   (on the throwaway database)
  *   E2E_BASE_URL=http://localhost:3147 PW_CHROMIUM_PATH=<chrome-headless-shell> \
  *     npx playwright test tests/e2e/b45-group-chips.spec.ts
  *
- * Use `localhost`, not 127.0.0.1: Next's dev server serves its dev resources
- * only to its own origin.
+ * Start the dev server with `-H localhost`: without it, it listens on the
+ * whole network, with the login gate off locally. Use `localhost`, not
+ * 127.0.0.1, in E2E_BASE_URL: Next's dev server serves its dev resources only
+ * to its own origin.
  */
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000'
 const LOCAL = ['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)

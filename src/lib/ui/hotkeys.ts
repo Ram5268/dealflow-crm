@@ -37,6 +37,7 @@ export const GO_TO_ROUTES: Record<string, string> = {
   l: '/leads',
   f: '/',
   s: '/sequences',
+  p: '/pipeline', // Brief 45
 }
 
 /** How long a pending `g` stays armed before it lapses. */

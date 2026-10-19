@@ -104,7 +104,8 @@ export function SidebarBody({ displayName, createRequest, onCreateHandled }: Sid
           ))}
         </div>
         {/* Brief 45: folders, lists and groups, Mojo-style (brief §5.2). Suspense:
-            it reads the URL's ?group= to mark the group being viewed. */}
+            it reads the URL (?groups=, ?wf=, ?group=) to mark the group or
+            workflow being viewed. */}
         <Suspense fallback={null}>
           <SidebarLists createRequest={createRequest} onCreateHandled={onCreateHandled} />
         </Suspense>

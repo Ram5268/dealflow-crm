@@ -3,8 +3,9 @@
 // Brief 45 — the Mojo-style part of the left sidebar (brief §5.2), drawn from
 // data: All leads (always there, never deletable) with its live count and the
 // "ranked 7:02" stamp; LISTS: folders holding lists, lists outside folders,
-// the archived lists; GROUPS with their color and count. The CRM starts with
-// no folders, lists or groups: Ryan creates every one [Ryan, 2026-10-18].
+// the archived lists; GROUPS with their color and count, and under them the
+// saved Pipeline workflows (PR D). The CRM starts with no folders, lists or
+// groups: Ryan creates every one [Ryan, 2026-10-18].
 //
 // Everything interactive (inline name boxes, menus, drag and drop, keys)
 // comes from SidebarUiContext, which SidebarLists provides. With the default
@@ -13,15 +14,15 @@
 import Link from 'next/link'
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import * as RM from '@radix-ui/react-dropdown-menu'
-import { Check, ChevronDown, ChevronRight, MoreHorizontal, Plus, Users } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, MoreHorizontal, Plus, SquareKanban, Users } from 'lucide-react'
 import { Skeleton, Tooltip } from '@/components/ui'
 import { controlBase } from '@/components/ui/Field'
 import { cn } from '@/lib/ui/cn'
 import { GROUP_COLOR_OPTIONS, groupColorStyle } from '@/lib/ui/groupColors'
-import type { FolderDTO, GroupColor, GroupDTO, ListDTO, SidebarData } from '@/lib/core-data/lists/types'
+import type { FolderDTO, GroupColor, GroupDTO, ListDTO, SidebarData, WorkflowDTO } from '@/lib/core-data/lists/types'
 import { formatCount, rankedHeadline, rankedStamp } from '../format'
 import { buildTree, canStep, type Direction } from './tree'
-import { groupHref } from './palette'
+import { groupHref, workflowHref } from './palette'
 import type { CreateKind } from './createRequest'
 
 // ─── The interactive state, provided by SidebarLists ─────────────────────────
@@ -515,6 +516,30 @@ function GroupRow({ group, groupIds, active }: { group: GroupDTO; groupIds: stri
   )
 }
 
+/**
+ * A saved Pipeline workflow (PR D): opens its tab. Renaming and deleting
+ * happen on the Pipeline's tab menu; the row is part of the sidebar's ↑ ↓ walk.
+ */
+function WorkflowRow({ workflow, active }: { workflow: WorkflowDTO; active: boolean }) {
+  return (
+    <li>
+      <div className={rowShell(active, null)}>
+        <Link
+          href={workflowHref(workflow.id)}
+          aria-current={active ? 'page' : undefined}
+          data-sidebar-row=""
+          className={cn(ROW_MAIN, 'pl-2')}
+        >
+          <SquareKanban size={14} className="shrink-0 text-subtle" />
+          <span className="min-w-0 flex-1 truncate" title={workflow.name}>
+            {workflow.name}
+          </span>
+        </Link>
+      </div>
+    </li>
+  )
+}
+
 function SectionHeader({ id, title, actions }: { id: string; title: string; actions: { label: string; text: string; onClick: () => void }[] }) {
   return (
     <div className="flex h-7 items-center gap-0.5 pl-2 pr-1">
@@ -540,6 +565,7 @@ function SectionHeader({ id, title, actions }: { id: string; title: string; acti
 
 const LISTS_EMPTY = 'No lists yet. Upload a spreadsheet or create a list.'
 const GROUPS_EMPTY = 'No groups yet. Create groups like Hot or Nurture to sort people as you talk to them.'
+const WORKFLOWS_EMPTY = 'No workflows yet. Save a view on the Pipeline to keep it here.'
 
 // ─── The tree ─────────────────────────────────────────────────────────────────
 
@@ -550,8 +576,10 @@ export interface SidebarTreeProps {
   /** For the "ranked 7:02" stamp. */
   now: Date
   pathname?: string | null
-  /** The group being viewed on /leads?group=<id>. */
+  /** The group on screen: /pipeline?groups=<id> (or All leads filtered to it, /leads?group=<id>). */
   activeGroupId?: string | null
+  /** The saved workflow on screen (/pipeline?wf=<id>). */
+  activeWorkflowId?: string | null
   collapsedFolderIds?: ReadonlySet<string>
   archivedOpen?: boolean
   /** null while loading them. */
@@ -560,12 +588,13 @@ export interface SidebarTreeProps {
 }
 
 export function SidebarTree({
-  data, error = null, now, pathname = null, activeGroupId = null, collapsedFolderIds, archivedOpen = false,
+  data, error = null, now, pathname = null, activeGroupId = null, activeWorkflowId = null, collapsedFolderIds, archivedOpen = false,
   archivedLists = null, archivedError = null,
 }: SidebarTreeProps) {
   const ui = useContext(SidebarUiContext)
   const listsId = useId()
   const groupsId = useId()
+  const workflowsId = useId()
   const tree = data ? buildTree(data) : null
   const folderIds = data ? data.folders.map((f) => f.id) : []
   const groupIds = data ? data.groups.map((g) => g.id) : []
@@ -704,7 +733,7 @@ export function SidebarTree({
           <>
             <ul role="list" className="flex flex-col gap-px">
               {tree.groups.map((g) => (
-                <GroupRow key={g.id} group={g} groupIds={groupIds} active={pathname === '/leads' && activeGroupId === g.id} />
+                <GroupRow key={g.id} group={g} groupIds={groupIds} active={activeGroupId === g.id} />
               ))}
               {ui.creating?.kind === 'group' && (
                 <li>
@@ -715,7 +744,21 @@ export function SidebarTree({
             {data.groups.length === 0 && ui.creating?.kind !== 'group' && <p className="px-2 py-1 text-xs text-subtle">{GROUPS_EMPTY}</p>}
           </>
         )}
-        {/* PR D adds the saved Pipeline workflows here, under Groups ("Workflows"). */}
+        {/* PR D: the saved Pipeline workflows, under Groups [brief §5.6]. */}
+        {data && tree && !error && (
+          <section aria-labelledby={workflowsId} className="mt-2">
+            <SectionHeader id={workflowsId} title="Workflows" actions={[]} />
+            {data.workflows.length > 0 ? (
+              <ul role="list" className="flex flex-col gap-px">
+                {data.workflows.map((w) => (
+                  <WorkflowRow key={w.id} workflow={w} active={activeWorkflowId === w.id} />
+                ))}
+              </ul>
+            ) : (
+              <p className="px-2 py-1 text-xs text-subtle">{WORKFLOWS_EMPTY}</p>
+            )}
+          </section>
+        )}
       </section>
     </div>
   )

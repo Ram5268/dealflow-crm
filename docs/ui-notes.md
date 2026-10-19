@@ -15,6 +15,7 @@ empty. There are no blank pages.
 | `/leads` | Lead list with saved views, search, sorting, pagination |
 | `/leads?new=1` | Create-lead form (modal over the list) |
 | `/leads/[id]` | Lead detail — details rail, activity timeline, enrol-in-sequence |
+| `/pipeline` | **Pipeline** (Brief 45) — one column per group (or a table), filters in the URL, saved workflows as tabs; drag or `[` `]` / `M` to move a card between groups. "Create a group to start your pipeline" while there are no groups. A group in the sidebar or ⌘K "Go to group…" opens `/pipeline?groups=<id>`; the sidebar's Workflows open `/pipeline?wf=<id>` |
 | `/sequences` | Sequence list |
 | `/sequences/new`, `/sequences/[id]`, `/sequences/[id]/edit` | Sequence editor and detail (Steps / Enrollment / Stats) |
 | `/templates`, `/templates/new`, `/templates/[id]` | Message templates with merge-tag inserter and live preview |
@@ -33,7 +34,7 @@ Global, from anywhere:
 | `⌘K` / `Ctrl+K` | Command palette |
 | `?` or `⌘/` | Shortcuts sheet |
 | `Esc` | Close the topmost overlay |
-| `g` then `f` / `i` / `l` / `s` | Go to Focus / Inbox / Leads / Sequences |
+| `g` then `f` / `i` / `l` / `s` / `p` | Go to Focus / Inbox / Leads / Sequences / Pipeline |
 
 Inbox only:
 
@@ -44,6 +45,18 @@ Inbox only:
 | `r` | Reply |
 | `e` | Archive |
 | `u` | Toggle read/unread |
+
+Pipeline board only (a card has focus):
+
+| Keys | Action |
+|---|---|
+| `↑` `↓` `←` `→` | Move between cards |
+| `[` / `]` | Move the card to the column on the left / right (out of one group, into the other) |
+| `M` (or Shift+F10) | "Move to group…": any group, including ones not shown as columns |
+| `Enter` | Open the lead |
+| `F2` (a focused workflow tab) | Rename the workflow |
+
+The board's moves are covered end to end by `tests/e2e/pipeline.spec.ts` (local dev server only).
 
 Hotkeys are suppressed while focus is in a text field, except `Esc` — so you can
 always dismiss a composer you are typing in. The handler lives in

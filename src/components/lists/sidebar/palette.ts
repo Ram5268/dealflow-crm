@@ -2,8 +2,7 @@
 // (brief §5.2): "Go to list…" and "Go to group…" (each opens a page of the
 // palette listing them) and "New list" / "New folder" / "New group" (each
 // opens the sidebar's inline name box). Pure, so it can be tested without a
-// browser. "Open Pipeline" arrives with the Pipeline page itself (PR D):
-// docs/ui-notes.md, a command's href must exist.
+// browser. "Open Pipeline" is one of the palette's own actions (PR D).
 import type { GroupColor, SidebarData } from '@/lib/core-data/lists/types'
 import type { CreateKind } from './createRequest'
 
@@ -49,10 +48,7 @@ export function paletteListEntries(data: SidebarData | null): PaletteListEntry[]
   }))
 }
 
-/**
- * Every group in sidebar order. A group opens All leads filtered to it until
- * the Pipeline page exists (PR D moves it there); never a dead link.
- */
+/** Every group in sidebar order; each opens the Pipeline on that group. */
 export function paletteGroupEntries(data: SidebarData | null): PaletteGroupEntry[] {
   if (!data) return []
   return data.groups.map((g) => ({
@@ -64,5 +60,13 @@ export function paletteGroupEntries(data: SidebarData | null): PaletteGroupEntry
   }))
 }
 
-/** Where clicking a group goes (the sidebar and ⌘K use the same place). */
-export const groupHref = (groupId: string) => `/leads?group=${encodeURIComponent(groupId)}`
+/**
+ * Where clicking a group goes (the sidebar and ⌘K use the same place): the
+ * Pipeline showing that group's column [brief §5.2: "a group opens the
+ * Pipeline filtered to that group"]. Before the Pipeline (PR D) it was All
+ * leads filtered to the group; /leads?group=<id> still works for old links.
+ */
+export const groupHref = (groupId: string) => `/pipeline?groups=${encodeURIComponent(groupId)}`
+
+/** Where a saved Pipeline workflow opens: its tab, as saved (the sidebar's Workflows and the Pipeline's tabs). */
+export const workflowHref = (workflowId: string) => `/pipeline?wf=${encodeURIComponent(workflowId)}`

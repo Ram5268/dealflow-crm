@@ -24,7 +24,7 @@ import { isEditableTarget } from '@/lib/ui/hotkeys'
 import { groupColorStyle } from '@/lib/ui/groupColors'
 import { useSidebarData } from '@/lib/core-data/lists/client'
 import type { GroupChipDTO, GroupDTO, SidebarData } from '@/lib/core-data/lists/types'
-import { GroupChipsController, litGroupIds, plainError } from './group-chips-state'
+import { GroupChipsController, litGroupIds, plainError, type ChipApi } from './group-chips-state'
 import { chipKeyLabel, groupForKey } from './chip-keys'
 
 /** The element that counts as "the card" for keys 1–9: one marked data-contact-card, else the table row. */
@@ -261,6 +261,12 @@ export interface GroupChipsProps {
   hotkeys?: boolean
   /** After a burst of clicks has reached the CRM: the lead's groups, in sidebar order. */
   onChange?(memberOf: string[]): void
+  /**
+   * How the chips reach the CRM (default: PR A's routes). The Pipeline passes
+   * one that waits for that person's card moves, so a chip and a move of the
+   * same person can't land out of order (PR D).
+   */
+  api?: ChipApi
 }
 
 function chipGroups(groups: readonly GroupDTO[]): GroupChipDTO[] {
@@ -274,7 +280,7 @@ function inOrder(ids: string[], groups: readonly GroupChipDTO[] | null): string[
   return [...ids].sort((a, b) => pos(a) - pos(b))
 }
 
-export function GroupChips({ leadId, memberOf, compact = false, hotkeys = false, onChange }: GroupChipsProps) {
+export function GroupChips({ leadId, memberOf, compact = false, hotkeys = false, onChange, api }: GroupChipsProps) {
   const sidebar = useSidebarData()
   const { toast } = useToast()
 
@@ -296,6 +302,7 @@ export function GroupChips({ leadId, memberOf, compact = false, hotkeys = false,
     new GroupChipsController({
       leadId: id,
       memberOf: initial,
+      api,
       onError: (e) => {
         const name = latest.current.groups?.find((g) => g.id === e.groupId)?.name ?? 'that group'
         latest.current.toast({
