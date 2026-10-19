@@ -126,6 +126,9 @@ export const getLeadMemberships = (leadId: string) => request<LeadMemberships>('
 
 // ─── Pipeline and saved workflows ────────────────────────────────────────────
 export const getPipeline = (query: PipelineQuery) => request<PipelineResult>('GET', `/pipeline${pipelineQs(query)}`)
+/** Brief 50 PR 7: everyone the Pipeline table shows for this query (every page), for "Select all N matching". */
+export const getPipelineIds = (query: PipelineQuery) =>
+  request<{ ids: string[] }>('GET', `/pipeline${qs({ view: 'table', groups: query.groups?.join(','), ...query.filters, sort: query.sort, dir: query.dir, ids: true })}`).then((r) => r.ids)
 export const getWorkflows = () => request<{ workflows: WorkflowDTO[] }>('GET', '/workflows').then((r) => r.workflows)
 export const createWorkflow = (input: WorkflowInput) =>
   request<{ workflow: WorkflowDTO }>('POST', '/workflows', input).then((r) => r.workflow)
