@@ -189,9 +189,18 @@ export const PROPERTY_SQL = `(
 
 // Brief 37: the whole latest batch (the run owning the newest generatedAt), in
 // rank order, no cap.
+// Brief 50 (PR 11), engineering precaution (open item 6.10): only from the
+// DealFlow organization whose slug is the CRM organization's ($1). Both apps
+// name Ryan's organization "dealflow-ryan", and DealFlow's own copy of the
+// CRM's leads (lib/crm-sync/runSync.ts, ORG_SLUG) pairs them the same way; the
+// two apps' organization ids differ. An organization DealFlow doesn't have
+// reads no rows, and the copy skips as "empty".
 export const RO_SQL = `
   WITH latest AS (
-    SELECT "generationRunId" FROM "CallQueueEntry" ORDER BY "generatedAt" DESC LIMIT 1
+    SELECT q."organizationId", q."generationRunId" FROM "CallQueueEntry" q
+    JOIN "Organization" o ON o."id" = q."organizationId"
+    WHERE o."slug" = $1
+    ORDER BY q."generatedAt" DESC LIMIT 1
   )
   SELECT
     mc."mojoId"              AS mojo_id,
@@ -211,16 +220,19 @@ export const RO_SQL = `
     ${BUYERS_SQL} AS buyers,
     ${PROPERTY_SQL} AS property
   FROM latest
-  JOIN "CallQueueEntry" cqe ON cqe."generationRunId" = latest."generationRunId"
-  JOIN "MojoContact" mc ON mc."id" = cqe."contactId"
+  JOIN "CallQueueEntry" cqe ON cqe."organizationId" = latest."organizationId"
+    AND cqe."generationRunId" = latest."generationRunId"
+  JOIN "MojoContact" mc ON mc."id" = cqe."contactId" AND mc."organizationId" = cqe."organizationId"
   LEFT JOIN "Match" m   ON m."id" = cqe."primaryMatchId"
   ORDER BY cqe."rank"
 `
 
 // Whether DealFlow's latest scoring run used test buyers (drives the banner).
+// Brief 50 (PR 11): that organization's own run ($1 = slug, as RO_SQL).
 export const RUN_INFO_SQL = `
-  SELECT ("detailsJson"->>'includeTestBuyers')::boolean AS include_test_buyers
-  FROM "AuditLog" WHERE "action" = 'NIGHTLY_SCORING' ORDER BY "createdAt" DESC LIMIT 1
+  SELECT (a."detailsJson"->>'includeTestBuyers')::boolean AS include_test_buyers
+  FROM "AuditLog" a JOIN "Organization" o ON o."id" = a."organizationId"
+  WHERE o."slug" = $1 AND a."action" = 'NIGHTLY_SCORING' ORDER BY a."createdAt" DESC LIMIT 1
 `
 
 // Brief 44: whether DealFlow's valuation tables exist yet (data step V1).
@@ -234,19 +246,20 @@ export const VALUATIONS_READY_SQL = `
 `
 export const RO_SQL_WITHOUT_PROPERTY = RO_SQL.replace(PROPERTY_SQL, 'NULL::jsonb')
 
-// Fetches the latest queue batch from DealFlow (read-only). In stub mode returns
-// a small golden fixture without touching any DB (unit-scope shortcut).
-export async function fetchDealflowBatch(now: Date = new Date()): Promise<DealflowBatch> {
+// Fetches the latest queue batch of the DealFlow organization with this slug
+// (the CRM organization's; Brief 50 PR 11) from DealFlow (read-only). In stub
+// mode returns a small golden fixture without touching any DB (unit-scope shortcut).
+export async function fetchDealflowBatch(orgSlug: string, now: Date = new Date()): Promise<DealflowBatch> {
   if (process.env.DEALFLOW_SYNC_STUB === '1') {
     return stubBatch(now)
   }
   const [ready, info] = await Promise.all([
     roQuery<{ ready: boolean | null }>(VALUATIONS_READY_SQL),
-    roQuery<{ include_test_buyers: boolean | null }>(RUN_INFO_SQL),
+    roQuery<{ include_test_buyers: boolean | null }>(RUN_INFO_SQL, [orgSlug]),
   ])
   const valuationsReady = ready[0]?.ready === true
   if (!valuationsReady) logger.warn('DealFlow sync: the valuation tables are not there yet, so no property card data this run')
-  const rows = await roQuery<DealflowJoinRow>(valuationsReady ? RO_SQL : RO_SQL_WITHOUT_PROPERTY)
+  const rows = await roQuery<DealflowJoinRow>(valuationsReady ? RO_SQL : RO_SQL_WITHOUT_PROPERTY, [orgSlug])
   return { rows, includeTestBuyers: info[0]?.include_test_buyers ?? null }
 }
 

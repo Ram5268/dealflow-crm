@@ -7,8 +7,10 @@ import {
   FILL_TIMEZONES_SQL,
   MORNING_GUARD_LEADS_SQL,
   MORNING_GUARD_SIGNALS_SQL,
+  NOTHING_MAPPED_GUARD_SQL,
   REMOVE_STALE_SIGNALS_SQL,
   UPDATE_LEADS_SQL,
+  UPSERT_SAME_ORG_SQL,
   UPSERT_SIGNALS_SQL,
   batchGeneratedAt,
   syncStatements,
@@ -22,6 +24,11 @@ import { buildSignals, stubBatch } from '@/lib/core-data/dealflow-sync/sync'
 // for byte the same: the SHA-256 of every statement's text on main (aa10534 /
 // PR A 239c5f8) is pinned below. Pure (the DB proof is
 // tests/dealflow-sync.guard.test.ts).
+// Brief 50 (PR 11) added one condition at the end of two statements, and
+// nothing else: the upsert leaves another organization's signal alone
+// (UPSERT_SAME_ORG_SQL), and the clear clears nothing for a batch that maps to
+// no lead (NOTHING_MAPPED_GUARD_SQL). The DB proof is
+// tests/dealflow-sync.safety.test.ts.
 const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex')
 const ON_MAIN = {
   UPSERT_SIGNALS_SQL: 'e6c3f99c02cfce354e1eb5ad90d7446246bdf12e648dbafefae38d134240cfbd',
@@ -35,8 +42,7 @@ const ON_MAIN = {
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim()
 
 describe('the morning sync is unchanged apart from the guard', () => {
-  it('five statements are byte for byte what they were', () => {
-    expect(sha(UPSERT_SIGNALS_SQL)).toBe(ON_MAIN.UPSERT_SIGNALS_SQL)
+  it('four statements are byte for byte what they were', () => {
     expect(sha(UPDATE_LEADS_SQL)).toBe(ON_MAIN.UPDATE_LEADS_SQL)
     expect(sha(FILL_TIMEZONES_SQL)).toBe(ON_MAIN.FILL_TIMEZONES_SQL)
     expect(sha(ENSURE_VIEW_SQL)).toBe(ON_MAIN.ENSURE_VIEW_SQL)
@@ -44,8 +50,9 @@ describe('the morning sync is unchanged apart from the guard', () => {
   })
 
   it('the two whole-batch statements are what they were, plus one condition at the end', () => {
-    expect(CLEAR_STALE_LEADS_SQL.endsWith(MORNING_GUARD_LEADS_SQL)).toBe(true)
-    expect(sha(CLEAR_STALE_LEADS_SQL.slice(0, -MORNING_GUARD_LEADS_SQL.length))).toBe(ON_MAIN.CLEAR_STALE_LEADS_SQL)
+    // Brief 50 (PR 11): the clear then ends with the nothing-mapped condition.
+    expect(CLEAR_STALE_LEADS_SQL.endsWith(MORNING_GUARD_LEADS_SQL + NOTHING_MAPPED_GUARD_SQL)).toBe(true)
+    expect(sha(CLEAR_STALE_LEADS_SQL.slice(0, -(MORNING_GUARD_LEADS_SQL + NOTHING_MAPPED_GUARD_SQL).length))).toBe(ON_MAIN.CLEAR_STALE_LEADS_SQL)
     expect(REMOVE_STALE_SIGNALS_SQL.endsWith(MORNING_GUARD_SIGNALS_SQL)).toBe(true)
     expect(sha(REMOVE_STALE_SIGNALS_SQL.slice(0, -MORNING_GUARD_SIGNALS_SQL.length))).toBe(ON_MAIN.REMOVE_STALE_SIGNALS_SQL)
   })
@@ -56,6 +63,18 @@ describe('the morning sync is unchanged apart from the guard', () => {
       `AND ($3::timestamptz IS NULL OR l."dealflowSignalSyncedAt" IS NULL OR l."dealflowSignalSyncedAt" <= ($3::timestamptz AT TIME ZONE 'UTC'))`,
     )
     expect(flat(MORNING_GUARD_SIGNALS_SQL)).toBe(`AND ($3::timestamptz IS NULL OR "syncedAt" <= ($3::timestamptz AT TIME ZONE 'UTC'))`)
+  })
+})
+
+describe('Brief 50 (PR 11): two conditions added, nothing else changed', () => {
+  it('the upsert is what it was, plus: only a signal of the same organization is updated', () => {
+    expect(UPSERT_SIGNALS_SQL.endsWith(UPSERT_SAME_ORG_SQL)).toBe(true)
+    expect(sha(UPSERT_SIGNALS_SQL.slice(0, -UPSERT_SAME_ORG_SQL.length))).toBe(ON_MAIN.UPSERT_SIGNALS_SQL)
+    expect(flat(UPSERT_SAME_ORG_SQL)).toBe(`WHERE "DealFlowDerivedSignal"."organizationId" = EXCLUDED."organizationId"`)
+  })
+
+  it('the clear clears nothing when the batch maps to no lead', () => {
+    expect(flat(NOTHING_MAPPED_GUARD_SQL)).toBe('AND EXISTS (SELECT 1 FROM mapped)')
   })
 })
 

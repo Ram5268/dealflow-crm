@@ -27,8 +27,14 @@ const flat = (sql: string) => sql.replace(/\s+/g, ' ')
 describe('batch selection (RO_SQL)', () => {
   it('reads the whole run that owns the newest generatedAt, in rank order, with no cap', () => {
     const sql = flat(RO_SQL)
-    expect(sql).toContain('WITH latest AS ( SELECT "generationRunId" FROM "CallQueueEntry" ORDER BY "generatedAt" DESC LIMIT 1 )')
-    expect(sql).toContain('JOIN "CallQueueEntry" cqe ON cqe."generationRunId" = latest."generationRunId"')
+    // Brief 50 (PR 11): the newest run of the DealFlow organization with the CRM organization's slug ($1).
+    expect(sql).toContain(
+      'WITH latest AS ( SELECT q."organizationId", q."generationRunId" FROM "CallQueueEntry" q JOIN "Organization" o ON o."id" = q."organizationId" WHERE o."slug" = $1 ORDER BY q."generatedAt" DESC LIMIT 1 )',
+    )
+    expect(sql).toContain(
+      'JOIN "CallQueueEntry" cqe ON cqe."organizationId" = latest."organizationId" AND cqe."generationRunId" = latest."generationRunId"',
+    )
+    expect(sql).toContain('JOIN "MojoContact" mc ON mc."id" = cqe."contactId" AND mc."organizationId" = cqe."organizationId"')
     expect(sql.trim().endsWith('ORDER BY cqe."rank"')).toBe(true)
     expect(sql).not.toMatch(/LIMIT 500|MAX\("generatedAt"\)/)
     // Only inside `latest`; the Brief 38 buyers subquery caps buyers per seller, and the
@@ -47,8 +53,9 @@ describe('batch selection (RO_SQL)', () => {
 
   it("reads includeTestBuyers from DealFlow's latest NIGHTLY_SCORING row", () => {
     const sql = flat(RUN_INFO_SQL)
-    expect(sql).toContain(`("detailsJson"->>'includeTestBuyers')::boolean`)
-    expect(sql).toContain(`WHERE "action" = 'NIGHTLY_SCORING' ORDER BY "createdAt" DESC LIMIT 1`)
+    expect(sql).toContain(`(a."detailsJson"->>'includeTestBuyers')::boolean`)
+    expect(sql).toContain(`JOIN "Organization" o ON o."id" = a."organizationId" WHERE o."slug" = $1`) // Brief 50 (PR 11)
+    expect(sql).toContain(`AND a."action" = 'NIGHTLY_SCORING' ORDER BY a."createdAt" DESC LIMIT 1`)
   })
 })
 
