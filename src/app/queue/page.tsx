@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { getQueue } from '@/lib/core-data/smart-view/queue-service'
@@ -6,6 +7,7 @@ import { getReviewList } from '@/lib/core-data/smart-view/review-list'
 import { DEFAULT_VIEW_ID } from '@/lib/core-data/smart-view/defaultView'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
+import { NightlyNoticeBanner } from '@/components/NightlyNoticeBanner'
 import { Badge } from '@/components/ui'
 import { buyerName } from '@/lib/core-data/dealflow-sync/buyers'
 import { captureLabel, reasonText } from '@/lib/core-data/dealflow-sync/labels'
@@ -55,6 +57,12 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
               : 'Read-only preview of the ranked, pre-scrubbed callable list.'}
           </p>
         </header>
+        {/* Brief 47 (PR 6): last night's matching was stopped or ran without
+            our values. Streams in on its own, so the Queue never waits on
+            DealFlow; nothing shows while it loads or if the read fails. */}
+        <Suspense fallback={null}>
+          <NightlyNoticeBanner />
+        </Suspense>
         {reviewMode && (
           <div className="mb-4">
             <CallingOffBanner organizationId={organizationId} />

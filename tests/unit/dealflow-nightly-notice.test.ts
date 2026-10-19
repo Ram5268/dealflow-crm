@@ -39,9 +39,10 @@ function fakeDealflow(answer: { rows?: unknown[]; fail?: Error } = {}) {
   return { texts, release, connect }
 }
 
+// The server-rendered HTML, with React's escaped apostrophes put back.
 const render = async () => {
   const el = await NightlyNoticeBanner()
-  return el === null ? null : renderToStaticMarkup(el)
+  return el === null ? null : renderToStaticMarkup(el).replace(/&#x27;/g, "'")
 }
 
 // Taken when this file starts, so the restore undoes only its own changes.
