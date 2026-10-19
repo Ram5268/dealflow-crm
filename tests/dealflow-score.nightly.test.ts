@@ -83,14 +83,17 @@ function dealflow(opts: { fail?: () => boolean; notCopied?: Set<string> } = {}) 
 
 const deps = (fetch: typeof globalThis.fetch) => ({ db, fetch, baseUrl: BASE, chunkSize: 2, now });
 
-// Calls the CRM like the import page: chunk after chunk, until it says done,
-// asks to wait, or asks for the retry pass.
-async function pass(importId: string, fetch: typeof globalThis.fetch, opts: { after?: string | null; pass?: "retry" } = {}): Promise<ScoreChunkResult> {
+// Calls the CRM like the import page: chunk after chunk until it says done.
+// With retry: the "is the second ranking due?" ask, then (if it reopened the
+// upload) the rest of that pass.
+async function pass(importId: string, fetch: typeof globalThis.fetch, opts: { after?: string | null; retry?: true } = {}): Promise<ScoreChunkResult> {
   let after = opts.after ?? null;
+  let retry = opts.retry;
   for (let i = 0; i < 20; i++) {
-    const r = await scoreNextChunk(org, importId, after, deps(fetch), opts.pass ?? "first");
-    if (r.done || r.waitMs !== undefined || r.retry || (r.pass === "retry" && opts.pass !== "retry")) return r;
+    const r = await scoreNextChunk(org, importId, after, deps(fetch), retry ? { retry } : {});
+    if (r.done || r.retry) return r;
     after = r.next;
+    retry = undefined;
   }
   throw new Error("did not finish");
 }
@@ -112,31 +115,33 @@ afterAll(async () => {
 });
 
 describe("an upload ranked during DealFlow's 5:00 am run is ranked once more after it ends", () => {
-  it("waits (sending nothing) until the run can't still be going, then re-sends the same people once", async () => {
+  it("the first ranking ends as before; once the run can't still be going, the same people are ranked once more", async () => {
     const s = await seedImport("2026-10-20T09:10:00Z"); // 5:10 am in New York
     const df = dealflow();
     at("2026-10-20T09:10:20Z");
     const first = await pass(s.importId, df.fetch);
-    // Everyone was sent and the four with a Mojo ID ranked, but the upload isn't marked done yet.
-    expect(first).toMatchObject({ done: false, waitMs: 6 * MIN + 40_000 });
-    expect(first.next).toBe(s.ids[s.ids.length - 1]);
+    // Done as before ("Ranked: done"), with when to ask about the second ranking.
+    expect(first).toMatchObject({ done: true, waitMs: 6 * MIN + 40_000 });
+    expect(first.error).toBeUndefined();
     expect(df.calls.flat().sort()).toEqual(s.ids);
-    expect((await batchRow(s.importId)).dealflowScoredAt).toBeNull();
+    expect((await batchRow(s.importId)).dealflowScoredAt?.toISOString()).toBe("2026-10-20T09:10:20.000Z");
     expect(await synced(s.withMojo)).toEqual(s.withMojo.map(() => "2026-10-20T09:10:20.000Z"));
-    expect((await getImportSummary(db, org, s.importId, now()))?.scoring?.state).toBe("pending");
+    expect((await getImportSummary(db, org, s.importId, now()))?.scoring).toMatchObject({ state: "done", ranked: 4 });
 
-    // The page checks back: still waiting, and DealFlow isn't asked anything.
+    // Asked early: not yet, and nothing is sent or changed.
     at("2026-10-20T09:14:00Z");
-    expect(await pass(s.importId, df.fetch, { after: first.next })).toMatchObject({ done: false, waitMs: 3 * MIN, next: first.next });
-    at("2026-10-20T09:17:00Z");
-    expect(await pass(s.importId, df.fetch, { after: first.next })).toMatchObject({ done: false, next: null, pass: "retry" });
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true, waitMs: 3 * MIN });
     expect(df.calls).toHaveLength(3);
+    expect((await batchRow(s.importId)).dealflowScoredAt?.toISOString()).toBe("2026-10-20T09:10:20.000Z");
 
-    // The retry pass: only the people ranked during the run, once.
-    const second = await pass(s.importId, df.fetch, { pass: "retry" });
+    // 7 minutes after the upload finished: reopened once, and the same people are sent again.
+    at("2026-10-20T09:17:00Z");
+    const second = await pass(s.importId, df.fetch, { retry: true });
     expect(second).toMatchObject({ done: true });
+    expect(second.waitMs).toBeUndefined();
     expect(second.error).toBeUndefined();
-    expect(df.calls.slice(3).flat().sort()).toEqual([...s.withMojo].sort());
+    const resent = df.calls.slice(3).flat();
+    for (const id of s.withMojo) expect(resent).toContain(id);
     expect(await synced(s.withMojo)).toEqual(s.withMojo.map(() => "2026-10-20T09:17:00.000Z"));
     const b = await batchRow(s.importId);
     expect(b.dealflowScoredAt?.toISOString()).toBe("2026-10-20T09:17:00.000Z");
@@ -144,39 +149,45 @@ describe("an upload ranked during DealFlow's 5:00 am run is ranked once more aft
     expect(b.dealflowScoreTokenHash).toBeNull();
     expect((await getImportSummary(db, org, s.importId, now()))?.scoring).toMatchObject({ state: "done", ranked: 4 });
 
-    // Done for good: nothing is sent again.
+    // Once: nothing is sent again, however often the page asks.
     at("2026-10-20T09:30:00Z");
     expect(await pass(s.importId, df.fetch)).toMatchObject({ done: true });
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: true });
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
     for (const id of s.withMojo) expect(sentTimes(df.calls, id)).toBe(2);
-    expect(sentTimes(df.calls, s.ids[s.ids.length - 1])).toBe(1);
+    // The person without a Mojo ID is never ranked (DealFlow can't), whatever is sent.
+    expect((await db.lead.findUniqueOrThrow({ where: { id: s.ids[s.ids.length - 1] } })).dealflowSignalSyncedAt).toBeNull();
   });
 
-  it("outside DealFlow's hour nothing changes: done after one pass", async () => {
+  it("outside DealFlow's hour nothing changes: one ranking, nothing owed", async () => {
     const s = await seedImport("2026-10-20T14:10:00Z");
     const df = dealflow();
     at("2026-10-20T14:10:20Z");
-    expect(await pass(s.importId, df.fetch)).toMatchObject({ done: true });
-    expect((await batchRow(s.importId)).dealflowScoredAt?.toISOString()).toBe("2026-10-20T14:10:20.000Z");
+    const r = await pass(s.importId, df.fetch);
+    expect(r).toMatchObject({ done: true });
+    expect(r.waitMs).toBeUndefined();
     expect(df.calls.flat().sort()).toEqual(s.ids);
-    // Just before the hour (08:57, ranked 08:57:30) is outside it too.
+    at("2026-10-20T14:20:00Z");
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
+    expect(df.calls.flat()).toHaveLength(s.ids.length);
+    // Just before the hour (ranked 08:57:30) is outside it too.
     const early = await seedImport("2026-10-20T08:57:00Z");
     at("2026-10-20T08:57:30Z");
-    expect(await pass(early.importId, df.fetch)).toMatchObject({ done: true });
+    expect((await pass(early.importId, df.fetch)).waitMs).toBeUndefined();
   });
 
-  it("asking for the retry pass before the run can have ended sends nothing", async () => {
-    const s = await seedImport("2026-10-20T09:40:00Z", 3, { lastWithoutMojo: false });
+  it("asking about the second ranking while the first is still going does nothing", async () => {
+    const s = await seedImport("2026-10-20T09:40:00Z", 4, { lastWithoutMojo: false });
     const df = dealflow();
     at("2026-10-20T09:40:30Z");
-    const first = await pass(s.importId, df.fetch);
-    expect(first).toMatchObject({ done: false, waitMs: 6 * MIN + 30_000 });
-    at("2026-10-20T09:42:00Z");
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: false, waitMs: 5 * MIN });
-    expect(df.calls.flat()).toHaveLength(3);
+    const one = await scoreNextChunk(org, s.importId, null, deps(df.fetch));
+    expect(one).toMatchObject({ done: false, next: s.ids[1] });
+    expect(await scoreNextChunk(org, s.importId, null, deps(df.fetch), { retry: true })).toMatchObject({ done: true });
+    expect(df.calls).toHaveLength(1);
+    expect((await batchRow(s.importId)).dealflowScoredAt).toBeNull();
+    expect(await pass(s.importId, df.fetch, { after: one.next })).toMatchObject({ done: true, waitMs: 6 * MIN + 30_000 });
   });
 
-  it("if DealFlow fails on the retry, the first ranking stays and the page doesn't say it failed", async () => {
+  it("if DealFlow fails on the second ranking, the first ranking stays and the page doesn't say it failed", async () => {
     const s = await seedImport("2026-10-20T09:20:00Z", 3, { lastWithoutMojo: false });
     let failing = false;
     const df = dealflow({ fail: () => failing });
@@ -184,7 +195,7 @@ describe("an upload ranked during DealFlow's 5:00 am run is ranked once more aft
     await pass(s.importId, df.fetch);
     at("2026-10-20T09:27:05Z");
     failing = true;
-    const r = await pass(s.importId, df.fetch, { pass: "retry" });
+    const r = await pass(s.importId, df.fetch, { retry: true });
     expect(r).toMatchObject({ done: true });
     expect(r.error).toBeUndefined();
     const b = await batchRow(s.importId);
@@ -194,11 +205,11 @@ describe("an upload ranked during DealFlow's 5:00 am run is ranked once more aft
     expect(await synced(s.withMojo)).toEqual(s.withMojo.map(() => "2026-10-20T09:20:10.000Z"));
     expect((await getImportSummary(db, org, s.importId, now()))?.scoring?.state).toBe("done");
     // Once: no further attempt.
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: true });
-    expect(df.calls).toHaveLength(3); // 2 first-pass chunks + 1 failed retry
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
+    expect(df.calls).toHaveLength(3); // 2 first-ranking chunks + 1 failed second ranking
   });
 
-  it("someone DealFlow passes over on the retry isn't sent a third time", async () => {
+  it("someone DealFlow passes over on the second ranking isn't sent a third time", async () => {
     const s = await seedImport("2026-10-20T09:30:00Z", 4, { lastWithoutMojo: false });
     const notCopied = new Set<string>();
     const df = dealflow({ notCopied });
@@ -206,36 +217,57 @@ describe("an upload ranked during DealFlow's 5:00 am run is ranked once more aft
     await pass(s.importId, df.fetch);
     notCopied.add(s.ids[1]);
     at("2026-10-20T09:37:00Z");
-    expect(await pass(s.importId, df.fetch, { after: s.ids[3] })).toMatchObject({ pass: "retry" });
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: true });
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
     at("2026-10-20T09:38:00Z");
     expect(await pass(s.importId, df.fetch)).toMatchObject({ done: true });
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: true });
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
     expect(sentTimes(df.calls, s.ids[1])).toBe(2);
+    expect(sentTimes(df.calls, s.ids[0])).toBe(2);
   });
 
-  it("a first pass still going when the run must be over goes straight on to the retry, for the people ranked before", async () => {
+  it("a page closed during the second ranking: the next visit finishes it, and that is still the only one", async () => {
+    const s = await seedImport("2026-10-20T09:45:00Z", 4, { lastWithoutMojo: false });
+    const df = dealflow();
+    at("2026-10-20T09:45:10Z");
+    await pass(s.importId, df.fetch);
+    at("2026-10-20T09:52:00Z");
+    // Reopened, one chunk sent, then the page went away.
+    expect(await scoreNextChunk(org, s.importId, null, deps(df.fetch), { retry: true })).toMatchObject({ done: false, next: s.ids[1] });
+    expect((await getImportSummary(db, org, s.importId, now()))?.scoring?.state).toBe("pending");
+    // The next visit drives the ranking as usual (the page's first run).
+    at("2026-10-20T09:55:00Z");
+    expect(await pass(s.importId, df.fetch)).toMatchObject({ done: true });
+    expect(df.calls).toEqual([[s.ids[0], s.ids[1]], [s.ids[2], s.ids[3]], [s.ids[0], s.ids[1]], [s.ids[2], s.ids[3]]]);
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
+    expect(df.calls).toHaveLength(4);
+  });
+
+  it("past DealFlow's hour for an upload there is no second ranking (DealFlow would refuse it)", async () => {
+    const s = await seedImport("2026-10-20T09:05:00Z", 2, { lastWithoutMojo: false });
+    const df = dealflow();
+    at("2026-10-20T09:05:10Z");
+    expect((await pass(s.importId, df.fetch)).waitMs).toBeGreaterThan(0);
+    at("2026-10-20T10:04:30Z"); // the page was closed until 59½ minutes after the upload
+    const r = await pass(s.importId, df.fetch, { retry: true });
+    expect(r).toMatchObject({ done: true });
+    expect(r.waitMs).toBeUndefined();
+    expect(df.calls).toHaveLength(1);
+    expect((await batchRow(s.importId)).dealflowScoreError).toBeNull();
+  });
+
+  it("known limit: a first ranking still going 7 minutes after the upload doesn't get the second one", async () => {
+    // Only a very big upload (thousands of people) or a slow DealFlow takes that
+    // long. People ranked after the 7-minute mark are safe; the earlier ones
+    // aren't sent again (nightly.ts, "Not covered").
     const s = await seedImport("2026-10-20T09:50:00Z", 4, { lastWithoutMojo: false });
     const df = dealflow();
     at("2026-10-20T09:50:30Z");
     const one = await scoreNextChunk(org, s.importId, null, deps(df.fetch));
-    expect(one).toMatchObject({ done: false, next: s.ids[1] });
-    at("2026-10-20T09:57:10Z"); // past 09:57: the rest are ranked after any run that missed them
+    at("2026-10-20T09:57:10Z");
     const two = await scoreNextChunk(org, s.importId, one.next, deps(df.fetch));
-    expect(two).toMatchObject({ done: false, next: null, pass: "retry" });
-    expect(await pass(s.importId, df.fetch, { pass: "retry" })).toMatchObject({ done: true });
-    expect(df.calls).toEqual([[s.ids[0], s.ids[1]], [s.ids[2], s.ids[3]], [s.ids[0], s.ids[1]]]);
-  });
-
-  it("past DealFlow's hour for an upload there is no retry (DealFlow would refuse it)", async () => {
-    const s = await seedImport("2026-10-20T09:05:00Z", 2, { lastWithoutMojo: false });
-    const df = dealflow();
-    at("2026-10-20T09:05:10Z");
-    const first = await pass(s.importId, df.fetch);
-    expect(first.waitMs).toBeGreaterThan(0);
-    at("2026-10-20T10:04:30Z"); // the page was closed until 59½ minutes after the upload
-    expect(await pass(s.importId, df.fetch, { after: first.next })).toMatchObject({ done: true });
-    expect(df.calls).toHaveLength(1);
-    expect((await batchRow(s.importId)).dealflowScoreError).toBeNull();
+    expect(two).toMatchObject({ done: true });
+    expect(two.waitMs).toBeUndefined();
+    expect(await pass(s.importId, df.fetch, { retry: true })).toMatchObject({ done: true });
+    expect(df.calls).toHaveLength(2);
   });
 });

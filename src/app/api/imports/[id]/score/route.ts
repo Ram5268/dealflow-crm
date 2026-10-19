@@ -14,14 +14,18 @@ export const maxDuration = 300
 // progress page calls this again and again once the upload has finished:
 // each call sends the next ≤ 500 new people to DealFlow and writes their
 // ranks. Body { after?: <cursor from the last call> } →
-// { done, next, scored, notRanked, skipped, remaining, retry?, error? }.
+// { done, next, scored, notRanked, skipped, remaining, retry?, error?, waitMs? }.
+// Brief 50 PR 7: { retry: true } asks whether the people ranked during
+// DealFlow's 5:00 am run are due their second ranking (waitMs: not yet), and
+// when they are, starts it (then go on with `next` as usual).
 // Behind the Basic auth gate like every page; nothing here contacts anyone.
 const bodySchema = z.strictObject({
   after: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable().optional(),
+  retry: z.literal(true).optional(),
 })
 
 export const POST = withRoute(async (req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
   const body = await parseBody(req, bodySchema)
-  return json(await scoreNextChunk(organizationId, params!.id, body.after ?? null), correlationId)
+  return json(await scoreNextChunk(organizationId, params!.id, body.after ?? null, {}, { retry: body.retry }), correlationId)
 })
