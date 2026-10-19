@@ -83,6 +83,14 @@ describe('createCallListener', () => {
     expect(listener.stats().subscribers).toBe(1)
   })
 
+  it('if the subscriber that throws was the last one, the connection is let go', async () => {
+    const { listener, clients } = harness()
+    await listener.subscribe({ onEvent: () => { throw new TypeError('closed') }, onDrop: () => {} })
+    clients[0].notify('{"n":1}')
+    expect(clients[0].end).toHaveBeenCalledTimes(1)
+    expect(listener.stats()).toEqual({ subscribers: 0, open: false })
+  })
+
   it('leaving twice is harmless; the connection closes when the last subscriber leaves', async () => {
     const { listener, clients } = harness()
     const leaveA = await listener.subscribe(subscriber())

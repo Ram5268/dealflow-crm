@@ -91,13 +91,16 @@ export function createCallListener(newClient: () => ListenClient): CallListener 
     client.on('end', () => drop(conn, 'end'))
     client.on('notification', (msg) => {
       if (current !== conn || msg.channel !== CALL_CHANNEL || !msg.payload) return
+      let removed = false
       for (const s of [...subscribers]) {
         try {
           s.onEvent(msg.payload)
         } catch {
           subscribers.delete(s) // its stream is closed; it will not be back
+          removed = true
         }
       }
+      if (removed && subscribers.size === 0 && conn.waiting === 0) release(conn)
     })
     conn.ready = (async () => {
       await client.connect()
