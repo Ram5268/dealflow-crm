@@ -258,7 +258,7 @@ describe("suite 2's check of what Prisma itself loads (a real generated client)"
     mkdirSync(here)
     const gen = spawnSync(path.join(REPO, 'node_modules/.bin/prisma'), ['generate', '--schema', 'prisma/schema.prisma'], {
       cwd: other,
-      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', PRISMA_HIDE_UPDATE_MESSAGE: '1', CHECKPOINT_DISABLE: '1' },
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', NODE_ENV: 'test', PRISMA_HIDE_UPDATE_MESSAGE: '1', CHECKPOINT_DISABLE: '1' },
       encoding: 'utf8',
       timeout: 120_000,
     })
@@ -299,7 +299,7 @@ describe("suite 2's check of what Prisma itself loads (a real generated client)"
   const probe = (envFile: string, env: Record<string, string> = {}) => {
     writeFileSync(otherEnv, envFile)
     const r = spawnSync(path.join(REPO, 'node_modules/.bin/tsx'), [path.join(tmp, 'probe.mts'), here, client], {
-      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
+      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', NODE_ENV: 'test', ...env },
       encoding: 'utf8',
       timeout: 60_000,
     })
