@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import pg from 'pg'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { assertReadOnlySql, closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
-import { NIGHTLY_NOTICE_SQL, nightlyNoticeText } from '@/lib/core-data/dealflow-sync/nightly-notice'
+import { NIGHTLY_NOTICE_SQL, NIGHTLY_NOTICE_WAIT_MS, nightlyNoticeText, readNightlyNotice } from '@/lib/core-data/dealflow-sync/nightly-notice'
 import { NightlyNoticeBanner } from '@/components/NightlyNoticeBanner'
 import { logger } from '@/lib/logger'
 
@@ -165,5 +167,38 @@ describe('the banner on the Queue page', () => {
     const logged = JSON.stringify(warn.mock.calls[0])
     expect(logged).toContain('ECONNREFUSED')
     expect(logged).not.toMatch(/127\.0\.0\.1|postgresql:|dealflow_ro_unit_test/)
+  })
+
+  it('DealFlow answers too slowly: no notice once the wait is over (never the late answer), and a short log line', async () => {
+    vi.spyOn(pg.Pool.prototype, 'connect').mockImplementation((async () => ({
+      release: vi.fn(),
+      query: vi.fn(async (q: string | { text: string }) => {
+        const text = typeof q === 'string' ? q : q.text
+        if (text !== NIGHTLY_NOTICE_SQL) return { rows: [] }
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        return { rows: [{ notice: 'refused' }] }
+      }),
+    })) as never)
+    const started = Date.now()
+    expect(await readNightlyNotice(20)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(150)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(warn.mock.calls[0])).toContain('timeout')
+    await new Promise((resolve) => setTimeout(resolve, 250)) // the abandoned read ends without throwing
+  })
+
+  it('the default wait is a few seconds, well under the pool\'s 8-second connect timeout', () => {
+    expect(NIGHTLY_NOTICE_WAIT_MS).toBeGreaterThanOrEqual(1_000)
+    expect(NIGHTLY_NOTICE_WAIT_MS).toBeLessThan(8_000)
+  })
+})
+
+describe('the Queue page', () => {
+  // A view switch is a client transition on the same page, and React holds a
+  // transition until an already-shown Suspense boundary resolves: keyed by
+  // the view, the new list never waits for DealFlow (independent review, PR 6).
+  it('streams the notice in its own Suspense boundary, keyed by the view', () => {
+    const src = readFileSync(join(process.cwd(), 'src/app/queue/page.tsx'), 'utf8')
+    expect(src).toMatch(/<Suspense key=\{viewId \?\? ''\} fallback=\{null\}>\s*<NightlyNoticeBanner \/>\s*<\/Suspense>/)
   })
 })

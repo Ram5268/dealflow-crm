@@ -152,6 +152,22 @@ describe("the Queue notice's statement on a real Postgres", () => {
     expect(await notice()).toEqual([{ notice: 'refused' }])
   })
 
+  it('two rows stamped the same moment: the refusal counts as the newer one, in either insert order', async () => {
+    for (const [ok, refused] of [['NIGHTLY_SCORING', 'NIGHTLY_SCORING_REFUSED'], ['CALL_QUEUE_BUILD', 'CALL_QUEUE_BUILD_REFUSED']]) {
+      for (const order of [[ok, refused], [refused, ok]]) {
+        await admin.query(`TRUNCATE ${TABLE}`)
+        // One statement, so both rows get the very same now().
+        await admin.query(
+          `INSERT INTO ${TABLE} ("id", "action", "detailsJson", "createdAt", "organizationId")
+           VALUES ('tie_1', $1, '{}'::jsonb, (now() AT TIME ZONE 'UTC') - interval '6 hours', 'org_test'),
+                  ('tie_2', $2, '{}'::jsonb, (now() AT TIME ZONE 'UTC') - interval '6 hours', 'org_test')`,
+          order,
+        )
+        expect((await notice())[0].notice, order.join(' then ')).toBe('refused')
+      }
+    }
+  })
+
   it('a refusal followed by a good night: null (scoring refusal, then call-list refusal)', async () => {
     await seed([
       { action: 'NIGHTLY_SCORING_REFUSED', hoursAgo: 30, details: scoringRefused },

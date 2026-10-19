@@ -37,7 +37,9 @@ export const NIGHTLY_NOTICE_TEXT: Record<NightlyNoticeCode, string> = {
 //   refused if the newest of NIGHTLY_SCORING / NIGHTLY_SCORING_REFUSED is the
 //   refusal, or the newest of CALL_QUEUE_BUILD / CALL_QUEUE_BUILD_REFUSED is;
 //   else rollback if the newest NIGHTLY_SCORING rolled our values back;
-//   else nothing. Older rows never count.
+//   else nothing. Older rows never count. Two rows stamped the same moment
+//   (not expected: a refused night writes no NIGHTLY_SCORING) count the
+//   refusal as the newer one, the safer side.
 export const NIGHTLY_NOTICE_SQL = `
   WITH recent AS (
     SELECT "action", "createdAt", "detailsJson"->'ourEstimates'->>'rolledBack' AS rolled_back
@@ -48,12 +50,12 @@ export const NIGHTLY_NOTICE_SQL = `
   scoring AS (
     SELECT "action", rolled_back FROM recent
     WHERE "action" IN ('NIGHTLY_SCORING', 'NIGHTLY_SCORING_REFUSED')
-    ORDER BY "createdAt" DESC LIMIT 1
+    ORDER BY "createdAt" DESC, ("action" = 'NIGHTLY_SCORING_REFUSED') DESC LIMIT 1
   ),
   call_list AS (
     SELECT "action" FROM recent
     WHERE "action" IN ('CALL_QUEUE_BUILD', 'CALL_QUEUE_BUILD_REFUSED')
-    ORDER BY "createdAt" DESC LIMIT 1
+    ORDER BY "createdAt" DESC, ("action" = 'CALL_QUEUE_BUILD_REFUSED') DESC LIMIT 1
   )
   SELECT CASE
     WHEN (SELECT "action" FROM scoring) = 'NIGHTLY_SCORING_REFUSED'
@@ -69,22 +71,42 @@ export function nightlyNoticeText(row: { notice?: unknown } | null | undefined):
   return code === 'refused' || code === 'rollback' ? NIGHTLY_NOTICE_TEXT[code] : null
 }
 
+// The longest the notice waits for DealFlow. The page shows the Queue without
+// waiting (Suspense), but a refresh of the same page waits for every boundary,
+// so a slow or unreachable DealFlow (the pool's connect timeout is 8 s) must
+// not hold it up: past this, there is simply no notice [engineering precaution].
+export const NIGHTLY_NOTICE_WAIT_MS = 2_500
+
 // The banner's sentence, or null. Never throws: with no read-only setting, in
-// stub mode (no DealFlow, as the health probe), or when the read fails, there
-// is no banner and the Queue page is unaffected. The log line carries an
-// error code only: no address, no SQL, no values.
-export async function readNightlyNotice(): Promise<string | null> {
+// stub mode (no DealFlow, as the health probe), when the read fails or takes
+// longer than waitMs, there is no banner and the Queue page is unaffected. The
+// log line carries an error code only: no address, no SQL, no values.
+export async function readNightlyNotice(waitMs = NIGHTLY_NOTICE_WAIT_MS): Promise<string | null> {
   if (process.env.DEALFLOW_SYNC_STUB === '1') return null
   if (!dealflowRoConfigured()) {
     logger.warn("Queue notice: DealFlow's read-only connection isn't set up, so no last-night notice")
     return null
   }
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const [row] = await roQuery<{ notice: string | null }>(NIGHTLY_NOTICE_SQL)
-    return nightlyNoticeText(row)
+    const read = roQuery<{ notice: string | null }>(NIGHTLY_NOTICE_SQL)
+    // An abandoned read still ends on its own (roQuery releases its client);
+    // a failure after the wait is ignored, never thrown.
+    read.catch(() => undefined)
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), waitMs)
+    })
+    const outcome = await Promise.race([read, timedOut])
+    if (outcome === 'timeout') {
+      logger.warn({ code: 'timeout' }, "Queue notice: DealFlow's last night took too long to read, so no notice")
+      return null
+    }
+    return nightlyNoticeText(outcome[0])
   } catch (err) {
     const code = (err as { code?: unknown } | null)?.code
     logger.warn({ code: typeof code === 'string' ? code : null }, "Queue notice: couldn't read DealFlow's last night, so no notice")
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }

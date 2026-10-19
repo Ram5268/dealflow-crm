@@ -59,8 +59,12 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
         </header>
         {/* Brief 47 (PR 6): last night's matching was stopped or ran without
             our values. Streams in on its own, so the Queue never waits on
-            DealFlow; nothing shows while it loads or if the read fails. */}
-        <Suspense fallback={null}>
+            DealFlow; nothing shows while it loads or if the read fails. Keyed
+            by the view: switching views is a client transition on the same
+            page, and React holds a transition until an already-shown Suspense
+            boundary resolves, so without the key the new list would wait for
+            DealFlow (up to the pool's 8-second connect timeout if it's down). */}
+        <Suspense key={viewId ?? ''} fallback={null}>
           <NightlyNoticeBanner />
         </Suspense>
         {reviewMode && (
