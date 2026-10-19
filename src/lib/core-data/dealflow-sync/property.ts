@@ -16,6 +16,13 @@
 export const NO_VALUE_REASONS = ['five_plus_units', 'condo_without_unit', 'not_found', 'other_property_type'] as const
 export type NoValueReason = (typeof NO_VALUE_REASONS)[number]
 
+// Brief 50 (PR 12): a valuation whose run was published more than this many
+// days ago is ignored, so the card never shows a value DealFlow's own matching
+// no longer uses (DealFlow lib/matching/ourEstimates.ts MAX_VALUE_AGE_DAYS,
+// Brief 49 PR 3: three missed monthly runs plus some slack). Applied where the
+// value is read from DealFlow (sync.ts propertySql), by DealFlow's clock.
+export const MAX_VALUE_AGE_DAYS = 100
+
 type LeadVsCity = { lead: number; city: number }
 
 export interface PropertyFacts {

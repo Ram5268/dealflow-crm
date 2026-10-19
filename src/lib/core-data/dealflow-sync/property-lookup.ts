@@ -1,17 +1,53 @@
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { logger } from '@/lib/logger'
 import { toPropertyFacts, type DealflowProperty } from './property'
+import { dealflowRoConfigured, roQuery } from './ro-client'
+import { propertySql } from './sync'
 
 // Brief 44 (PR 5): reads DealFlow's estimate stored on a lead's signal
 // (dealflowRawJson.property). The signal is found the way getLeadBuyers finds
 // it (buyer-lookup.ts): the lead DealFlow names (crmLeadId), else the lead with
 // its mojoId. Whitelisted again on the way out, so the card only ever sees
-// toPropertyFacts' fields. Null before any published run, or when DealFlow's
-// latest call list doesn't include this seller.
+// toPropertyFacts' fields. Null before any published run.
+//
+// Brief 50 (PR 12), open item 5.7: the morning copy stores values only for the
+// sellers on DealFlow's call list, so a valued seller DealFlow leaves off the
+// list (8 on Oct 19) had no card. When the lead has no stored value, the card
+// now reads that one seller's newest published valuation from DealFlow itself:
+// one read-only statement (roQuery), only DealFlow's organization with this
+// CRM organization's slug (as the morning copy reads), the same PROPERTY
+// fields (propertySql, with its 100-day rule) and the same whitelist.
+// Nothing is written: the Queue and every list are unchanged. The value stays
+// on this card, Ryan's own screen (Ryan's decision, 2026-10-17: our value
+// estimates never reach anything a buyer or homeowner sees).
+
+// The longest the lead page waits for DealFlow (as the Queue's last-night
+// notice, nightly-notice.ts): past it there is simply no card, and the read
+// left behind ends on its own (roQuery releases its client; the session's
+// 60 s statement limit stops it on the server) [engineering precaution].
+export const PROPERTY_LOOKUP_WAIT_MS = 2_500
+
+// $1 = the CRM organization's slug, $2 = the CRM lead id, $3 = its Mojo ID.
+// The seller DealFlow keeps under this lead id first, then by Mojo ID (a
+// Mojo ID is unique in DealFlow). No phone, name or tax lot is selected.
+export const LEAD_PROPERTY_SQL = `
+  SELECT c."metadata"->>'crmLeadId' AS crm_lead_id, c."mojoId" AS mojo_id, ${propertySql('c."id"')} AS property
+  FROM "MojoContact" c
+  JOIN "Organization" o ON o."id" = c."organizationId"
+  WHERE o."slug" = $1 AND (c."metadata"->>'crmLeadId' = $2 OR c."mojoId" = $3::text)
+  ORDER BY (c."metadata"->>'crmLeadId' = $2) DESC NULLS LAST, c."id"
+  LIMIT 5
+`
+
+type LeadKey = { id: string; mojoId: string | null }
+type SellerRow = { crm_lead_id: string | null; mojo_id: string | null; property: unknown }
+
 export async function getLeadProperty(
   organizationId: string,
-  lead: { id: string; mojoId: string | null },
-  db: PrismaClient = prisma
+  lead: LeadKey,
+  db: PrismaClient = prisma,
+  waitMs = PROPERTY_LOOKUP_WAIT_MS
 ): Promise<DealflowProperty | null> {
   const rows = await db.$queryRaw<{ property: unknown }[]>`
     SELECT s."dealflowRawJson"->'property' AS property FROM "DealFlowDerivedSignal" s
@@ -21,5 +57,47 @@ export async function getLeadProperty(
           WHERE o.id = s."dealflowRawJson"->>'crmLeadId' AND o."organizationId" = ${organizationId})))
     ORDER BY s."queueRank" NULLS LAST
     LIMIT 1`
-  return toPropertyFacts(rows[0]?.property)
+  const stored = toPropertyFacts(rows[0]?.property)
+  if (stored) return stored
+  return toPropertyFacts(await readDealflowProperty(organizationId, lead, db, waitMs))
+}
+
+// The seller's raw valuation from DealFlow, or null. Never throws: with no
+// read-only setting, in stub mode, without the organization, when the read
+// fails or takes longer than waitMs, there is no card and the page is
+// unaffected. The log line carries an error code only: no address, no SQL,
+// no values.
+async function readDealflowProperty(organizationId: string, lead: LeadKey, db: PrismaClient, waitMs: number): Promise<unknown> {
+  if (process.env.DEALFLOW_SYNC_STUB === '1' || !dealflowRoConfigured()) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const org = await db.organization.findUnique({ where: { id: organizationId }, select: { slug: true } })
+    if (!org) return null
+    const read = roQuery<SellerRow>(LEAD_PROPERTY_SQL, [org.slug, lead.id, lead.mojoId])
+    // An abandoned read still ends on its own; a failure after the wait is ignored, never thrown.
+    read.catch(() => undefined)
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), waitMs)
+    })
+    const outcome = await Promise.race([read, timedOut])
+    if (outcome === 'timeout') {
+      logger.warn({ code: 'timeout' }, "Lead page: DealFlow's value for this lead took too long to read, so no value card")
+      return null
+    }
+    // As the stored signal is matched: the seller DealFlow keeps under this
+    // lead, else the one with its Mojo ID unless DealFlow gave that seller to
+    // another lead of this organization.
+    const named = outcome.find((r) => r.crm_lead_id === lead.id)
+    if (named) return named.property
+    const byMojo = lead.mojoId ? outcome.find((r) => r.mojo_id === lead.mojoId) : undefined
+    if (!byMojo) return null
+    if (byMojo.crm_lead_id && (await db.lead.count({ where: { id: byMojo.crm_lead_id, organizationId } })) > 0) return null
+    return byMojo.property
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code
+    logger.warn({ code: typeof code === 'string' ? code : null }, "Lead page: couldn't read DealFlow's value for this lead, so no value card")
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
