@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { emit as defaultEmit } from '@/lib/core-data/events/emit'
 import { getObject } from './storage'
 import { parseFile } from './parser'
-import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
+import { phonesInCell, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
 import { normalizeStreet, sameStreet, streetIdentity } from './address'
 import {
@@ -107,9 +107,9 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   const typeNorm = normalizePhoneType(rawType)
   const phones: RowPlan['phones'] = []
   for (const col of m.phoneColumns) {
-    const e164 = normalizePhoneE164(row[col])
-    if (e164 && !phones.some((p) => p.phoneE164 === e164)) {
-      phones.push({ phoneE164: e164, type: typeNorm.type, nonstandard: typeNorm.nonstandard })
+    // Every number in the cell (Brief 50 PR 6: two in one cell were dropped).
+    for (const e164 of phonesInCell(row[col])) {
+      if (!phones.some((p) => p.phoneE164 === e164)) phones.push({ phoneE164: e164, type: typeNorm.type, nonstandard: typeNorm.nonstandard })
     }
   }
   const emails: string[] = []
