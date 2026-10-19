@@ -7,9 +7,11 @@ const db = vi.hoisted(() => ({
 }))
 const store = vi.hoisted(() => ({ updateGraphDeltaLink: vi.fn(), updateGmailHistoryId: vi.fn() }))
 const events = vi.hoisted(() => ({ notifyMessageReceived: vi.fn() }))
+const activity = vi.hoisted(() => ({ recordMessageReceivedSafely: vi.fn() }))
 vi.mock('../../prisma', () => ({ prisma: db }))
 vi.mock('../oauth/store', () => store)
 vi.mock('../events', () => events)
+vi.mock('../../core-data/activity/write', () => activity)
 
 import { createGraphSyncPorts } from './graph-adapter'
 
@@ -86,6 +88,7 @@ describe('createGraphSyncPorts', () => {
       leadId: null,
     } as never)
     expect(events.notifyMessageReceived).toHaveBeenCalled()
+    expect(activity.recordMessageReceivedSafely).toHaveBeenCalled() // Brief 50 (PR 3): timeline entry
   })
 })
 

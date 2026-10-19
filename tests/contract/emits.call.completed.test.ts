@@ -17,6 +17,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await prisma.call.deleteMany({ where: { providerCallSid: { startsWith: P } } });
+  await prisma.activity.deleteMany({ where: { organizationId: ORG } }); // Brief 50 (PR 3): timeline entry
   await listener.close();
   await prisma.$disconnect();
 });

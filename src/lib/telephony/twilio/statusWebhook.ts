@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { mapTwilioStatus, isTerminalLocalStatus, type LocalCallStatus } from "./statusMap";
 import { emitOnCallChannel } from "../events/emit";
+import { recordCallCompletedSafely } from "@/lib/core-data/activity/write";
 import { logger } from "@/lib/logger";
 
 /** Twilio status-callback params we consume. */
@@ -72,6 +73,12 @@ export interface StatusWebhookResult {
  * emission is guarded by `Call.emittedAt` (set in the same tx as the emit), so
  * replays never double-emit. Unknown status → no-op (logged). Unknown CallSid →
  * no-op (the reconciliation job owns orphan convergence).
+ *
+ * Brief 50 (PR 3): the lead's timeline entry (Activity) for the finished call
+ * is written in the same tx, so it commits with the final status. Nothing on
+ * Vercel consumes `call.completed`, so without this no call ever reached the
+ * timeline. It is written in a savepoint, so a failed timeline write never
+ * rolls back the status or the event, or turns this webhook's answer into a 500.
  */
 export async function handleStatusWebhook(
   prisma: PrismaClient,
@@ -118,6 +125,12 @@ export async function handleStatusWebhook(
     });
 
     if (shouldEmit) {
+      await recordCallCompletedSafely(tx, {
+        callId: call.id,
+        disposition: toEventDisposition(local, call.disposition),
+        duration: duration ?? null,
+        cost: cost !== undefined ? cost.toString() : null,
+      });
       await emitOnCallChannel(tx, {
         type: "call.completed",
         callId: call.id,

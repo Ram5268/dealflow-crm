@@ -125,6 +125,9 @@ export async function handleAmdWebhook(
         dialSessionId: call.dialSessionId,
         counters: { humansReached: 1 },
       });
+      // Brief 50 (PR 3): no timeline write on this path, so nothing delays
+      // bridging the person who answered; the entry is written when the call
+      // ends (statusWebhook.ts, recordCallCompleted).
       await emitOnCallChannel(tx, {
         type: "call.connected",
         callId: call.id,

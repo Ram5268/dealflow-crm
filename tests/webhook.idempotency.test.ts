@@ -13,6 +13,8 @@ let listener: CrmCallListener;
 async function cleanup() {
   await prisma.call.deleteMany({ where: { providerCallSid: { startsWith: CALL_PREFIX } } });
   await prisma.pacingMetric.deleteMany({ where: { organizationId: { startsWith: ORG_PREFIX } } });
+  // Brief 50 (PR 3): the status webhook now writes the timeline entry too.
+  await prisma.activity.deleteMany({ where: { organizationId: { startsWith: ORG_PREFIX } } });
 }
 
 beforeAll(async () => {
@@ -75,6 +77,11 @@ describe("status webhook — idempotent call.completed emission", () => {
     expect(updated?.status).toBe("completed");
     expect(updated?.disposition).toBe("answered");
     expect(updated?.emittedAt).not.toBeNull();
+
+    // Brief 50 (PR 3): and exactly one timeline entry, written with it.
+    const entries = await prisma.activity.findMany({ where: { callId: call.id } });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ organizationId: `${ORG_PREFIX}status`, type: "Call" });
   });
 
   it("non-terminal status (ringing→in-progress) updates without emitting", async () => {

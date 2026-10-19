@@ -6,9 +6,11 @@ const db = vi.hoisted(() => ({
 }))
 const events = vi.hoisted(() => ({ notifyMessageReceived: vi.fn() }))
 const stop = vi.hoisted(() => ({ handleStop: vi.fn() }))
+const activity = vi.hoisted(() => ({ recordMessageReceivedSafely: vi.fn() }))
 vi.mock('../../prisma', () => ({ prisma: db }))
 vi.mock('../events', () => events)
 vi.mock('./stop-handler', () => stop)
+vi.mock('../../core-data/activity/write', () => activity)
 
 import { handleInboundSms } from './inbound'
 
@@ -37,6 +39,9 @@ describe('handleInboundSms', () => {
     expect(events.notifyMessageReceived).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'sms', messageId: 'm1', contactId: 'c1', leadId: 'l1' }),
     )
+    // Brief 50 (PR 3): the lead's timeline entry, written after the STOP.
+    expect(activity.recordMessageReceivedSafely).toHaveBeenCalledWith(db, { messageId: 'm1' })
+    expect(stop.handleStop.mock.invocationCallOrder[0]).toBeLessThan(activity.recordMessageReceivedSafely.mock.invocationCallOrder[0])
   })
 
   it('a STOP whose DNC write fails throws (so the webhook answers non-2xx); the message is already saved', async () => {
@@ -46,6 +51,8 @@ describe('handleInboundSms', () => {
       handleInboundSms({ orgId: 'o', from: '+15551112222', to: '+15550000000', body: 'STOP', messageSid: 'SM9' }),
     ).rejects.toThrow('db down')
     expect(db.message.create).toHaveBeenCalledOnce()
+    // The timeline entry waits for Twilio's redelivery (next test).
+    expect(activity.recordMessageReceivedSafely).not.toHaveBeenCalled()
   })
 
   it("Twilio's redelivery of the same message reuses it (no duplicate, no second event) and retries the STOP", async () => {
@@ -56,6 +63,8 @@ describe('handleInboundSms', () => {
     expect(events.notifyMessageReceived).not.toHaveBeenCalled()
     expect(stop.handleStop).toHaveBeenCalledWith('o', '+15551112222', { kind: 'keyword', phrase: 'stop' })
     expect(r).toEqual({ action: 'stop', messageId: 'm-existing' })
+    // Idempotent, so a redelivery fills in an entry an earlier attempt missed.
+    expect(activity.recordMessageReceivedSafely).toHaveBeenCalledWith(db, { messageId: 'm-existing' })
   })
 
   it('two deliveries racing: the loser finds the saved message instead of failing', async () => {

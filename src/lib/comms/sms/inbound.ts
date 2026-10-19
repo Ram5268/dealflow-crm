@@ -2,6 +2,7 @@ import { prisma } from '../../prisma'
 import { logger } from '../../logger'
 import { toE164 } from '../../shared/phone'
 import { notifyMessageReceived } from '../events'
+import { recordMessageReceivedSafely } from '../../core-data/activity/write'
 import { classifyOptOut } from './opt-out'
 import { handleStop } from './stop-handler'
 
@@ -17,6 +18,12 @@ import { handleStop } from './stop-handler'
  *
  * Brief 41.1 (F5): what counts as an opt-out is in ./opt-out.ts (normalized
  * text, the FCC's revocation words, and longer messages that contain one).
+ *
+ * Brief 50 (PR 3): after that, the lead's timeline entry (Activity) is written
+ * here, because nothing on Vercel consumes `message.received`. It comes after
+ * the STOP write, so it can never hold up or block an opt-out, and it never
+ * throws [engineering precaution]. It is idempotent, so Twilio's redelivery
+ * fills in one an earlier attempt missed.
  */
 
 export interface InboundSms {
@@ -34,6 +41,12 @@ export interface InboundResult {
 }
 
 export async function handleInboundSms(input: InboundSms): Promise<InboundResult> {
+  const result = await recordAndHandleStop(input)
+  await recordMessageReceivedSafely(prisma, { messageId: result.messageId })
+  return result
+}
+
+async function recordAndHandleStop(input: InboundSms): Promise<InboundResult> {
   const optOut = classifyOptOut(input.body)
   const from = toE164(input.from) ?? input.from
   const providerMessageId = `twilio:${input.messageSid}`
