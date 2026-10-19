@@ -14,6 +14,12 @@
 // [brief §5.4]. A page is 100 rows in 2 queries. Display-only: no
 // phone numbers or emails are selected, and nothing here calls, texts or
 // emails anyone.
+//
+// Brief 45 PR G: each row also carries our value estimate (Brief 44, the
+// lead page's), read in the same rows query for the page's people only. It is
+// for Ryan's own list page: CSV exports never read it [Ryan, 2026-10-17: our
+// value estimates never reach anything a buyer or homeowner sees; engineering
+// precaution: exports can be forwarded].
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
@@ -25,8 +31,8 @@ import {
   type CallingWindowDTO, type GroupChipDTO, type MemberFilters, type RankedPage, type RankedRow,
 } from './types'
 import {
-  NY, attemptsOf, bestBuyerCtes, bestBuyerDTO, bestBuyerJoins, boroughSql, defsCte, fieldValue, groupChipsSql, leadInOrg,
-  likePattern, notFound, rankingTimesSql, utc, zipOf,
+  NY, attemptsOf, bestBuyerCtes, bestBuyerDTO, bestBuyerJoins, boroughSql, defsCte, fieldValue, groupChipsSql, hasValuesSql,
+  leadInOrg, likePattern, notFound, ourValueCtes, ourValueDTO, ourValueJoin, rankingTimesSql, utc, zipOf,
 } from './sql'
 import { fileStem, toCsv } from './csv'
 
@@ -133,22 +139,29 @@ interface RowSql {
   timezone: string | null
   called_today: boolean
   best_buyer: unknown
+  our_value: number | null
+  our_low: number | null
+  our_high: number | null
 }
 
-function rowsQuery(ctx: Ctx, limit: number, offset: number): Prisma.Sql {
+// `values`: read our value estimate for the page's people (the page), or not
+// at all (CSV exports).
+function rowsQuery(ctx: Ctx, limit: number, offset: number, values: boolean): Prisma.Sql {
   return Prisma.sql`${rankedCtes(ctx)},
   page AS (SELECT * FROM filtered ORDER BY rank LIMIT ${limit} OFFSET ${offset}),
-  ${bestBuyerCtes(ctx.org, 'page')}
+  ${bestBuyerCtes(ctx.org, 'page')}${values ? Prisma.sql`, ${ourValueCtes(ctx.org, 'page')}` : Prisma.empty}
   SELECT t.total, p.id, p."displayName", p."primaryAddressSummary" AS address, p."priorityScore", p."topMatchFit",
     p."createdAt", p."mojoId", p."matchReason", p."dealflowSignalSyncedAt", p.added_at, p.attempts, p.rank,
     ${groupChipsSql('p.id')} AS groups,
     ${fieldValue('last_result', 'valueText', 'p.id')} AS last_result,
     COALESCE((SELECT c.timezone FROM "Contact" c WHERE c."leadId" = p.id ORDER BY c."createdAt", c.id COLLATE "C" LIMIT 1), p.lead_tz) AS timezone,
     ${ctx.callingOn ? calledTodaySql(ctx, 'p') : Prisma.sql`false`} AS called_today,
-    COALESCE(bl.best, bm.best) AS best_buyer
+    COALESCE(bl.best, bm.best) AS best_buyer,
+    ${values ? Prisma.sql`ov.value AS our_value, ov.low AS our_low, ov.high AS our_high` : Prisma.sql`NULL::float8 AS our_value, NULL::float8 AS our_low, NULL::float8 AS our_high`}
   FROM (SELECT count(*)::int AS total FROM filtered) t
   LEFT JOIN page p ON true
   ${bestBuyerJoins('p')}
+  ${values ? ourValueJoin('p') : Prisma.empty}
   ORDER BY p.rank`
 }
 
@@ -165,6 +178,7 @@ interface MetaSql {
   memberCount: number
   rankedAt: Date | null
   rankingCutoff: Date | null
+  hasValues: boolean
   windows: { timezone: string; earliestHour: number; latestHour: number; allowedDaysOfWeek: number[]; confirmed: boolean }[]
 }
 
@@ -174,15 +188,16 @@ function windowsSql(org: string): Prisma.Sql {
     FROM "CallingWindowConfig" w WHERE w."organizationId" = ${org})`
 }
 
-function metaQuery(ctx: Ctx): Prisma.Sql {
+function metaQuery(ctx: Ctx, values: boolean): Prisma.Sql {
+  const hasValues = values ? hasValuesSql(ctx.org) : Prisma.sql`false`
   if (!ctx.listId) {
     return Prisma.sql`SELECT (SELECT count(*)::int FROM "Lead" WHERE "organizationId" = ${ctx.org}) AS "memberCount",
-      ${rankingTimesSql(ctx.org)}, ${windowsSql(ctx.org)} AS windows`
+      ${rankingTimesSql(ctx.org)}, ${windowsSql(ctx.org)} AS windows, ${hasValues} AS "hasValues"`
   }
   return Prisma.sql`SELECT cl.id, cl.name, cl."folderId", cl.source, cl."sortOrder", cl."archivedAt", cl."createdAt",
       f.name AS "folderName", ib."createdAt" AS "uploadedAt",
       (SELECT count(*)::int FROM "ListMembership" m WHERE m."listId" = cl.id) AS "memberCount",
-      ${rankingTimesSql(ctx.org)}, ${windowsSql(ctx.org)} AS windows
+      ${rankingTimesSql(ctx.org)}, ${windowsSql(ctx.org)} AS windows, ${hasValues} AS "hasValues"
     FROM "CallList" cl
     LEFT JOIN "Folder" f ON f.id = cl."folderId"
     LEFT JOIN "ImportBatch" ib ON cl.source LIKE 'upload:%' AND ib.id = substr(cl.source, 8) AND ib."organizationId" = cl."organizationId"
@@ -194,10 +209,10 @@ function metaQuery(ctx: Ctx): Prisma.Sql {
 // yet)", never "OK to call" [engineering precaution: no compliance claim].
 const DEFAULT_WINDOW: CallingWindowDTO = { earliestHour: 9, latestHour: 20, allowedDaysOfWeek: [1, 2, 3, 4, 5], confirmed: false }
 
-async function load(db: PrismaClient, ctx: Ctx, limit: number, offset: number) {
+async function load(db: PrismaClient, ctx: Ctx, limit: number, offset: number, values: boolean) {
   const [meta, rows] = await Promise.all([
-    db.$queryRaw<MetaSql[]>(metaQuery(ctx)),
-    db.$queryRaw<RowSql[]>(rowsQuery(ctx, limit, offset)),
+    db.$queryRaw<MetaSql[]>(metaQuery(ctx, values)),
+    db.$queryRaw<RowSql[]>(rowsQuery(ctx, limit, offset, values)),
   ])
   if (meta.length === 0) throw notFound('List')
   return { meta: meta[0], rows }
@@ -225,6 +240,7 @@ function toRows(rows: RowSql[], meta: MetaSql): RankedRow[] {
         timezone: r.timezone,
         calledToday: r.called_today === true,
         addedAt: r.added_at?.toISOString() ?? null,
+        value: ourValueDTO(r.our_value, r.our_low, r.our_high),
       }
     })
 }
@@ -241,7 +257,7 @@ export async function getRankedPage(
 ): Promise<RankedPage> {
   const ctx = context(organizationId, listId, opts)
   const page = pageNumber(opts.page)
-  const { meta, rows } = await load(db, ctx, PAGE_SIZE, (page - 1) * PAGE_SIZE)
+  const { meta, rows } = await load(db, ctx, PAGE_SIZE, (page - 1) * PAGE_SIZE, true)
   const ranked = toRows(rows, meta)
 
   const callingWindows: Record<string, CallingWindowDTO> = {}
@@ -266,6 +282,7 @@ export async function getRankedPage(
     rankedAt: meta.rankedAt?.toISOString() ?? null,
     callingOffReason: ctx.callingOn ? null : CALLING_OFF_REASON,
     callingWindows,
+    hasValues: meta.hasValues === true,
     rows: ranked,
   }
 }
@@ -293,7 +310,9 @@ export const EXPORT_COLUMNS = [
 /**
  * The list (or All leads) as CSV, in rank order, with the same filters. No
  * phone numbers or emails, the same columns policy as the Leads export
- * [engineering precaution]. At most 25,000 rows (truncated says so).
+ * [engineering precaution]. Never our value estimate: the export doesn't even
+ * read it [Ryan, 2026-10-17; engineering precaution: exports can be
+ * forwarded]. At most 25,000 rows (truncated says so).
  */
 export async function exportRankedCsv(
   organizationId: string,
@@ -302,7 +321,7 @@ export async function exportRankedCsv(
   db: PrismaClient = prisma,
 ): Promise<{ filename: string; csv: string; truncated: boolean }> {
   const ctx = context(organizationId, listId, opts)
-  const { meta, rows } = await load(db, ctx, IDS_CAP, 0)
+  const { meta, rows } = await load(db, ctx, IDS_CAP, 0, false)
   const ranked = toRows(rows, meta)
   const csv = toCsv(EXPORT_COLUMNS, ranked.map((r) => [
     r.rank, r.displayName, r.address, r.priorityScore, r.topMatchFit, r.whyNow, r.bestBuyer?.name ?? null,

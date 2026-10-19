@@ -11,6 +11,7 @@ import type { GroupDTO, PipelineBoard as Board, PipelineCard } from '@/lib/core-
 import { isEditableTarget } from '@/lib/ui/hotkeys'
 import { cn } from '@/lib/ui/cn'
 import { groupColorStyle } from '@/lib/ui/groupColors'
+import { OurValueLine } from '@/components/lists/OurValue'
 import { neighborGroup } from './board-state'
 import { cardKeyAction } from './keys'
 import { dueText, inGroupText, lastContactText, type DueTone } from './format'
@@ -391,9 +392,10 @@ function CardView({
         </DropdownRoot>
       </div>
 
-      {/* Our value estimate (card.value) goes here once Brief 44's data is in
-          the CRM; it is always null until then, so there's no line for it. */}
       <div className="mt-1.5 flex flex-col gap-0.5">
+        {/* Brief 45 PR G: our value and range (Brief 44's estimate), when
+            DealFlow has one for this home. Ryan's screen only [Ryan, 2026-10-17]. */}
+        {card.value && <OurValueLine value={card.value} />}
         {card.bestBuyer ? (
           <p className="flex min-w-0 items-center gap-1.5">
             <Star size={12} className="shrink-0 text-subtle" aria-hidden />

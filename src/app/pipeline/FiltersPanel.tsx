@@ -1,15 +1,18 @@
 'use client'
 
+import { useEffect, useId, useState } from 'react'
 import { CircleHelp } from 'lucide-react'
-import { Button, Checkbox, Select, type SelectOption } from '@/components/ui'
+import { Button, Checkbox, Input, Select, type SelectOption } from '@/components/ui'
 import type {
   FolderDTO, ListDTO, PipelineFilterOptions, PipelineFilters, PipelineQuery,
 } from '@/lib/core-data/lists/types'
 import { STRONG_BUYER_MIN_FIT } from '@/lib/core-data/lists/rules'
+import { OUR_VALUE_LABEL, VALUES_LATER } from '@/components/lists/OurValue'
 import {
   LAST_CONTACT_OPTIONS, TASK_DUE_OPTIONS, TIER_OPTIONS, TIME_IN_GROUP_OPTIONS, UNIT_OPTIONS, type FilterOption,
 } from './filters'
 import { panelFilterCount } from './url'
+import { BACKWARDS, dollarsText, parseDollars } from './value-range'
 
 // Radix Select can't use '' as a value, so "Any" has its own.
 const ANY = '__any__'
@@ -18,7 +21,9 @@ const named = (names: readonly string[]): FilterOption[] => names.map((n) => ({ 
 
 /**
  * The Pipeline's filters [brief §5.6]. Each change applies at once (it goes
- * into the URL). Value range isn't offered until Brief 44's estimates exist.
+ * into the URL). Brief 45 PR G: the value range is offered once DealFlow's
+ * morning update has brought our estimates in (filterOptions.hasValues), or
+ * when a range is already set (a link, a saved workflow), so it can be changed.
  */
 export function FiltersPanel({
   query,
@@ -106,9 +111,11 @@ export function FiltersPanel({
           onCheckedChange={(c) => onChange({ multiGroup: c === true ? '1' : undefined })}
         />
       </div>
-      <p className="text-xs text-subtle">
-        Value range: not available yet. Our value estimates aren&apos;t in the CRM until Brief 44 adds them.
-      </p>
+      {filterOptions.hasValues || f.valueMin || f.valueMax ? (
+        <ValueRange filters={f} onChange={onChange} />
+      ) : (
+        <p className="text-xs text-subtle">{`Value range: ${VALUES_LATER}`}</p>
+      )}
       <div className="flex items-center justify-between gap-2 border-t border-line pt-2">
         <Button size="sm" variant="ghost" onClick={onHelp}>
           <CircleHelp size={13} />
@@ -119,5 +126,85 @@ export function FiltersPanel({
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * The value range: two boxes in dollars ("1.5M", "$1,500,000", "900k"), applied
+ * with Enter or Apply. Both ends count; people without an estimate are left out
+ * while it's on. A box left empty is no bound.
+ */
+function ValueRange({ filters, onChange }: { filters: PipelineFilters; onChange: (patch: Partial<PipelineFilters>) => void }) {
+  const errorId = useId()
+  const [min, setMin] = useState(dollarsText(filters.valueMin))
+  const [max, setMax] = useState(dollarsText(filters.valueMax))
+  const [error, setError] = useState<string | null>(null)
+  // A change made elsewhere (a chip's ×, "Clear all", another tab) shows in the boxes.
+  useEffect(() => {
+    setMin(dollarsText(filters.valueMin))
+    setMax(dollarsText(filters.valueMax))
+    setError(null)
+  }, [filters.valueMin, filters.valueMax])
+
+  const apply = () => {
+    const lo = parseDollars(min)
+    if (!lo.ok) return setError(lo.error)
+    const hi = parseDollars(max)
+    if (!hi.ok) return setError(hi.error)
+    if (lo.dollars !== null && hi.dollars !== null && lo.dollars > hi.dollars) return setError(BACKWARDS)
+    setError(null)
+    onChange({
+      valueMin: lo.dollars === null ? undefined : String(lo.dollars),
+      valueMax: hi.dollars === null ? undefined : String(hi.dollars),
+    })
+  }
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      apply()
+    }
+  }
+  const describedBy = error ? errorId : undefined
+
+  return (
+    <fieldset className="flex flex-col gap-1.5" data-testid="value-range">
+      <legend className="mb-1 text-sm font-medium text-fg">Value range</legend>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="w-36">
+          <Input
+            aria-label="Lowest value"
+            placeholder="From, e.g. 1.5M"
+            inputMode="decimal"
+            value={min}
+            onChange={(e) => setMin(e.target.value)}
+            onKeyDown={onKeyDown}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+          />
+        </div>
+        <span className="text-sm text-muted">to</span>
+        <div className="w-36">
+          <Input
+            aria-label="Highest value"
+            placeholder="To, e.g. 2.5M"
+            inputMode="decimal"
+            value={max}
+            onChange={(e) => setMax(e.target.value)}
+            onKeyDown={onKeyDown}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedBy}
+          />
+        </div>
+        <Button size="sm" onClick={apply}>
+          Apply
+        </Button>
+      </div>
+      {error && (
+        <p id={errorId} role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+      <p className="text-xs text-subtle">{`${OUR_VALUE_LABEL}. People without an estimate are left out.`}</p>
+    </fieldset>
   )
 }

@@ -124,3 +124,21 @@ export function rankStateOf(row: RankStateInput, rankingCutoff: Date | null): { 
   if (rankingCutoff && row.createdAt.getTime() < rankingCutoff.getTime()) return { rankState: 'not_ranked', notRankedReason: 'no_match' }
   return { rankState: 'scoring', notRankedReason: null }
 }
+
+// ─── The Pipeline's value range (Brief 45 PR G) ──────────────────────────────
+
+/** The value range's highest amount: Brief 44's cap on an estimate, $1,000,000,000. */
+export const VALUE_FILTER_MAX = 1_000_000_000
+
+/**
+ * A value-range end as the query string and saved workflows write it: whole
+ * dollars, digits only, 0 to VALUE_FILTER_MAX, without leading zeros
+ * ("0900000" reads as "900000"). Null for anything else (cents, commas, "1.5M":
+ * the Filters panel turns those into dollars first).
+ */
+export function canonicalDollars(raw: string): string | null {
+  const s = raw.trim()
+  if (!/^[0-9]{1,10}$/.test(s)) return null
+  const n = Number(s)
+  return n <= VALUE_FILTER_MAX ? String(n) : null
+}

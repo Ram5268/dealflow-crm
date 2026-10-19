@@ -7,9 +7,10 @@ import { ChevronLeft, ChevronRight, SquareKanban } from 'lucide-react'
 import { Badge, Button, DataTable, EmptyState, useToast, type Column, type SortState } from '@/components/ui'
 import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
 import type { PipelineQuery, PipelineRow, PipelineSortKey, PipelineTable as Table, SortDir } from '@/lib/core-data/lists/types'
-import { toCsv } from '@/lib/core-data/lists/csv'
+import { OurValueCell } from '@/components/lists/OurValue'
 import { cn } from '@/lib/ui/cn'
-import { dueText, inGroupShort, lastContactShort, shortDate, type DueTone } from './format'
+import { dueText, inGroupShort, lastContactShort, type DueTone } from './format'
+import { pipelineRowsToCsv } from './csv'
 import { PipelineGroupChips } from './PipelineGroupChips'
 
 const TONE: Record<DueTone, string> = { danger: 'text-danger', warning: 'text-warning', muted: 'text-muted' }
@@ -50,15 +51,8 @@ export function PipelineTable({
   const exportSelected = useCallback(() => {
     const chosen = table.rows.filter((r) => selected.has(r.leadId))
     if (chosen.length === 0) return
-    // No phones or emails, like the list exports [engineering precaution].
-    const csv = toCsv(
-      ['Rank', 'Name', 'Address', 'Groups', 'Best buyer', 'Last contact', 'Next task', 'Task due', 'In group since'],
-      chosen.map((r) => [
-        r.rank, r.displayName, r.address, r.groups.map((g) => g.name).join('; '), r.bestBuyer?.name ?? '',
-        r.lastContactAt ? shortDate(r.lastContactAt) : 'Never', r.nextTask?.text ?? '',
-        r.nextTask?.dueDate ? shortDate(r.nextTask.dueDate) : '', shortDate(r.inGroupSince),
-      ]),
-    )
+    // No phones or emails, and never our value estimate (csv.ts).
+    const csv = pipelineRowsToCsv(chosen)
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
@@ -93,6 +87,11 @@ export function PipelineTable({
         </div>
       ),
     },
+    // Brief 45 PR G: our value and range, shown when someone on this page has
+    // one (like the list pages). Never in the CSV export (csv.ts).
+    ...(table.rows.some((r) => r.value)
+      ? [{ key: 'value', header: 'Our value', cell: (r: PipelineRow) => <OurValueCell value={r.value} /> }]
+      : []),
     {
       key: 'groups',
       header: 'Groups',
