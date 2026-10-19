@@ -192,6 +192,10 @@ describe("only an estimate toPropertyFacts would keep counts", () => {
     ["string", JSON.stringify({ property: "1830000" }), false],
     ["null", JSON.stringify({ property: null }), false],
     ["absent", JSON.stringify({ crmLeadId: null }), false],
+    // One amount at a time that isn't a JSON number: each jsonb_typeof check is then the only guard before a numeric cast that would fail the whole page.
+    ["value_text_only", `{"property": {"asOf": "2026-10-01", "value": "1000000", "low": 900000, "high": 1100000}}`, false],
+    ["low_text_only", `{"property": {"asOf": "2026-10-01", "value": 1000000, "low": "900000", "high": 1100000}}`, false],
+    ["high_text_only", `{"property": {"asOf": "2026-10-01", "value": 1000000, "low": 900000, "high": "1100000"}}`, false],
   ];
   const ids: Record<string, string> = {};
 
