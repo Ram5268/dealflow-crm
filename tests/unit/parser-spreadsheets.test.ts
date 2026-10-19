@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as XLSX from 'xlsx'
 import { parseFile, sampleValues } from '@/lib/core-data/importer/parser'
@@ -35,6 +37,17 @@ describe('the spreadsheet library version', () => {
     const [major, minor, patch] = XLSX.version.split('.').map(Number)
     expect(major * 1_000_000 + minor * 1_000 + patch).toBeGreaterThanOrEqual(20_002)
   })
+
+  // The download's sha512 was added to the lockfile by hand (pnpm 9 writes
+  // none for a URL dependency), and `pnpm update`, `pnpm dedupe` or a
+  // regenerated lockfile silently drop it again. Without it a changed file on
+  // SheetJS's site would install unnoticed (engineering precaution).
+  it('the lockfile still pins the download by its sha512', () => {
+    const lock = readFileSync(fileURLToPath(new URL('../../pnpm-lock.yaml', import.meta.url)), 'utf8')
+    const entry = lock.match(/^  xlsx@(\S+):\n    resolution: \{([^}\n]*)\}/m)
+    expect(entry?.[1]).toMatch(/^https:\/\/cdn\.sheetjs\.com\//)
+    expect(entry?.[2]).toMatch(/(^|, )integrity: sha512-[A-Za-z0-9+/]{86}==(,|$)/)
+  })
 })
 
 describe.each(['xlsx', 'xls'] as const)('parseFile — .%s workbooks', (bookType) => {
@@ -68,16 +81,34 @@ describe.each(['xlsx', 'xls'] as const)('parseFile — .%s workbooks', (bookType
     expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 3'])
   })
 
-  it('keeps every column when sheets have different columns (the rest left blank)', () => {
-    const calls: FakeSheet = { name: 'Called', rows: [['Full Name', 'Email'], ['Test Owner 4', 'owner4@example.com']] }
-    const parsed = parseFile(workbookBuffer([BROOKLYN, calls], bookType), file)
-    expect(parsed.headerRow).toEqual(['Full Name', 'Phone', 'Address', 'Email'])
-    expect(parsed.allRows[0]).toEqual({ 'Full Name': 'Test Owner 1', Phone: '212-555-0101', Address: '100 Example St', Email: '' })
-    expect(parsed.allRows[2]).toEqual({ 'Full Name': 'Test Owner 4', Phone: '', Address: '', Email: 'owner4@example.com' })
-    expect(parsed.sheets?.map((s) => [s.name, s.rows, s.columns])).toEqual([
-      ['Brooklyn', 2, HEAD],
-      ['Called', 1, ['Full Name', 'Email']],
+  it('reads a later tab with the same layout and keeps its extra columns (the rest left blank)', () => {
+    const called: FakeSheet = { name: 'Called', rows: [[...HEAD, 'Outcome'], ['Test Owner 4', '212-555-0104', '104 Example St', 'No answer']] }
+    const parsed = parseFile(workbookBuffer([BROOKLYN, called], bookType), file)
+    expect(parsed.headerRow).toEqual([...HEAD, 'Outcome'])
+    expect(parsed.allRows[0]).toEqual({ 'Full Name': 'Test Owner 1', Phone: '212-555-0101', Address: '100 Example St', Outcome: '' })
+    expect(parsed.allRows[2]).toEqual({ 'Full Name': 'Test Owner 4', Phone: '212-555-0104', Address: '104 Example St', Outcome: 'No answer' })
+    expect(parsed.sheets?.map((s) => [s.name, s.rows, s.skipped])).toEqual([
+      ['Brooklyn', 2, undefined],
+      ['Called', 1, undefined],
     ])
+  })
+
+  it('skips a later tab with a different layout (a Comps tab sharing only Address) and says so', () => {
+    const comps: FakeSheet = { name: 'Comps', rows: [['Address', 'Sold Price'], ['200 Example St', 1500000], ['202 Example St', 1450000]] }
+    const parsed = parseFile(workbookBuffer([BROOKLYN, comps, QUEENS], bookType), file)
+    expect(parsed.headerRow).toEqual(HEAD)
+    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 1', 'Test Owner 2', 'Test Owner 3'])
+    expect(parsed.sheets?.[1]).toEqual({ name: 'Comps', rows: 0, columns: ['Address', 'Sold Price'], skipped: 'different-columns' })
+  })
+
+  it('"same layout" means at least 80% of the first data tab\'s named columns', () => {
+    const five = ['Full Name', 'Phone', 'Address', 'City', 'Zip']
+    const first: FakeSheet = { name: 'A', rows: [five, ['Test Owner 5', '212-555-0105', '105 Example St', 'Brooklyn', '11201']] }
+    const fourOfFive: FakeSheet = { name: 'B', rows: [[...five.slice(0, 4), 'Email'], ['Test Owner 6', '212-555-0106', '106 Example St', 'Brooklyn', 'o6@example.com']] }
+    const threeOfFive: FakeSheet = { name: 'C', rows: [five.slice(0, 3), ['Test Owner 7', '212-555-0107', '107 Example St']] }
+    const parsed = parseFile(workbookBuffer([first, fourOfFive, threeOfFive], bookType), file)
+    expect(parsed.sheets?.map((s) => s.skipped)).toEqual([undefined, undefined, 'different-columns'])
+    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 5', 'Test Owner 6'])
   })
 
   it('skips hidden sheets and says so', () => {
@@ -207,5 +238,17 @@ describe('parseFile — CSV', () => {
     expect([parsed.allRows[1]['__proto__'], parsed.allRows[1]['constructor']]).toEqual(['', ''])
     expect(sampleValues(parsed.allRows, '__proto__')).toEqual(['p19'])
     expect(sampleValues(parsed.allRows, 'constructor')).toEqual(['c19'])
+  })
+})
+
+describe('parseFile — review round 1', () => {
+  it('a mostly UTF-8 CSV with one stray byte keeps its UTF-8 letters (as before)', () => {
+    const buf = Buffer.concat([
+      Buffer.from('Full Name,Phone\nTest Ownér,212-555-0121\nTest O’Brien,212-555-0122\nTest Own'),
+      Buffer.from([0xe9]),
+      Buffer.from('r Two,212-555-0123\n'),
+    ])
+    const parsed = parseFile(buf, 'owners.csv')
+    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Ownér', 'Test O’Brien', 'Test Own\ufffdr Two'])
   })
 })
