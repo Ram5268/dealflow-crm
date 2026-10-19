@@ -9,8 +9,10 @@ const db = vi.hoisted(() => ({
   oAuthCredential: { update: vi.fn() },
 }))
 const events = vi.hoisted(() => ({ notifyMessageReceived: vi.fn() }))
+const activity = vi.hoisted(() => ({ recordMessageReceivedSafely: vi.fn() }))
 vi.mock('../../prisma', () => ({ prisma: db }))
 vi.mock('../events', () => events)
+vi.mock('../../core-data/activity/write', () => activity)
 
 import {
   resolveContact,
@@ -138,12 +140,16 @@ describe('emitMessageReceived', () => {
     expect(events.notifyMessageReceived).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 'db1', channel: 'email', contactId: 'c1', leadId: 'l1' }),
     )
+    // Brief 50 (PR 3): the lead's timeline entry, before the event.
+    expect(activity.recordMessageReceivedSafely).toHaveBeenCalledWith(db, { messageId: 'db1' })
+    expect(activity.recordMessageReceivedSafely.mock.invocationCallOrder[0]).toBeLessThan(events.notifyMessageReceived.mock.invocationCallOrder[0])
   })
 
   it('skips the NOTIFY when the row is missing', async () => {
     db.message.findUnique.mockResolvedValue(null)
     await emitMessageReceived(row('gmail:<y>'))
     expect(events.notifyMessageReceived).not.toHaveBeenCalled()
+    expect(activity.recordMessageReceivedSafely).not.toHaveBeenCalled()
   })
 })
 

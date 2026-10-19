@@ -1,9 +1,15 @@
 import { prisma } from '@/lib/prisma'
-import { logger } from '@/lib/logger'
+import { recordMessageReceived } from '@/lib/core-data/activity/write'
 
 // message.received (channel crm_message, emitter D). D writes the Message row
 // (D-owned table) BEFORE emitting; A only READS it and appends an Activity that
 // references it. Idempotent by messageId.
+//
+// Brief 50 (PR 3): the write itself lives in core-data/activity/write.ts,
+// shared with the inbound SMS and email paths that save the Message row (that
+// is what runs on Vercel; this LISTEN consumer only runs from the local
+// scripts/boot-*.ts). Both take the same per-message lock, so running both
+// never doubles a row.
 
 export interface MessageReceivedPayload {
   messageId: string
@@ -15,31 +21,9 @@ export interface MessageReceivedPayload {
 
 export async function onMessageReceived(p: Record<string, unknown>): Promise<void> {
   const payload = p as unknown as MessageReceivedPayload
-
-  const existing = await prisma.activity.findFirst({
-    where: { messageId: payload.messageId },
-    select: { id: true },
-  })
-  if (existing) return // idempotent
-
-  // Read D's Message row (A never writes this table).
-  const message = await prisma.message.findUnique({ where: { id: payload.messageId } })
-  if (!message) {
-    logger.warn({ correlationId: payload.correlationId, messageId: payload.messageId }, 'message.received: Message row not found')
-    return
-  }
-
-  const type = payload.channel === 'email' ? 'Email' : 'SMS'
-  await prisma.activity.create({
-    data: {
-      organizationId: message.organizationId,
-      leadId: payload.leadId ?? message.leadId ?? null,
-      contactId: payload.contactId ?? message.contactId ?? null,
-      type,
-      messageId: message.id,
-      activityAt: message.activityAt,
-      bodyText: message.bodyText,
-      bodyHtml: message.bodyHtml,
-    },
+  await recordMessageReceived(prisma, {
+    messageId: payload.messageId,
+    leadId: payload.leadId,
+    contactId: payload.contactId,
   })
 }

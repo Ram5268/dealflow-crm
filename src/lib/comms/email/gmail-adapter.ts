@@ -1,6 +1,7 @@
 import { prisma } from '../../prisma'
 import { getCorrelationId } from '../../shell/correlationId'
 import { notifyMessageReceived } from '../events'
+import { recordMessageReceivedSafely } from '../../core-data/activity/write'
 import { updateGmailHistoryId } from '../oauth/store'
 import { GmailClient } from './gmail-client'
 import type { SyncPorts, PersistableMessage } from './gmail-sync'
@@ -142,13 +143,20 @@ export async function saveMessages(
   return { insertedIds: toInsert.map((r) => r.providerMessageId) }
 }
 
-/** Look up the freshly-inserted row's id and NOTIFY crm_message. */
+/**
+ * Look up the freshly-inserted row's id, write the lead's timeline entry, and
+ * NOTIFY crm_message. Brief 50 (PR 3): the entry is written here (Gmail and
+ * Outlook share this) because nothing on Vercel consumes `message.received`.
+ * It is idempotent and never throws: the message is already saved
+ * [engineering precaution].
+ */
 export async function emitMessageReceived(msg: PersistableMessage): Promise<void> {
   const row = await prisma.message.findUnique({
     where: { providerMessageId: msg.providerMessageId },
     select: { id: true },
   })
   if (!row) return
+  await recordMessageReceivedSafely(prisma, { messageId: row.id })
   await notifyMessageReceived({
     messageId: row.id,
     channel: msg.channel,
