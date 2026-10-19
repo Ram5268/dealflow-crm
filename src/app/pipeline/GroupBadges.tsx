@@ -4,11 +4,8 @@ import { groupColorStyle } from '@/lib/ui/groupColors'
 
 /**
  * A card's or row's groups, read-only, in sidebar order, each with its color
- * (PR B's tokens, both themes).
- *
- * Integration seam (Brief 45 PR C): once PR C merges, these labels become
- * `<GroupChips compact leadId memberOf onChange>` (CONTRACT §8), so a click
- * on a card adds or removes a group.
+ * (PR B's tokens, both themes). Shown until the groups have loaded and the
+ * clickable chips take over (PipelineGroupChips), and on the server.
  */
 export function GroupBadges({ groups }: { groups: GroupChipDTO[] }) {
   return (

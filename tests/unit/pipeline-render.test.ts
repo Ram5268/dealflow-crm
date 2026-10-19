@@ -84,6 +84,11 @@ describe('the board', () => {
     expect(text(element(html, 'data-card', 'lead_4'))).not.toMatch(/due|task/i)
   })
 
+  it("each card is a contact card for PR C's chip keys (1–9 act on the focused card only)", () => {
+    const c = element(element(html, 'data-column', HOT.id), 'data-card', 'lead_1')
+    expect(c).toMatch(/^<article[^>]*\sdata-contact-card=""/)
+  })
+
   it('cards are draggable, and say how to move them by keyboard', () => {
     const c = element(element(html, 'data-column', HOT.id), 'data-card', 'lead_1')
     expect(c).toMatch(/draggable="true"/)

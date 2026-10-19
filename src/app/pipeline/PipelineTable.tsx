@@ -3,16 +3,14 @@
 import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Download, SquareKanban } from 'lucide-react'
-import {
-  Badge, Button, DataTable, DropdownContent, DropdownItem, DropdownRoot, DropdownTrigger, EmptyState, useToast,
-  type Column, type SortState,
-} from '@/components/ui'
+import { ChevronLeft, ChevronRight, SquareKanban } from 'lucide-react'
+import { Badge, Button, DataTable, EmptyState, useToast, type Column, type SortState } from '@/components/ui'
+import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
 import type { PipelineQuery, PipelineRow, PipelineSortKey, PipelineTable as Table, SortDir } from '@/lib/core-data/lists/types'
 import { toCsv } from '@/lib/core-data/lists/csv'
 import { cn } from '@/lib/ui/cn'
 import { dueText, inGroupShort, lastContactShort, shortDate, type DueTone } from './format'
-import { GroupBadges } from './GroupBadges'
+import { PipelineGroupChips } from './PipelineGroupChips'
 
 const TONE: Record<DueTone, string> = { danger: 'text-danger', warning: 'text-warning', muted: 'text-muted' }
 
@@ -99,9 +97,8 @@ export function PipelineTable({
       key: 'groups',
       header: 'Groups',
       cell: (r) => (
-        // Integration seam (Brief 45 PR C): <GroupChips compact> here once PR C merges.
         <span data-row-groups={r.leadId} className="flex flex-wrap gap-1">
-          <GroupBadges groups={r.groups} />
+          <PipelineGroupChips leadId={r.leadId} groups={r.groups} />
         </span>
       ),
     },
@@ -163,21 +160,11 @@ export function PipelineTable({
         {selected.size > 0 && (
           <>
             <span className="text-sm text-muted">{`${selected.size} selected`}</span>
-            {/* Integration seam (Brief 45 PR C): <BulkActionsMenu leadIds={[...selected]} onExport={exportSelected} />
-                (add to / remove from a group or list) replaces this menu once PR C merges. */}
-            <DropdownRoot>
-              <DropdownTrigger asChild>
-                <Button size="sm">Bulk actions</Button>
-              </DropdownTrigger>
-              <DropdownContent align="start">
-                <DropdownItem onSelect={exportSelected}>
-                  <span className="flex items-center gap-2">
-                    <Download size={13} className="text-subtle" />
-                    Export CSV
-                  </span>
-                </DropdownItem>
-              </DropdownContent>
-            </DropdownRoot>
+            {/* PR C's bulk actions [brief §5.4]: Add to group · Remove from group ·
+                Add to list · Export CSV. They tell the page when something
+                changed, and it reloads. Nobody is deleted, and nothing contacts
+                anyone [Ryan, 2026-09-24: nothing contacts a lead]. */}
+            <BulkActionsMenu leadIds={[...selected]} onExport={exportSelected} />
           </>
         )}
         <span className="ml-auto text-sm text-subtle" aria-live="polite">

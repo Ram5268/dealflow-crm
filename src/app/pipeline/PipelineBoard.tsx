@@ -14,7 +14,7 @@ import { groupColorStyle } from '@/lib/ui/groupColors'
 import { neighborGroup } from './board-state'
 import { cardKeyAction } from './keys'
 import { dueText, inGroupText, lastContactText, type DueTone } from './format'
-import { GroupBadges } from './GroupBadges'
+import { PipelineGroupChips } from './PipelineGroupChips'
 
 const keyOf = (groupId: string, leadId: string) => `${groupId}:${leadId}`
 // Our own drag type: a card dropped on a text field elsewhere pastes nothing.
@@ -311,6 +311,8 @@ function CardView({
     <article
       data-card={card.leadId}
       data-card-key={keyOf(groupId, card.leadId)}
+      // PR C's chip keys (1–9) act on the card that has focus.
+      data-contact-card=""
       tabIndex={tabbable ? 0 : -1}
       draggable
       aria-describedby={instructionsId}
@@ -399,7 +401,7 @@ function CardView({
       </div>
 
       <div data-testid="card-groups" className="mt-2 flex flex-wrap gap-1">
-        <GroupBadges groups={card.groups} />
+        <PipelineGroupChips leadId={card.leadId} groups={card.groups} />
       </div>
       {card.alsoIn.length > 0 && (
         <p data-testid="also-in" className="mt-1.5 flex items-center gap-1 text-xs font-medium text-accent">

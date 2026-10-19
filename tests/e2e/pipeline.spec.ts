@@ -287,6 +287,46 @@ test.describe('Brief 45 PR D: the Pipeline', () => {
     await expect(page.locator('[data-column]')).toHaveAttribute('data-column', G.c)
   })
 
+  test("a card's group chips: one click adds the person to that group (the card joins that column); keys 1–9 on the focused card", async ({ page, request }) => {
+    await onlyIn(request, lead[3], G.b)
+    await page.goto(board, { waitUntil: 'networkidle' })
+    const chips = card(page, G.b, lead[3]).getByTestId('group-chips')
+    const chipC = chips.locator(`[data-group-id="${G.c}"]`)
+    await expect(chipC).toHaveAttribute('aria-pressed', 'false')
+    await chipC.click()
+    await expect(chipC).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => groupIdsOf(request, lead[3])).toEqual([G.b, G.c])
+    await expect(card(page, G.c, lead[3])).toBeVisible() // the board reloads after the change
+
+    // Keys 1–9 toggle the first nine groups (sidebar order) while the card has focus.
+    const order = (await getJson<{ groups: { id: string }[] }>(request, '/api/core-data/groups')).groups.map((g) => g.id)
+    const digit = order.indexOf(G.a) + 1
+    expect(digit).toBeGreaterThan(0)
+    expect(digit).toBeLessThanOrEqual(9)
+    await card(page, G.b, lead[3]).focus()
+    await page.keyboard.press(String(digit))
+    await expect.poll(() => groupIdsOf(request, lead[3])).toEqual([G.a, G.b, G.c])
+    // Only that card: the person's other card (column C) didn't send a second toggle.
+    await page.waitForTimeout(600)
+    expect(await groupIdsOf(request, lead[3])).toEqual([G.a, G.b, G.c])
+    await onlyIn(request, lead[3], G.b)
+  })
+
+  test('the table: chips on each row, and Bulk actions → "Add to group…" for the selected people', async ({ page, request }) => {
+    await onlyIn(request, lead[4], G.c)
+    await page.goto(`${board}&view=table`, { waitUntil: 'networkidle' })
+    const row = page.locator('[data-testid="pipeline-table"] tbody tr', { has: page.locator(`[data-row="${lead[4]}"]`) })
+    await expect(row.getByTestId('group-chips').locator(`[data-group-id="${G.c}"]`)).toHaveAttribute('aria-pressed', 'true')
+    await row.locator('[role="checkbox"]').click()
+    await page.getByRole('button', { name: 'Bulk actions' }).click()
+    const items = await page.getByRole('menuitem').allInnerTexts()
+    expect(items.map((t) => t.trim())).toEqual(['Add to group…', 'Remove from group…', 'Add to list…', 'Export CSV'])
+    await page.getByRole('menuitem', { name: /Add to group/ }).click()
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(`^E2E A ${STAMP}`) }).click()
+    await expect.poll(() => groupIdsOf(request, lead[4])).toEqual([G.a, G.c])
+    await onlyIn(request, lead[4], G.c)
+  })
+
   test('the table: one row per person, sorted by name from the URL', async ({ page }) => {
     await page.goto(`${board}&view=table`)
     await expect(page.getByTestId('pipeline-table')).toBeVisible()
