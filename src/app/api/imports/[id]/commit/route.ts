@@ -6,6 +6,7 @@ import { withRoute, json, parseBody, HttpError } from '@/lib/shared/http'
 import { mappingProposalSchema } from '@/lib/core-data/importer/ai-mapping'
 import { enqueueImportCommit } from '@/lib/core-data/importer/enqueue'
 import { claimImportCommit } from '@/lib/core-data/importer/batch'
+import { checkMapping } from '@/lib/core-data/importer/mapping-edit'
 
 export const runtime = 'nodejs'
 // The inline commit runs in after() and needs the time (same cap as the sync cron).
@@ -25,6 +26,12 @@ const commitSchema = z.object({
 export const POST = withRoute(async (req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
   const body = await parseBody(req, commitSchema)
+  // Brief 50 PR 6: the mapping can be changed on the review screen. The
+  // screen's own checks run here too, before anything starts: nothing to match
+  // a row on (every row would be skipped), or one custom field fed by two
+  // columns (a merge writing both would fail the row).
+  const [problem] = checkMapping(body.mapping.mapping).problems
+  if (problem) throw new HttpError(400, problem)
 
   const claim = await claimImportCommit(prisma, params!.id, organizationId, body.mapping)
   if (!claim.claimed) {

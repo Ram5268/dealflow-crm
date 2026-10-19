@@ -1,19 +1,28 @@
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
-import { withRoute, json, HttpError, errorResponse } from '@/lib/shared/http'
+import { withRoute, json, HttpError } from '@/lib/shared/http'
 import { getObject } from '@/lib/core-data/importer/storage'
 import { parseFile } from '@/lib/core-data/importer/parser'
-import { proposeMapping, defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
+import { defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
 import { isStalled, sameMappingJson } from '@/lib/core-data/importer/batch'
 import { FILE_GONE_MESSAGE } from '@/lib/core-data/importer/progress-view'
+import { proposalForReview, savedProposal } from '@/lib/core-data/importer/review-proposal'
 import { captureException } from '@/lib/shared/sentry'
 import { logger } from '@/lib/logger'
-import { ZodError } from 'zod'
 
 export const runtime = 'nodejs'
 
+// Marks a mapping put back on the review screen from a stopped run, so a
+// reload of the screen keeps showing it (Brief 50 PR 6).
+const FROM_LAST_RUN = 'fromLastRun'
+
 // POST /api/imports/:id/proposed-mapping — AI column mapping via Sonnet 4.6.
+// Brief 50 PR 6: the screen always opens. With no usable AI answer every
+// column starts on "Don't import" and Ryan picks each field (the old answer,
+// "Map the columns manually to continue", pointed to a screen that didn't
+// exist). "Back to the import" after a stopped run shows the mapping that run
+// committed (with Ryan's changes) rather than asking the AI again.
 export const POST = withRoute(async (_req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
   const batch = await prisma.importBatch.findFirst({ where: { id: params!.id, organizationId } })
@@ -36,32 +45,28 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
   const existingDefs = await prisma.customFieldDefinition.findMany({
     where: { organizationId, objectType: 'lead' },
     select: { id: true, name: true, type: true },
+    orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
   })
   const existing = existingDefs.map((d) => ({ definitionId: d.id, name: d.name, type: d.type }))
 
-  let proposal
-  try {
-    proposal = await proposeMapping(parsed, existing, defaultAnthropicCaller())
-  } catch (err) {
-    captureException(err, { dependency: 'anthropic', event: 'proposed-mapping' })
-    // A ZodError here means the response was unusable even after coercion —
-    // that is a bad payload, not an outage, so it must not present as 503
-    // ("retry" is useless advice when a retry produces the same shape).
-    const unusable = err instanceof ZodError
-    return errorResponse(
-      unusable
-        ? 'AI returned a mapping we could not read. Map the columns manually to continue.'
-        : 'AI mapping unavailable, retry',
-      unusable ? 400 : 503,
-      correlationId
-    )
-  }
+  // A stopped run (failed, or stuck at 'importing') committed this mapping;
+  // so did one put back on the screen from it.
+  const lastRun =
+    batch.status === 'failed' || stalled || (batch.status === 'mapping_review' && (batch.mappingJson as Record<string, unknown> | null)?.[FROM_LAST_RUN] === true)
+  const proposal = await proposalForReview({
+    parsed,
+    existing,
+    caller: defaultAnthropicCaller(),
+    saved: lastRun ? savedProposal(batch.mappingJson) : null,
+  })
+  const { source, notice, error, ...mapping } = proposal
 
-  if (proposal.coercedColumns.length > 0) {
+  if (error !== undefined) captureException(error, { dependency: 'anthropic', event: 'proposed-mapping' })
+  if (mapping.coercedColumns.length > 0) {
     // Never silent: the model got these wrong and we rewrote them, so both the
     // logs and the reviewer see exactly which columns were touched.
     logger.warn(
-      { event: 'proposed-mapping.coerced', importBatchId: batch.id, coerced: proposal.coercedColumns },
+      { event: 'proposed-mapping.coerced', importBatchId: batch.id, coerced: mapping.coercedColumns },
       'AI mapping returned out-of-enum target.kind values; coerced'
     )
   }
@@ -75,7 +80,7 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
       ? { id: batch.id, status: 'importing', mappingJson: sameMappingJson(batch.mappingJson) }
       : { id: batch.id, status: { notIn: ['importing', 'completed'] } },
     data: {
-      mappingJson: proposal as object,
+      mappingJson: (source === 'last-run' ? { ...mapping, [FROM_LAST_RUN]: true } : mapping) as object,
       status: 'mapping_review',
       totalRows: parsed.totalRowsDetected,
       ...(stalled ? { errorLog: [] } : {}),
@@ -85,11 +90,16 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
 
   return json(
     {
-      mapping: proposal.mapping,
-      likelyDuplicates: proposal.likelyDuplicates,
-      coercedColumns: proposal.coercedColumns,
+      mapping: mapping.mapping,
+      likelyDuplicates: mapping.likelyDuplicates,
+      coercedColumns: mapping.coercedColumns,
       headerRow: parsed.headerRow,
       totalRowsDetected: parsed.totalRowsDetected,
+      // Brief 50 PR 6: where the screen's mapping came from, why (in plain
+      // English), and the custom fields a column may be put into.
+      source,
+      notice,
+      customFields: existing,
     },
     correlationId
   )
