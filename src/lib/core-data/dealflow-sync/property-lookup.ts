@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/logger'
-import { toPropertyFacts, type DealflowProperty } from './property'
+import { toPropertyFacts, type DealflowProperty, MAX_VALUE_AGE_DAYS } from './property'
 import { dealflowRoConfigured, roQuery } from './ro-client'
 import { propertySql } from './sync'
 
@@ -24,8 +24,12 @@ import { propertySql } from './sync'
 
 // The longest the lead page waits for DealFlow (as the Queue's last-night
 // notice, nightly-notice.ts): past it there is simply no card, and the read
-// left behind ends on its own (roQuery releases its client; the session's
-// 60 s statement limit stops it on the server) [engineering precaution].
+// left behind ends on its own. Brief 50 (PR 21): this is also the statement
+// time limit asked of the database for that one read (roQuery's
+// statementTimeoutMs, below), so the query itself stops on DealFlow's server
+// around the same time, instead of running up to the shared pool's own 60 s
+// default (ro-client.ts) and holding one of its 4 connections meanwhile
+// [engineering precaution].
 export const PROPERTY_LOOKUP_WAIT_MS = 2_500
 
 // $1 = the CRM organization's slug, $2 = the CRM lead id, $3 = its Mojo ID.
@@ -43,6 +47,24 @@ export const LEAD_PROPERTY_SQL = `
 type LeadKey = { id: string; mojoId: string | null }
 type SellerRow = { crm_lead_id: string | null; mojo_id: string | null; property: unknown }
 
+const DAY_MS = 86_400_000
+
+// Brief 50 (PR 21), engineering precaution: the same 100-day rule the morning
+// copy's own read applies (sync.ts propertySql, MAX_VALUE_AGE_DAYS), applied
+// again here because a *stored* value can outlive it. The copy only refreshes
+// this signal for a seller on DealFlow's call list; once PR 12's fallback was
+// added, a seller who later drops off the list keeps whatever was last
+// stored, forever, with nothing to re-check its age. A stale stored value is
+// treated as if nothing were stored, so the live fallback below -- which asks
+// DealFlow fresh, and applies the same rule in its own SQL -- gets a chance
+// instead. No publishedAt (shouldn't happen for a real stored value) counts
+// as stale, the same way the copy's SQL `>=` comparison excludes a NULL.
+function isFresh(p: DealflowProperty, now = Date.now()): boolean {
+  if (!p.publishedAt) return false
+  const publishedAt = Date.parse(p.publishedAt)
+  return Number.isFinite(publishedAt) && now - publishedAt <= MAX_VALUE_AGE_DAYS * DAY_MS
+}
+
 export async function getLeadProperty(
   organizationId: string,
   lead: LeadKey,
@@ -58,7 +80,7 @@ export async function getLeadProperty(
     ORDER BY s."queueRank" NULLS LAST
     LIMIT 1`
   const stored = toPropertyFacts(rows[0]?.property)
-  if (stored) return stored
+  if (stored && isFresh(stored)) return stored
   return toPropertyFacts(await readDealflowProperty(organizationId, lead, db, waitMs))
 }
 
@@ -73,7 +95,15 @@ async function readDealflowProperty(organizationId: string, lead: LeadKey, db: P
   try {
     const org = await db.organization.findUnique({ where: { id: organizationId }, select: { slug: true } })
     if (!org) return null
-    const read = roQuery<SellerRow>(LEAD_PROPERTY_SQL, [org.slug, lead.id, lead.mojoId])
+    // Brief 50 (PR 21), engineering precaution: the database itself gives up
+    // on this one read after the same length the page already waits
+    // (waitMs), so a slow lookup can't go on holding one of the shared
+    // read-only pool's 4 connections (ro-client.ts) that the 7 am copy needs
+    // -- unlike the page's own wait below, which only stops the CRM from
+    // waiting on the answer, not the query running on DealFlow's server. The
+    // pool's 60 s default (DEALFLOW_STATEMENT_TIMEOUT_MS) is unchanged for
+    // every other caller (the morning copy's own heavier reads).
+    const read = roQuery<SellerRow>(LEAD_PROPERTY_SQL, [org.slug, lead.id, lead.mojoId], { statementTimeoutMs: waitMs })
     // An abandoned read still ends on its own; a failure after the wait is ignored, never thrown.
     read.catch(() => undefined)
     const timedOut = new Promise<'timeout'>((resolve) => {

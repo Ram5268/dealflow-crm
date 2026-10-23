@@ -136,6 +136,37 @@ describe("a lead on the call list keeps the morning copy's stored value", () => 
     }), db);
     expect((await getLeadProperty(org, { id, mojoId: `${TAG}_m37` }, db))?.value).toBe(2_000_000);
   });
+
+  it("a stored value older than 100 days isn't shown; a fresh DealFlow read is tried instead, the same rule the copy uses", async () => {
+    const id = await makeLead(db, org, { displayName: "Test Owner 38", mojoId: `${TAG}_m38` });
+    const contact = await fake.seller(df, `${TAG}_m38`, id);
+    // The morning copy stored this while the seller was still on the call
+    // list; it has since dropped off (PR 12's gap) and nothing has refreshed
+    // it, so it just sits there getting older.
+    const stale = {
+      ...valued(2_000_000, "2026-06-01"),
+      dataThrough: "2026-05-31",
+      publishedAt: new Date(Date.now() - 101 * DAY).toISOString(),
+      facts: { units: 3 },
+    };
+    await applySync(org, buildSignals({
+      includeTestBuyers: false,
+      rows: [{
+        mojo_id: `${TAG}_m38`, crm_lead_id: id, queue_rank: 1, priority_score: 80, queue_reason: "Top match", primary_match_id: null,
+        primary_match_fit: 80, primary_capture_status: null, primary_match_confidence: null, match_reason: null, contactId: contact,
+        contributions: {}, generation_run_id: `${TAG}_run38`, generated_at: new Date().toISOString(), property: stale,
+      }],
+    }), db);
+    // DealFlow itself has nothing fresher published: the stale stored value
+    // must not be shown, so there is no card at all.
+    expect(await getLeadProperty(org, { id, mojoId: `${TAG}_m38` }, db)).toBeNull();
+
+    // DealFlow has since published a fresh run for the same seller: the live
+    // fallback (PR 12) finds it, same as a lead with no stored value at all.
+    const run = await published(5);
+    await fake.valuation(df, run, contact, valued(2_100_000));
+    expect((await getLeadProperty(org, { id, mojoId: `${TAG}_m38` }, db))?.value).toBe(2_100_000);
+  });
 });
 
 describe("the morning copy ignores values older than 100 days too", () => {

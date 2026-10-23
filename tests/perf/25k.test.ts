@@ -5,6 +5,7 @@ import { PERF_ORG_ID, PERF_TOTAL_LEADS, seedPerf } from '../../scripts/seed-dev'
 import { withConnectionRetry } from '../setup/db-retry'
 import { perfConnectionString } from '../setup/pg'
 import { pushSchema } from '../setup/push-schema'
+import { perf25kOptedIn, perf25kSkipReason } from './perf-25k-gate'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gate 3 perf assertion: 20 realistic Smart-View queries against 25,000 leads
@@ -16,9 +17,21 @@ import { pushSchema } from '../setup/push-schema'
 // which must be a *_perf or *_test database; anything else is refused). So it
 // never depends on a hand-seeded database and never sees other tests' rows.
 // The schema is dropped before the seed and again afterwards.
+//
+// Brief 50 (PR 21), engineering precaution: that's still a real seed-and-query
+// of 25,000 rows against whatever DATABASE_URL_PERF names, and BRIEF_50.md's
+// own "routine" local command for the CRM's tests points it at the shared
+// Railway perf database the live CRM also shares. So this file now runs only
+// when asked (perf-25k-gate.ts's opt-in); CI sets the opt-in itself, since its
+// db-suite job uses its own throwaway Postgres, never Railway.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SCHEMA = 'perf_25k'
+const optedIn = perf25kOptedIn()
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.log(perf25kSkipReason())
+}
 
 // Prisma's own engine honours ?schema= (it sets the search path), and the
 // Smart-View SQL names its tables unqualified, so every query runs in perf_25k.
@@ -35,7 +48,7 @@ let prisma: PrismaClient | undefined // inside perf_25k
 const dropSchema = () =>
   withConnectionRetry(`drop schema ${SCHEMA}`, () => admin!.$executeRawUnsafe(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`))
 
-describe('perf — 25k smart-view queries', () => {
+describe.skipIf(!optedIn)('perf — 25k smart-view queries', () => {
   beforeAll(async () => {
     const base = perfConnectionString() // refuses anything but a *_perf / *_test database
     admin = new PrismaClient({ datasourceUrl: withSchema(base, null) })

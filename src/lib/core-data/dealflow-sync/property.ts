@@ -21,6 +21,9 @@ export type NoValueReason = (typeof NO_VALUE_REASONS)[number]
 // no longer uses (DealFlow lib/matching/ourEstimates.ts MAX_VALUE_AGE_DAYS,
 // Brief 49 PR 3: three missed monthly runs plus some slack). Applied where the
 // value is read from DealFlow (sync.ts propertySql), by DealFlow's clock.
+// Brief 50 (PR 21): applied again by property-lookup.ts to a *stored* value
+// (dealflowRawJson.property, this app's own clock), which this rule alone
+// doesn't keep fresh once a seller drops off DealFlow's call list.
 export const MAX_VALUE_AGE_DAYS = 100
 
 type LeadVsCity = { lead: number; city: number }

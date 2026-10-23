@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } 
 import pg from 'pg'
 import type { PrismaClient } from '@prisma/client'
 import { closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
-import { getLeadProperty } from '@/lib/core-data/dealflow-sync/property-lookup'
+import { getLeadProperty, LEAD_PROPERTY_SQL, PROPERTY_LOOKUP_WAIT_MS } from '@/lib/core-data/dealflow-sync/property-lookup'
 import { logger } from '@/lib/logger'
 import { rawProperty } from './helpers/property-fixture'
 
@@ -26,6 +26,11 @@ function crm(slug: string | null = 'dealflow-ryan', otherLeads: string[] = []) {
 }
 
 // DealFlow answers the lead's statement with `rows` (after `delayMs`), or fails.
+// Brief 50 (PR 21): the real statement is always sent as an object
+// ({ text, values, queryMode }, roQuery's extended-protocol call); BEGIN READ
+// ONLY, ROLLBACK and the new per-call SET LOCAL statement_timeout are all
+// plain strings, so only the object branch carries the answer/delay/failure
+// -- a SET LOCAL added ahead of it doesn't also delay or fail.
 function fakeDealflow(answer: { rows?: unknown[]; fail?: Error; delayMs?: number } = {}) {
   const texts: string[] = []
   const values: unknown[] = []
@@ -36,8 +41,8 @@ function fakeDealflow(answer: { rows?: unknown[]; fail?: Error; delayMs?: number
     query: vi.fn(async (q: string | { text: string; values?: unknown[] }) => {
       const text = typeof q === 'string' ? q : q.text
       texts.push(text)
-      if (text === 'BEGIN READ ONLY' || text === 'ROLLBACK') return { rows: [] }
-      values.push(typeof q === 'string' ? undefined : q.values)
+      if (typeof q === 'string') return { rows: [] } // BEGIN READ ONLY / ROLLBACK / SET LOCAL …
+      values.push(q.values)
       if (answer.delayMs) await new Promise((resolve) => setTimeout(resolve, answer.delayMs))
       if (answer.fail) throw answer.fail
       return { rows: answer.rows ?? [] }
@@ -74,6 +79,17 @@ describe("a lead with no stored value: DealFlow's value for that one seller", ()
     expect(await getLeadProperty('org_1', LEAD, crm())).toEqual(rawProperty())
     expect(f.values).toEqual([['dealflow-ryan', 'lead_1', 'mojo_1']])
     expect(f.texts[0]).toBe('BEGIN READ ONLY') // through the read-only client
+  })
+
+  it('asks the database for its own, short statement time limit (2.5 s), so a slow read cannot hold the shared pool', async () => {
+    const f = fakeDealflow({ rows: [{ crm_lead_id: 'lead_1', mojo_id: 'mojo_1', property: rawProperty() }] })
+    await getLeadProperty('org_1', LEAD, crm())
+    expect(f.texts).toEqual([
+      'BEGIN READ ONLY',
+      `SET LOCAL statement_timeout = ${PROPERTY_LOOKUP_WAIT_MS}`,
+      LEAD_PROPERTY_SQL,
+      'ROLLBACK',
+    ])
   })
 
   it('found by Mojo ID only when DealFlow gave that seller to no other lead of the organization', async () => {
