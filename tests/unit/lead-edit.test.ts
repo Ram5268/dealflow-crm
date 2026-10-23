@@ -159,17 +159,26 @@ describe('what the form sends', () => {
     expect(fieldKeys['displayName']).toBe('displayName')
   })
 
-  it('a removed or emptied row is left out (that removes it); a blank status or address is sent as cleared', () => {
+  it('a removed or emptied row is sent as removed, by id; a blank status or address is sent as cleared', () => {
     const draft = draftFromInitial(initial)
     draft.contacts[0].emails[0].value = ''
+    draft.contacts[0].phones = draft.contacts[0].phones.filter((p) => p.id !== 'p1') // removed with ×
     draft.statusLabel = ''
     draft.primaryAddressFull = ' '
     const { payload } = buildLeadEditPayload(initial, draft)
     expect(payload).toEqual({
       statusLabel: null,
       primaryAddressFull: null,
-      contacts: [{ id: 'c1', phones: [{ id: 'p1' }, { id: 'p2' }], emails: [] }],
+      contacts: [{ id: 'c1', phones: [{ id: 'p2' }, { id: 'p1', remove: true }], emails: [{ id: 'e1', remove: true }] }],
     })
+  })
+
+  it('the request check takes a removal by id only', () => {
+    expect(parseLeadEdit({ contacts: [{ id: 'c1', phones: [{ id: 'p1', remove: true }] }] })).toEqual({
+      contacts: [{ id: 'c1', phones: [{ id: 'p1', remove: true }] }],
+    })
+    expect(() => parseLeadEdit({ contacts: [{ id: 'c1', phones: [{ remove: true }] }] })).toThrow(HttpError)
+    expect(() => parseLeadEdit({ contacts: [{ id: 'c1', phones: [{ id: 'p1', phone: '212-555-0123', remove: true }] }] })).toThrow(HttpError)
   })
 })
 

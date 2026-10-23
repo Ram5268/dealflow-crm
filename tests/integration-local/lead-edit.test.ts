@@ -189,7 +189,7 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
       phones: [{ phone: '+12125550101', isPrimary: true }, { phone: '+12125550102', isPrimary: false }],
     })
     const [first, second] = contact.phones
-    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: second.id, phone: '212.555.0145' }] }] })
+    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: second.id, phone: '212.555.0145' }, { id: first.id, remove: true }] }] })
     expect(res.status).toBe(200)
     expect(res.body.changes).toEqual(['Phone changed (…0102 → …0145)', 'Phone removed (…0101)'])
     const phones = await phonesOf(contact.id)
@@ -247,7 +247,7 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     const { lead, contact } = await makeLead({ emails: [{ email: 'old.owner@example.com' }, { email: 'gone@example.org' }] })
     const [gone, old] = contact.emails // ordered by address: gone@…, old.owner@…
     const res = await put(lead.id, {
-      contacts: [{ id: contact.id, emails: [{ id: old.id, email: 'new.owner@example.com' }, { email: ' Test.Owner@Example.COM ' }] }],
+      contacts: [{ id: contact.id, emails: [{ id: old.id, email: 'new.owner@example.com' }, { email: ' Test.Owner@Example.COM ' }, { id: gone.id, remove: true }] }],
     })
     expect(res.status).toBe(200)
     expect(res.body.changes).toEqual([
@@ -270,7 +270,8 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
       data: { organizationId: orgId, phone: '+12125550111', source: 'internal', addedBy: 'test', reason: TAG },
     })
     const keep = contact.phones.find((p) => p.phone === '+12125550112')!
-    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id }] }] })
+    const drop = contact.phones.find((p) => p.phone === '+12125550111')!
+    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id }, { id: drop.id, remove: true }] }] })
     expect(res.status).toBe(200)
     expect(res.body.changes).toEqual(['Phone removed (…0111)'])
     expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: '+12125550111' } })).toBe(1)
@@ -283,19 +284,19 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     })
     const blocked = contact.phones.find((p) => p.outboundSmsBlocked)!
     const other = contact.phones.find((p) => !p.outboundSmsBlocked)!
-    const removeBlocked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: other.id }] }] })
+    const removeBlocked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: other.id }, { id: blocked.id, remove: true }] }] })
     expect(removeBlocked.status).toBe(400)
     expect(removeBlocked.body.error).toMatch(/opted out|blocked/i)
     const changeBlocked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: blocked.id, phone: '212-555-0129' }, { id: other.id }] }] })
     expect(changeBlocked.status).toBe(400)
-    const removeOptedOut = await put(lead.id, { contacts: [{ id: contact.id, emails: [] }] })
+    const removeOptedOut = await put(lead.id, { contacts: [{ id: contact.id, emails: [{ id: contact.emails[0].id, remove: true }] }] })
     expect(removeOptedOut.status).toBe(400)
     expect(removeOptedOut.body.error).toMatch(/opted out/i)
     expect((await phonesOf(contact.id)).map((p) => [p.phone, p.outboundSmsBlocked])).toEqual([['+12125550121', true], ['+12125550122', false]])
     expect((await emailsOf(contact.id)).map((e) => [e.email, e.isUnsubscribed])).toEqual([['optout@example.com', true]])
 
     // Untouched, they don't get in the way of other edits.
-    const ok = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: blocked.id }], emails: [{ id: contact.emails[0].id }] }] })
+    const ok = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: blocked.id }, { id: other.id, remove: true }], emails: [{ id: contact.emails[0].id }] }] })
     expect(ok.status).toBe(200)
     expect(ok.body.changes).toEqual(['Phone removed (…0122)'])
   })
@@ -380,5 +381,63 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     expect(res.status).toBe(400)
     expect(res.body.error).toBe("The name can't be blank.")
     expect(res.body.field).toBe('displayName')
+  })
+
+  it('a form opened before another number was added never removes that number', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+12125550161' }] })
+    // Added after the form was opened (another tab, or an upload that adds phones).
+    const later = await prisma.contactPhone.create({ data: { contactId: contact.id, phone: '+12125550162', type: 'mobile' } })
+    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '212-555-0163' }] }] })
+    expect(res.status).toBe(200)
+    expect(res.body.changes).toEqual(['Phone added (…0163)'])
+    expect((await phonesOf(contact.id)).map((p) => p.id)).toContain(later.id)
+  })
+
+  it('a number removed elsewhere while the save runs: 409, nothing saved', async () => {
+    const { lead, contact } = await makeLead({
+      phones: [{ phone: '+12125550171', isPrimary: true }, { phone: '+12125550172', isPrimary: false }],
+    })
+    const [first, second] = contact.phones
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    // Another transaction removes the second number and holds its row for a moment.
+    const other = prisma.$transaction(async (tx) => {
+      await tx.contactPhone.delete({ where: { id: second.id } })
+      await held
+    }, { timeout: 20_000 })
+    await new Promise((r) => setTimeout(r, 300))
+    // The save removes the first (the primary), so the second would take over.
+    const saving = put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: second.id }, { id: first.id, remove: true }] }] })
+    await new Promise((r) => setTimeout(r, 800))
+    release()
+    await other
+    const res = await saving
+    expect(res.status).toBe(409)
+    expect(res.body.error).toMatch(/changed somewhere else/)
+    expect((await phonesOf(contact.id)).map((p) => p.id)).toEqual([first.id])
+    expect(await entries(lead.id)).toHaveLength(0)
+  })
+
+  it('removing a number that was removed elsewhere meanwhile: 409, nothing saved', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+12125550181' }, { phone: '+12125550182' }] })
+    const [first, second] = contact.phones
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const other = prisma.$transaction(async (tx) => {
+      await tx.contactPhone.delete({ where: { id: second.id } })
+      await held
+    }, { timeout: 20_000 })
+    await new Promise((r) => setTimeout(r, 300))
+    const saving = put(lead.id, {
+      displayName: 'Test Owner Should Not Save',
+      contacts: [{ id: contact.id, phones: [{ id: first.id }, { id: second.id, remove: true }] }],
+    })
+    await new Promise((r) => setTimeout(r, 800))
+    release()
+    await other
+    const res = await saving
+    expect(res.status).toBe(409)
+    expect((await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } })).displayName).toBe(lead.displayName)
+    expect(await entries(lead.id)).toHaveLength(0)
   })
 })

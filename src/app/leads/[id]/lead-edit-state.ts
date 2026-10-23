@@ -54,8 +54,8 @@ export function draftFromInitial(initial: LeadEditInitial): LeadEditDraft {
   }
 }
 
-type PhoneItem = { id?: string; phone?: string }
-type EmailItem = { id?: string; email?: string }
+type PhoneItem = { id?: string; phone?: string; remove?: true }
+type EmailItem = { id?: string; email?: string; remove?: true }
 
 /** The body of PUT /api/leads/[id]. */
 export interface LeadEditPayload {
@@ -68,10 +68,12 @@ export interface LeadEditPayload {
 /**
  * What to send: only what changed. A contact's list is sent whole once any of
  * it changed: a stored row the user didn't touch goes as `{ id }` (kept as it
- * is), an edited one as `{ id, phone }`, a new one as `{ phone }`; a removed or
- * emptied row is left out, which removes it. `payload` is null when nothing
- * changed. `fieldKeys` maps the API's `field` (e.g. "contacts.c1.phones.2") to
- * the form row it came from, so a refusal shows next to that row.
+ * is), an edited one as `{ id, phone }`, a new one as `{ phone }`, and a
+ * removed or emptied one as `{ id, remove: true }` (a number the form never
+ * showed is never removed). `initial` is what the form was opened from.
+ * `payload` is null when nothing changed. `fieldKeys` maps the API's `field`
+ * (e.g. "contacts.c1.phones.2") to the form row it came from, so a refusal
+ * shows next to that row.
  */
 export function buildLeadEditPayload(
   initial: LeadEditInitial,
@@ -97,8 +99,16 @@ export function buildLeadEditPayload(
     if (!before) continue
     const phoneBefore = new Map(before.phones.map((p) => [p.id, p.phone]))
     const emailBefore = new Map(before.emails.map((e) => [e.id, e.email]))
-    const phones = items(c.phones, phoneBefore, (id, value) => ({ ...(id && { id }), ...(value !== undefined && { phone: value }) }))
-    const emails = items(c.emails, emailBefore, (id, value) => ({ ...(id && { id }), ...(value !== undefined && { email: value }) }))
+    const phones = items(c.phones, phoneBefore, (i): PhoneItem => ({
+      ...(i.id && { id: i.id }),
+      ...(i.value !== undefined && { phone: i.value }),
+      ...(i.remove && { remove: true as const }),
+    }))
+    const emails = items(c.emails, emailBefore, (i): EmailItem => ({
+      ...(i.id && { id: i.id }),
+      ...(i.value !== undefined && { email: i.value }),
+      ...(i.remove && { remove: true as const }),
+    }))
     const changed = (list: { item: object }[], count: number) =>
       list.length !== count || list.some(({ item }) => Object.keys(item).some((k) => k !== 'id'))
     if (!changed(phones, before.phones.length) && !changed(emails, before.emails.length)) continue
@@ -114,18 +124,22 @@ export function buildLeadEditPayload(
 function items<T extends object>(
   rows: DraftRow[],
   before: Map<string, string>,
-  make: (id: string | undefined, value: string | undefined) => T,
+  make: (item: { id?: string; value?: string; remove?: boolean }) => T,
 ): { key: string; item: T }[] {
   const out: { key: string; item: T }[] = []
+  const shown = new Set<string>()
   for (const r of rows) {
     if (r.id !== undefined) {
-      if (r.locked || r.value === before.get(r.id)) out.push({ key: r.key, item: make(r.id, undefined) })
-      else if (r.value.trim()) out.push({ key: r.key, item: make(r.id, r.value) })
-      // emptied: left out, so it's removed
+      shown.add(r.id)
+      if (r.locked || r.value === before.get(r.id)) out.push({ key: r.key, item: make({ id: r.id }) })
+      else if (r.value.trim()) out.push({ key: r.key, item: make({ id: r.id, value: r.value }) })
+      else out.push({ key: r.key, item: make({ id: r.id, remove: true }) }) // emptied
     } else if (r.value.trim()) {
-      out.push({ key: r.key, item: make(undefined, r.value) })
+      out.push({ key: r.key, item: make({ value: r.value }) })
     }
   }
+  // Removed with ×: named, so the API removes exactly these.
+  for (const id of before.keys()) if (!shown.has(id)) out.push({ key: id, item: make({ id, remove: true }) })
   return out
 }
 

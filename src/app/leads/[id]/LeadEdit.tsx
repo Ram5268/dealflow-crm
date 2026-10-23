@@ -126,7 +126,11 @@ function LeadEditForm({
 }) {
   const router = useRouter()
   const { toast } = useToast()
-  const [draft, setDraft] = useState<LeadEditDraft>(() => draftFromInitial(initial))
+  // What the form was opened from. A page refresh that lands while it's open
+  // (e.g. the one after the last save) changes `initial`, but the draft was
+  // made from this, so the changes are worked out against it.
+  const [base] = useState(initial)
+  const [draft, setDraft] = useState<LeadEditDraft>(() => draftFromInitial(base))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
@@ -134,7 +138,7 @@ function LeadEditForm({
 
   const save = useCallback(async () => {
     if (busy.current) return
-    const { payload, fieldKeys } = buildLeadEditPayload(initial, draft)
+    const { payload, fieldKeys } = buildLeadEditPayload(base, draft)
     if (!payload) {
       toast({ title: 'Nothing to save' })
       onDone()
@@ -145,7 +149,7 @@ function LeadEditForm({
     setError(null)
     setFieldErrors({})
     try {
-      const res = await fetch(`/api/leads/${encodeURIComponent(initial.leadId)}`, {
+      const res = await fetch(`/api/leads/${encodeURIComponent(base.leadId)}`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
@@ -172,7 +176,7 @@ function LeadEditForm({
       busy.current = false
       setSaving(false)
     }
-  }, [initial, draft, onDone, router, toast])
+  }, [base, draft, onDone, router, toast])
 
   // Esc and ⌘/Ctrl+Enter work from anywhere on the page while the form is
   // open. Esc waits while a save is on its way, so its answer isn't lost.

@@ -65,19 +65,22 @@ export function isStandardUsPhone(e164: string): boolean {
 }
 
 // ─── The request ────────────────────────────────────────────────────────────
-// A contact's `phones` (or `emails`) is the whole list as it should be after
-// the save: `{ id }` keeps a number as it is, `{ id, phone }` changes it,
-// `{ phone }` adds one, and a stored number left out is removed. A contact
-// that isn't sent, or is sent without `phones`, keeps its numbers.
+// A contact's `phones` (or `emails`) says what to do with each number:
+// `{ id }` keeps a number as it is, `{ id, phone }` changes it, `{ phone }`
+// adds one, and `{ id, remove: true }` removes it. A stored number the request
+// doesn't name stays as it is: the form may have been opened before someone
+// else added it, and a save never removes a number it wasn't shown
+// [engineering precaution]. A contact that isn't sent, or is sent without
+// `phones`, keeps its numbers.
 
 const phoneItem = z
-  .object({ id: z.string().min(1).optional(), phone: z.string().max(MAX.phone).optional() })
+  .object({ id: z.string().min(1).optional(), phone: z.string().max(MAX.phone).optional(), remove: z.literal(true).optional() })
   .strict()
-  .refine((p) => p.id !== undefined || p.phone !== undefined)
+  .refine((p) => (p.remove ? p.id !== undefined && p.phone === undefined : p.id !== undefined || p.phone !== undefined))
 const emailItem = z
-  .object({ id: z.string().min(1).optional(), email: z.string().max(MAX.email).optional() })
+  .object({ id: z.string().min(1).optional(), email: z.string().max(MAX.email).optional(), remove: z.literal(true).optional() })
   .strict()
-  .refine((e) => e.id !== undefined || e.email !== undefined)
+  .refine((e) => (e.remove ? e.id !== undefined && e.email === undefined : e.id !== undefined || e.email !== undefined))
 const contactEdit = z
   .object({
     id: z.string().min(1),
@@ -180,7 +183,7 @@ interface RowKind<R extends StoredRow> {
   changed: (from: string, to: string) => string
 }
 
-type Item = { id?: string; value?: string }
+type Item = { id?: string; value?: string; remove?: boolean }
 
 function planRows<R extends StoredRow>(kind: RowKind<R>, contactId: string, rows: R[], items: Item[], changes: string[]): RowPlan {
   const field = (i: number) => `contacts.${contactId}.${kind.noun}.${i}`
@@ -200,7 +203,9 @@ function planRows<R extends StoredRow>(kind: RowKind<R>, contactId: string, rows
     if (!row) throw bad(`One of the ${kind.noun} isn't on this lead any more. ${RELOAD}`, field(i))
     if (sent.has(row.id)) throw bad(`The same ${one} was sent twice. ${RELOAD}`, field(i))
     sent.add(row.id)
-    if (text === undefined || kind.same(text) === kind.same(kind.stored(row))) {
+    if (item.remove) {
+      emptied.add(row.id)
+    } else if (text === undefined || kind.same(text) === kind.same(kind.stored(row))) {
       ops.push({ keep: row }) // untouched, or the same value typed another way
     } else if (text === '') {
       emptied.add(row.id)
@@ -210,8 +215,10 @@ function planRows<R extends StoredRow>(kind: RowKind<R>, contactId: string, rows
       ops.push({ change: row, value: kind.parse(text, field(i)) })
     }
   }
+  // Not named in the request: kept as it is (see "The request" above).
+  for (const r of rows) if (!sent.has(r.id)) ops.push({ keep: r })
   const removed = rows
-    .filter((r) => !sent.has(r.id) || emptied.has(r.id))
+    .filter((r) => emptied.has(r.id))
     .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1))
   for (const r of removed) {
     const locked = kind.optedOut(r)
@@ -314,7 +321,9 @@ async function knownStatus(tx: Tx, organizationId: string, label: string): Promi
   return { label: rows[0].statusLabel ?? label, id: rows.find((r) => r.statusId)?.statusId ?? null }
 }
 
-const isUniqueViolation = (err: unknown) => (err as { code?: unknown } | null)?.code === 'P2002'
+// P2002: two saves adding the same number at once. P2025: the number to make
+// primary was removed elsewhere meanwhile.
+const isRace = (err: unknown) => ['P2002', 'P2025'].includes((err as { code?: unknown } | null)?.code as string)
 
 export interface LeadEditResult {
   lead: Lead
@@ -384,19 +393,26 @@ export async function applyLeadEdit(
         const contact = contacts.find((x) => x.id === c.id)
         if (!contact) throw bad(`One of the contacts isn't on this lead. ${RELOAD}`)
         if (c.phones) {
-          const items = c.phones.map((p) => ({ id: p.id, value: p.phone }))
+          const items = c.phones.map((p) => ({ id: p.id, value: p.phone, remove: p.remove }))
           phonePlans.push([contact.id, planRows(PHONES, contact.id, contact.phones, items, changes)])
         }
         if (c.emails) {
-          const items = c.emails.map((e) => ({ id: e.id, value: e.email }))
+          const items = c.emails.map((e) => ({ id: e.id, value: e.email, remove: e.remove }))
           emailPlans.push([contact.id, planRows(EMAILS, contact.id, contact.emails, items, changes)])
         }
       }
 
       if (changes.length === 0) return { lead: current, changes }
 
+      // A number removed or changed elsewhere since the lead was read: 409
+      // (below), not a save on top of a list that's no longer there.
+      const gone = (count: number, expected: number) => {
+        if (count !== expected) throw new HttpError(409, `This lead changed somewhere else. ${RELOAD}`)
+      }
       for (const [contactId, plan] of phonePlans) {
-        if (plan.removeIds.length) await tx.contactPhone.deleteMany({ where: { id: { in: plan.removeIds }, contactId } })
+        if (plan.removeIds.length) {
+          gone((await tx.contactPhone.deleteMany({ where: { id: { in: plan.removeIds }, contactId } })).count, plan.removeIds.length)
+        }
         if (plan.promoteId) await tx.contactPhone.update({ where: { id: plan.promoteId }, data: { isPrimary: true } })
         if (plan.create.length) {
           await tx.contactPhone.createMany({
@@ -405,7 +421,9 @@ export async function applyLeadEdit(
         }
       }
       for (const [contactId, plan] of emailPlans) {
-        if (plan.removeIds.length) await tx.contactEmail.deleteMany({ where: { id: { in: plan.removeIds }, contactId } })
+        if (plan.removeIds.length) {
+          gone((await tx.contactEmail.deleteMany({ where: { id: { in: plan.removeIds }, contactId } })).count, plan.removeIds.length)
+        }
         if (plan.promoteId) await tx.contactEmail.update({ where: { id: plan.promoteId }, data: { isPrimary: true } })
         if (plan.create.length) {
           await tx.contactEmail.createMany({
@@ -428,8 +446,7 @@ export async function applyLeadEdit(
       return { lead: updated, changes }
     }, TX)
   } catch (err) {
-    // Two saves adding the same number at once.
-    if (isUniqueViolation(err)) throw new HttpError(409, `This lead changed somewhere else. ${RELOAD}`)
+    if (isRace(err)) throw new HttpError(409, `This lead changed somewhere else. ${RELOAD}`)
     throw err
   }
 }
