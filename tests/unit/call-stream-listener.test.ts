@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createCallListener, type CallSubscriber, type ListenClient } from '@/lib/telephony/stream/listener'
 
 // Brief 50 PR 1 (open item 6.1), engineering precautions: the one LISTEN
@@ -10,12 +10,16 @@ import { createCallListener, type CallSubscriber, type ListenClient } from '@/li
 class FakeClient extends EventEmitter implements ListenClient {
   sent: string[] = []
   ended = 0
-  constructor(private readonly connectImpl: () => Promise<void> = async () => {}) {
+  constructor(
+    private readonly connectImpl: () => Promise<void> = async () => {},
+    private readonly queryImpl: (text: string) => Promise<void> = async () => {},
+  ) {
     super()
   }
   connect = vi.fn(() => this.connectImpl())
   query = vi.fn(async (text: string) => {
     this.sent.push(text)
+    await this.queryImpl(text)
   })
   end = vi.fn(async () => {
     this.ended += 1
@@ -26,10 +30,10 @@ class FakeClient extends EventEmitter implements ListenClient {
   }
 }
 
-function harness(connectImpl?: () => Promise<void>) {
+function harness(connectImpl?: () => Promise<void>, queryImpl?: (text: string) => Promise<void>) {
   const clients: FakeClient[] = []
   const listener = createCallListener(() => {
-    const c = new FakeClient(connectImpl)
+    const c = new FakeClient(connectImpl, queryImpl)
     clients.push(c)
     return c
   })
@@ -47,6 +51,11 @@ function subscriber(): CallSubscriber & { events: string[]; drops: number } {
 }
 
 const settle = () => new Promise<void>((r) => setImmediate(r))
+const never = () => new Promise<void>(() => {})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('createCallListener', () => {
   it('subscribers arriving together share one connection and one LISTEN', async () => {
@@ -177,5 +186,68 @@ describe('createCallListener', () => {
     expect(a.drops).toBe(1)
     expect(clients[0].end).toHaveBeenCalledTimes(1)
     expect(listener.stats()).toEqual({ subscribers: 0, open: false })
+  })
+
+  describe('a connection that goes quiet without an error (the socket still looks open)', () => {
+    const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+
+    it('a healthy connection answers the minute check and stays', async () => {
+      fake()
+      const { listener, clients } = harness()
+      const a = subscriber()
+      await listener.subscribe(a)
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(clients[0].sent.filter((t) => t === 'SELECT 1').length).toBeGreaterThanOrEqual(4)
+      expect(a.drops).toBe(0)
+      expect(listener.stats()).toEqual({ subscribers: 1, open: true })
+    })
+
+    it('a check that gets no answer drops the connection, tells every subscriber, and the next one opens a fresh one', async () => {
+      fake()
+      const { listener, clients } = harness(undefined, (text) => (text === 'SELECT 1' ? never() : Promise.resolve()))
+      const [a, b] = [subscriber(), subscriber()]
+      await listener.subscribe(a)
+      await listener.subscribe(b)
+      await vi.advanceTimersByTimeAsync(60_000 + 10_000)
+      expect([a.drops, b.drops]).toEqual([1, 1])
+      expect(clients[0].end).toHaveBeenCalledTimes(1)
+      expect(listener.stats()).toEqual({ subscribers: 0, open: false })
+      await listener.subscribe(subscriber())
+      expect(clients).toHaveLength(2)
+    })
+
+    it('a check that fails drops the connection too', async () => {
+      fake()
+      const { listener } = harness(undefined, (text) => (text === 'SELECT 1' ? Promise.reject(new Error('Connection terminated')) : Promise.resolve()))
+      const a = subscriber()
+      await listener.subscribe(a)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(a.drops).toBe(1)
+      expect(listener.stats()).toEqual({ subscribers: 0, open: false })
+    })
+
+    it('a LISTEN that never answers rejects the waiting subscribers instead of holding them', async () => {
+      fake()
+      let hang = true
+      const { listener, clients } = harness(undefined, (text) => (hang && text.startsWith('LISTEN') ? never() : Promise.resolve()))
+      const pending = listener.subscribe(subscriber())
+      const settled = expect(pending).rejects.toThrow(/LISTEN/)
+      await vi.advanceTimersByTimeAsync(10_000)
+      await settled
+      expect(clients[0].end).toHaveBeenCalledTimes(1)
+      expect(listener.stats()).toEqual({ subscribers: 0, open: false })
+      hang = false
+      await listener.subscribe(subscriber())
+      expect(clients).toHaveLength(2)
+    })
+
+    it('letting the connection go stops its checks', async () => {
+      fake()
+      const { listener, clients } = harness()
+      const leave = await listener.subscribe(subscriber())
+      leave()
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(clients[0].sent).toEqual(['LISTEN crm_call'])
+    })
   })
 })

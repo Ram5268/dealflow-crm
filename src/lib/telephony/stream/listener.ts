@@ -14,13 +14,28 @@ import { logger } from '@/lib/logger'
  *  - on 'error' or an unexpected 'end' the connection is dropped and every
  *    subscriber is told (`onDrop`), so its stream closes and the browser
  *    reconnects later; nothing is thrown;
- *  - a failed connect rejects the waiting subscribers; the next one retries.
+ *  - a failed connect rejects the waiting subscribers; the next one retries;
+ *  - a connection that goes quiet without an 'error' or 'end' (a proxy whose
+ *    far side died: the socket still looks open) is caught by a `SELECT 1`
+ *    every minute that must answer within 10 s, and dropped like any other.
+ *    Sharing means one dead connection would otherwise silence every stream
+ *    on the instance for as long as any of them stays open; the LISTEN itself
+ *    has the same time limit, so a hung one can't hold the waiting streams.
  *
  * Read-only: it only listens. Emitting stays with `telephony/events/emit.ts`.
  */
 
 /** The Postgres channel the dialer emits call events on. */
 export const CALL_CHANNEL = 'crm_call'
+
+/** How often the open connection is checked, and how long a check (or the LISTEN) may take. */
+export const PING_MS = 60_000
+export const QUERY_TIMEOUT_MS = 10_000
+
+export interface CallListenerOptions {
+  pingMs?: number
+  queryTimeoutMs?: number
+}
 
 /** The part of a pg Client the listener uses (a stand-in in unit tests). */
 export interface ListenClient {
@@ -52,15 +67,27 @@ interface Connection {
   ready: Promise<void>
   /** Subscribers still waiting for `ready`; the connection stays while any are. */
   waiting: number
+  ping?: ReturnType<typeof setInterval>
 }
 
-export function createCallListener(newClient: () => ListenClient): CallListener {
+/** `p`, or a rejection once `ms` have passed without an answer. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} got no answer in ${ms} ms`)), ms)
+  })
+  return Promise.race([p, late]).finally(() => clearTimeout(timer))
+}
+
+export function createCallListener(newClient: () => ListenClient, opts: CallListenerOptions = {}): CallListener {
+  const { pingMs = PING_MS, queryTimeoutMs = QUERY_TIMEOUT_MS } = opts
   const subscribers = new Set<CallSubscriber>()
   let current: Connection | null = null
 
   /** Lets a connection go. Anything it emits afterwards is ignored. */
   function release(conn: Connection): void {
     if (current === conn) current = null
+    clearInterval(conn.ping)
     void conn.client.end().catch(() => {})
   }
 
@@ -104,7 +131,13 @@ export function createCallListener(newClient: () => ListenClient): CallListener 
     })
     conn.ready = (async () => {
       await client.connect()
-      if (current === conn) await client.query(`LISTEN ${CALL_CHANNEL}`)
+      if (current !== conn) return
+      await withTimeout(client.query(`LISTEN ${CALL_CHANNEL}`), queryTimeoutMs, 'LISTEN')
+      if (current !== conn) return
+      conn.ping = setInterval(() => {
+        withTimeout(client.query('SELECT 1'), queryTimeoutMs, 'ping').catch((err) => drop(conn, 'ping failed', err))
+      }, pingMs)
+      conn.ping.unref?.()
     })()
     // Every subscriber awaits `ready`; this only keeps a failure that nobody
     // is waiting for from surfacing as an unhandled rejection.
