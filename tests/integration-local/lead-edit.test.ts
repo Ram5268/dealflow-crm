@@ -220,13 +220,21 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     expect((await emailsOf(contact.id)).map((e) => e.email)).toEqual(['test.owner@example.com'])
   })
 
+  it('a "+" typed before a US number\'s 10 digits saves that US number (Brief 50 PR 13)', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+12125550101' }] })
+    const r = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '+917 555 0123' }] }] })
+    expect(r.status).toBe(200)
+    expect((await phonesOf(contact.id)).map((p) => p.phone).sort()).toEqual(['+12125550101', '+19175550123'])
+  })
+
   it('refuses a number that reads as outside the US, or isn\'t a number, with a plain message, and saves nothing', async () => {
     const { lead, contact } = await makeLead({ phones: [{ phone: '+12125550101' }] })
-    // "+917…" reads as an Indian number in the shared parser today (PR 13 fixes
-    // that); this form refuses anything that isn't +1 and 10 digits.
+    // A genuinely foreign number (UK, Ofcom's fictional drama range): this form
+    // refuses anything that isn't +1 and 10 digits. (Before Brief 50 PR 13 this
+    // test used "+917…", which the shared parser then read as Indian.)
     const foreign = await put(lead.id, {
       displayName: 'Test Owner Should Not Save',
-      contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '+9175550123' }] }],
+      contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '+44 20 7946 0750' }] }],
     })
     expect(foreign.status).toBe(400)
     expect(foreign.body.error).toMatch(/US/)
