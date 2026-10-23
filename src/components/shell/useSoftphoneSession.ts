@@ -23,6 +23,13 @@ export const WRAPUP_MS = 8000
  * `call.completed` — the four-state bar in brief §7 is not on the wire — so the
  * bar renders those two states plus a client-side elapsed timer.
  *
+ * Brief 50 PR 1 (open item 6.1), engineering precaution: every page in every
+ * tab mounts this hook, so while calling is off the route answers 204 No
+ * Content without touching the database, and a 204 makes EventSource stop for
+ * good (it does not reconnect). While calling is on, the server ends each
+ * stream every few minutes or when its database connection breaks, sending a
+ * `retry:` delay first, and EventSource reconnects on its own after it.
+ *
  * Read-only: this hook never posts. Placing, pacing and hanging up calls stay
  * entirely with Agent B's dialer.
  */
@@ -88,7 +95,10 @@ export function useSoftphoneSession(): SoftphoneSession | null {
     }
 
     es.onerror = () => {
-      /* EventSource reconnects on its own */
+      // CLOSED: the server said "no stream" (204 while calling is off), so
+      // EventSource will not try again; release it. Otherwise it is already
+      // reconnecting on its own, after the server's `retry:` delay.
+      if (es.readyState === EventSource.CLOSED) es.close()
     }
 
     return () => {
