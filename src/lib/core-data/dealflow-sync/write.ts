@@ -195,7 +195,11 @@ export type BatchRefusal = 'no_leads_matched' | 'too_few_leads_matched'
  * list held signals (Brief 47's "fewer than half" rule for DealFlow's own
  * nightly). Today's list (~1,490 entries, ~1,478 of them CRM leads) passes
  * with about a 2x margin: a refusal needs fewer than ~745. A first copy (no
- * signals yet) is refused only when it matches no lead.
+ * signals yet) is refused only when it matches no lead. "The last morning's
+ * list" is the last list it actually copied: a refused morning changes nothing,
+ * so the refusal repeats each morning until DealFlow's list recovers. There is
+ * no override (as in DealFlow's own size check), so a deliberate big shrink
+ * would also be refused; the only traces are the cron's answer and a log line.
  */
 export function refuseBatch({ mappedLeads, morningSignals }: BatchMapping): BatchRefusal | null {
   if (mappedLeads === 0) return 'no_leads_matched'

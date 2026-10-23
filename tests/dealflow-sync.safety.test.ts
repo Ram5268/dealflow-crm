@@ -127,6 +127,12 @@ describe("a call list that matches no CRM lead (or too few) writes nothing", () 
   let dfOrg: string;
   const leads: string[] = [];
   const contacts: string[] = [];
+  // DealFlow makes each night's list after the last morning's copy, so every
+  // list after the first is dated after that copy (minutes ahead of the clock),
+  // and its run's clock later still. Dated before the copy, the morning-sync
+  // guard would spare every lead the copy wrote (Brief 45 PR F), whatever the
+  // test Postgres's time zone.
+  const after = (minutes: number) => new Date(Date.now() + minutes * 60_000);
 
   beforeAll(async () => {
     org = await crmOrg("g");
@@ -152,25 +158,25 @@ describe("a call list that matches no CRM lead (or too few) writes nothing", () 
       await fake.seller(dfOrg, `${TAG}_s1`, "no_such_lead_1"),
       await fake.seller(dfOrg, `${TAG}_s2`, null),
     ];
-    await fake.callList(dfOrg, strangers, new Date(Date.now() - 4 * HOUR));
+    await fake.callList(dfOrg, strangers, after(1));
     const before = await snapshot(org.id);
-    const r = await runDealflowSync(org.id, new Date(), db);
+    const r = await runDealflowSync(org.id, after(10), db);
     expect(r.skipped).toBe("no_leads_matched");
     expect(r).toMatchObject({ signalsUpserted: 0, signalsRemoved: 0, leadsUpdated: 0, leadsCleared: 0, count: 0, leadsPromoted: 0 });
     expect(await snapshot(org.id)).toEqual(before);
   });
 
   it("a list matching fewer than half as many leads as the last morning's list held: skipped, nothing written", async () => {
-    await fake.callList(dfOrg, [contacts[0]], new Date(Date.now() - 3 * HOUR)); // 1 lead; the last copy held 4
+    await fake.callList(dfOrg, [contacts[0]], after(2)); // 1 lead; the last copy held 4
     const before = await snapshot(org.id);
-    const r = await runDealflowSync(org.id, new Date(), db);
+    const r = await runDealflowSync(org.id, after(10), db);
     expect(r.skipped).toBe("too_few_leads_matched");
     expect(await snapshot(org.id)).toEqual(before);
   });
 
   it("exactly half as many is still a normal morning: copied, and the leads left off are cleared as before", async () => {
-    await fake.callList(dfOrg, [contacts[0], contacts[1]], new Date(Date.now() - 2 * HOUR));
-    const r = await runDealflowSync(org.id, new Date(), db);
+    await fake.callList(dfOrg, [contacts[0], contacts[1]], after(3));
+    const r = await runDealflowSync(org.id, after(10), db);
     expect(r.skipped).toBeUndefined();
     expect(r).toMatchObject({ leadsUpdated: 2, leadsCleared: 2, signalsRemoved: 2 });
   });
