@@ -9,7 +9,7 @@ export type FakeCell = string | number | boolean | Date | null
 export interface FakeSheet {
   name: string
   rows: FakeCell[][]
-  hidden?: boolean
+  hidden?: boolean | 'very' // 'very': Excel's "very hidden" (only a macro can show it)
 }
 
 // A workbook in an Excel format, written by the spreadsheet library itself:
@@ -17,7 +17,7 @@ export interface FakeSheet {
 export function workbookBuffer(sheets: FakeSheet[], bookType: 'xlsx' | 'xls'): Buffer {
   const wb = XLSX.utils.book_new()
   for (const s of sheets) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.rows), s.name)
-  wb.Workbook = { Sheets: sheets.map((s) => ({ name: s.name, Hidden: s.hidden ? 1 : 0 })) }
+  wb.Workbook = { Sheets: sheets.map((s) => ({ name: s.name, Hidden: s.hidden === 'very' ? 2 : s.hidden ? 1 : 0 })) }
   return XLSX.write(wb, { type: 'buffer', bookType }) as Buffer
 }
 
@@ -96,8 +96,11 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 export type RawCell = string | { n: number; style?: 1 | 2 }
 
 // A one-sheet .xlsx from raw cells, optionally with one comment whose cell
-// reference is written exactly as given (Excel would only write "A1" etc.).
-export function rawXlsx(rows: RawCell[][], opts: { commentRef?: string } = {}): Buffer {
+// reference is written exactly as given (Excel would only write "A1" etc.),
+// and optionally with the sheet's used range (its <dimension>) written as
+// given: Brief 50 PR 20's "A1:Z1048576" for a sheet with a few rows, as a
+// stray formatted cell at the bottom leaves it.
+export function rawXlsx(rows: RawCell[][], opts: { commentRef?: string; dimension?: string } = {}): Buffer {
   const colName = (c: number) => String.fromCharCode(65 + c)
   const sheetRows = rows
     .map((cells, r) => {
@@ -133,7 +136,10 @@ export function rawXlsx(rows: RawCell[][], opts: { commentRef?: string } = {}): 
       '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
       '<cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/><xf numFmtId="22" applyNumberFormat="1"/></cellXfs>' +
       '</styleSheet>',
-    'xl/worksheets/sheet1.xml': `${XML}<worksheet xmlns="${MAIN}"><sheetData>${sheetRows}</sheetData></worksheet>`,
+    'xl/worksheets/sheet1.xml':
+      `${XML}<worksheet xmlns="${MAIN}">` +
+      (opts.dimension !== undefined ? `<dimension ref="${esc(opts.dimension)}"/>` : '') +
+      `<sheetData>${sheetRows}</sheetData></worksheet>`,
   }
   if (opts.commentRef !== undefined) {
     parts['xl/worksheets/_rels/sheet1.xml.rels'] =

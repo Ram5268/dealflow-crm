@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { withRoute, json, HttpError } from '@/lib/shared/http'
 import { getObject } from '@/lib/core-data/importer/storage'
-import { parseFile } from '@/lib/core-data/importer/parser'
+import { parseFile, tabsForReview } from '@/lib/core-data/importer/parser'
 import { defaultAnthropicCaller } from '@/lib/core-data/importer/ai-mapping'
 import { isStalled, sameMappingJson } from '@/lib/core-data/importer/batch'
 import { FILE_GONE_MESSAGE } from '@/lib/core-data/importer/progress-view'
@@ -100,6 +100,11 @@ export const POST = withRoute(async (_req: NextRequest, { correlationId, params 
       source,
       notice,
       customFields: existing,
+      // Brief 50 PR 20: an Excel file's tabs that aren't imported (only the
+      // first visible tab is) and whether that tab hit the row limit; null for
+      // a CSV. Re-read from the file on every visit, like the rows: nothing
+      // new is stored, and the tab names are never logged.
+      tabs: tabsForReview(parsed),
     },
     correlationId
   )

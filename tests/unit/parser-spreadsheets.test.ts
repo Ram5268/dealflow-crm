@@ -5,11 +5,13 @@ import * as XLSX from 'xlsx'
 import { parseFile, sampleValues } from '@/lib/core-data/importer/parser'
 import { rawXlsx, workbookBuffer, type FakeSheet } from './helpers/fake-spreadsheets'
 
-// Brief 50 PR 8 (open item 6.13, plus 6.6's "only the first Excel sheet is
-// read"). Every file format the import takes, built in memory from made-up
-// rows: the upload screen offers .csv, .xlsx and .xls; the upload route itself
-// takes any file, and the parser reads .xlsx/.xls (any case) as Excel and
-// everything else as CSV text.
+// Brief 50 PR 8 (open item 6.13). Every file format the import takes, built
+// in memory from made-up rows: the upload screen offers .csv, .xlsx and .xls;
+// the upload route itself takes any file, and the parser reads .xlsx/.xls
+// (any case) as Excel and everything else as CSV text.
+// Brief 50 PR 20 (Revision 2, the planner's review of 2026-10-23): an Excel
+// import reads the first visible tab only again (PR 8 had also read later
+// tabs with about the same columns); see parser-first-tab.test.ts.
 
 const HEAD = ['Full Name', 'Phone', 'Address']
 const BROOKLYN: FakeSheet = {
@@ -61,54 +63,25 @@ describe.each(['xlsx', 'xls'] as const)('parseFile — .%s workbooks', (bookType
     expect(parsed.sheets).toEqual([{ name: 'Brooklyn', rows: 2, columns: HEAD }])
   })
 
-  it('reads every sheet that has rows, in tab order, and says which it read', () => {
+  it('reads the first tab only, and says which tabs it did not read', () => {
     const parsed = parseFile(workbookBuffer([BROOKLYN, EMPTY, QUEENS], bookType), file)
     expect(parsed.headerRow).toEqual(HEAD)
-    expect(parsed.totalRowsDetected).toBe(3)
-    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 1', 'Test Owner 2', 'Test Owner 3'])
-    expect(parsed.allRows[2]).toEqual({ 'Full Name': 'Test Owner 3', Phone: '718-555-0103', Address: '300 Sample Ave' })
-    expect(parsed.sampleRows).toHaveLength(3)
+    expect(parsed.totalRowsDetected).toBe(2)
+    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 1', 'Test Owner 2'])
+    expect(parsed.sampleRows).toHaveLength(2)
     expect(parsed.sheets).toEqual([
       { name: 'Brooklyn', rows: 2, columns: HEAD },
-      { name: 'Notes', rows: 0, columns: [], skipped: 'empty' },
-      { name: 'Queens', rows: 1, columns: HEAD },
+      { name: 'Notes', rows: 0, columns: [], skipped: 'not-first-tab' },
+      { name: 'Queens', rows: 0, columns: [], skipped: 'not-first-tab' },
     ])
   })
 
-  it('reads the data when the first sheet is empty', () => {
-    const parsed = parseFile(workbookBuffer([{ name: 'Sheet1', rows: [] }, { ...QUEENS, name: 'Data' }], bookType), file)
-    expect(parsed.headerRow).toEqual(HEAD)
-    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 3'])
-  })
-
-  it('reads a later tab with the same layout and keeps its extra columns (the rest left blank)', () => {
-    const called: FakeSheet = { name: 'Called', rows: [[...HEAD, 'Outcome'], ['Test Owner 4', '212-555-0104', '104 Example St', 'No answer']] }
-    const parsed = parseFile(workbookBuffer([BROOKLYN, called], bookType), file)
-    expect(parsed.headerRow).toEqual([...HEAD, 'Outcome'])
-    expect(parsed.allRows[0]).toEqual({ 'Full Name': 'Test Owner 1', Phone: '212-555-0101', Address: '100 Example St', Outcome: '' })
-    expect(parsed.allRows[2]).toEqual({ 'Full Name': 'Test Owner 4', Phone: '212-555-0104', Address: '104 Example St', Outcome: 'No answer' })
-    expect(parsed.sheets?.map((s) => [s.name, s.rows, s.skipped])).toEqual([
-      ['Brooklyn', 2, undefined],
-      ['Called', 1, undefined],
-    ])
-  })
-
-  it('skips a later tab with a different layout (a Comps tab sharing only Address) and says so', () => {
+  it('a later tab with other columns (a Comps tab) is not read either', () => {
     const comps: FakeSheet = { name: 'Comps', rows: [['Address', 'Sold Price'], ['200 Example St', 1500000], ['202 Example St', 1450000]] }
-    const parsed = parseFile(workbookBuffer([BROOKLYN, comps, QUEENS], bookType), file)
+    const parsed = parseFile(workbookBuffer([BROOKLYN, comps], bookType), file)
     expect(parsed.headerRow).toEqual(HEAD)
-    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 1', 'Test Owner 2', 'Test Owner 3'])
-    expect(parsed.sheets?.[1]).toEqual({ name: 'Comps', rows: 0, columns: ['Address', 'Sold Price'], skipped: 'different-columns' })
-  })
-
-  it('"same layout" means at least 80% of the first data tab\'s named columns', () => {
-    const five = ['Full Name', 'Phone', 'Address', 'City', 'Zip']
-    const first: FakeSheet = { name: 'A', rows: [five, ['Test Owner 5', '212-555-0105', '105 Example St', 'Brooklyn', '11201']] }
-    const fourOfFive: FakeSheet = { name: 'B', rows: [[...five.slice(0, 4), 'Email'], ['Test Owner 6', '212-555-0106', '106 Example St', 'Brooklyn', 'o6@example.com']] }
-    const threeOfFive: FakeSheet = { name: 'C', rows: [five.slice(0, 3), ['Test Owner 7', '212-555-0107', '107 Example St']] }
-    const parsed = parseFile(workbookBuffer([first, fourOfFive, threeOfFive], bookType), file)
-    expect(parsed.sheets?.map((s) => s.skipped)).toEqual([undefined, undefined, 'different-columns'])
-    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 5', 'Test Owner 6'])
+    expect(parsed.allRows.map((r) => r['Full Name'])).toEqual(['Test Owner 1', 'Test Owner 2'])
+    expect(parsed.sheets?.[1]).toEqual({ name: 'Comps', rows: 0, columns: [], skipped: 'not-first-tab' })
   })
 
   it('skips hidden sheets and says so', () => {
@@ -122,7 +95,7 @@ describe.each(['xlsx', 'xls'] as const)('parseFile — .%s workbooks', (bookType
   it('returns nothing (and does not throw) when every sheet is empty', () => {
     const parsed = parseFile(workbookBuffer([{ name: 'Sheet1', rows: [] }, { name: 'Sheet2', rows: [] }], bookType), file)
     expect(parsed).toMatchObject({ headerRow: [], totalRowsDetected: 0, allRows: [], sampleRows: [] })
-    expect(parsed.sheets?.map((s) => s.skipped)).toEqual(['empty', 'empty'])
+    expect(parsed.sheets?.map((s) => s.skipped)).toEqual(['empty', 'not-first-tab'])
   })
 
   it('turns numbers and true/false into text', () => {
@@ -160,7 +133,7 @@ describe.each(['xlsx', 'xls'] as const)('parseFile — .%s workbooks', (bookType
 
   it('accepts an upper-case extension', () => {
     const parsed = parseFile(workbookBuffer([BROOKLYN, QUEENS], bookType), `OWNERS.${bookType.toUpperCase()}`)
-    expect(parsed.totalRowsDetected).toBe(3)
+    expect(parsed.totalRowsDetected).toBe(2)
   })
 })
 
