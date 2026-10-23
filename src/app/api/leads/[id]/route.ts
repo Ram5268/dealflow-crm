@@ -1,21 +1,9 @@
-import { z } from 'zod'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
-import { withRoute, json, parseBody, HttpError } from '@/lib/shared/http'
+import { withRoute, json, HttpError } from '@/lib/shared/http'
 import { hydrateCustomFields } from '@/lib/core-data/leads/serialize'
-
-const updateLeadSchema = z.object({
-  displayName: z.string().min(1).optional(),
-  name: z.string().nullable().optional(),
-  description: z.string().nullable().optional(),
-  statusId: z.string().nullable().optional(),
-  statusLabel: z.string().nullable().optional(),
-  url: z.string().nullable().optional(),
-  primaryAddressFull: z.string().nullable().optional(),
-  primaryAddressSummary: z.string().nullable().optional(),
-  timezone: z.string().nullable().optional(),
-})
+import { applyLeadEdit, parseLeadEdit } from '@/lib/core-data/leads/edit'
 
 export const GET = withRoute(async (_req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
@@ -33,14 +21,19 @@ export const GET = withRoute(async (_req: NextRequest, { correlationId, params }
   return json({ ...lead, customFields }, correlationId)
 })
 
+// Brief 50 PR 5: the lead page's Edit mode. Only the name, status, address
+// and each contact's phones and emails; DealFlow's values are refused; one
+// timeline entry per save that changes something (src/lib/core-data/leads/edit.ts).
 export const PUT = withRoute(async (req: NextRequest, { correlationId, params }) => {
   const organizationId = await getCurrentOrgId()
-  const id = params!.id
-  const body = await parseBody(req, updateLeadSchema)
-  const existing = await prisma.lead.findFirst({ where: { id, organizationId }, select: { id: true } })
-  if (!existing) throw new HttpError(404, 'Lead not found')
-  const lead = await prisma.lead.update({ where: { id }, data: body })
-  return json({ lead }, correlationId)
+  let raw: unknown
+  try {
+    raw = await req.json()
+  } catch {
+    throw new HttpError(400, "The changes couldn't be read. Reload the page and try again.")
+  }
+  const { lead, changes } = await applyLeadEdit(prisma, organizationId, params!.id, parseLeadEdit(raw))
+  return json({ lead, changes }, correlationId)
 })
 
 export const DELETE = withRoute(async (_req: NextRequest, { correlationId, params }) => {
