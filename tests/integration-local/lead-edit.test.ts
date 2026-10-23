@@ -3,14 +3,17 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { PUT as updateLead } from '@/app/api/leads/[id]/route'
+import { applyLeadEdit } from '@/lib/core-data/leads/edit'
 import { mainIsTestDb } from '../setup/live-guard'
 
 // Brief 50 PR 5 — editing a lead from its page (item 6.5): the name, status,
 // address, phones and emails, through PUT /api/leads/[id]. Each save that
 // changes something writes ONE timeline entry (an Activity of type 'Edit')
 // that says in plain words what changed, with only a phone's last 4 digits.
-// DealFlow's values can't be changed here, and an edit never touches the
-// do-not-contact list. Made-up people only; phones in 555-01xx.
+// DealFlow's values can't be changed here. Brief 50 PR 17 (the planner's
+// review, Brief 50 Revision 2, 2026-10-23): a number on the Do not contact list
+// can't be removed or changed, and a number added to a lead that has one goes
+// on the list too, in the same save. Made-up people only; phones in 555-01xx.
 const enabled = mainIsTestDb() // Brief 41: refuses a live DATABASE_URL_MAIN
 const TAG = `B50PR5_${Date.now().toString(36)}`
 
@@ -272,17 +275,163 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     expect(bad.body.field).toBe(`contacts.${contact.id}.emails.0`)
   })
 
-  it('removing a phone never removes its do-not-contact entry', async () => {
+  // Brief 50 PR 17: PR 5 let this number be removed (its lock read only
+  // "texts blocked", which nothing sets). It's on the list, so it stays.
+  it('a number on the Do not contact list can\'t be removed, emptied or changed, and its entry stays', async () => {
     const { lead, contact } = await makeLead({ phones: [{ phone: '+12125550111' }, { phone: '+12125550112' }] })
     await prisma.dncSuppression.create({
       data: { organizationId: orgId, phone: '+12125550111', source: 'internal', addedBy: 'test', reason: TAG },
     })
     const keep = contact.phones.find((p) => p.phone === '+12125550112')!
-    const drop = contact.phones.find((p) => p.phone === '+12125550111')!
-    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id }, { id: drop.id, remove: true }] }] })
-    expect(res.status).toBe(200)
-    expect(res.body.changes).toEqual(['Phone removed (…0111)'])
+    const listed = contact.phones.find((p) => p.phone === '+12125550111')!
+    for (const item of [{ id: listed.id, remove: true }, { id: listed.id, phone: '' }, { id: listed.id, phone: '347-555-0119' }]) {
+      const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id }, item] }] })
+      expect(res.status, JSON.stringify(item)).toBe(400)
+      expect(res.body.error).toMatch(/ending 0111 is on the Do not contact list/)
+      expect(res.body.error).not.toMatch(/555/)
+    }
+    expect((await phonesOf(contact.id)).map((p) => p.phone)).toEqual(['+12125550111', '+12125550112'])
     expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: '+12125550111' } })).toBe(1)
+    expect(await entries(lead.id)).toHaveLength(0)
+
+    // Untouched, it doesn't get in the way of other edits.
+    const ok = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: listed.id }, { id: keep.id, remove: true }] }] })
+    expect(ok.status).toBe(200)
+    expect(ok.body.changes).toEqual(['Phone removed (…0112)'])
+  })
+
+  it('an opt-out stored before PR 13 as "+" and the 10 digits locks the lead\'s +1 number too', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550111' }] })
+    await prisma.dncSuppression.create({
+      data: { organizationId: orgId, phone: '+3475550111', source: 'internal', addedBy: 'test', reason: TAG },
+    })
+    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id, remove: true }] }] })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toMatch(/Do not contact/)
+    expect((await phonesOf(contact.id)).map((p) => p.phone)).toEqual(['+13475550111'])
+  })
+
+  it('a number added to a lead with a Do not contact number goes on the list too, with the same reason, in the same save', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550121' }, { phone: '+13475550122' }] })
+    await prisma.dncSuppression.create({
+      data: { organizationId: orgId, phone: '+13475550121', source: 'internal', addedBy: 'settings-do-not-contact', reason: TAG },
+    })
+    const listed = contact.phones.find((p) => p.phone === '+13475550121')!
+    const other = contact.phones.find((p) => p.phone === '+13475550122')!
+    // One added, and one changed into a new number: both are new to the lead.
+    const res = await put(lead.id, {
+      contacts: [{ id: contact.id, phones: [{ id: listed.id }, { id: other.id, phone: '347-555-0124' }, { phone: '(347) 555-0123' }] }],
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.changes).toEqual([
+      'Phone changed (…0122 → …0124)',
+      'Phone added (…0123)',
+      'Put on Do not contact (…0124), like another number on this lead',
+      'Put on Do not contact (…0123), like another number on this lead',
+    ])
+    const rows = await prisma.dncSuppression.findMany({
+      where: { organizationId: orgId, phone: { in: ['+13475550123', '+13475550124'] } },
+      orderBy: { phone: 'asc' },
+    })
+    expect(rows.map((r) => [r.phone, r.source, r.reason, r.addedBy])).toEqual([
+      ['+13475550123', 'internal', TAG, 'same-lead-opt-out:lead-edit'],
+      ['+13475550124', 'internal', TAG, 'same-lead-opt-out:lead-edit'],
+    ])
+    // The number it replaced was never on the list and isn't put on it now.
+    expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: '+13475550122' } })).toBe(0)
+    // One timeline entry; only last 4 digits.
+    const history = await entries(lead.id)
+    expect(history).toHaveLength(1)
+    expect(history[0].bodyText).toContain('Put on Do not contact (…0123)')
+    expect(history[0].bodyText).not.toMatch(/347|555/)
+    // And the new numbers are locked in turn.
+    const after = await phonesOf(contact.id)
+    const added = after.find((p) => p.phone === '+13475550123')!
+    const locked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: added.id, remove: true }] }] })
+    expect(locked.status).toBe(400)
+  })
+
+  it('if putting the number on the list fails, the number isn\'t added either (one transaction)', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550131' }] })
+    await prisma.dncSuppression.create({
+      data: { organizationId: orgId, phone: '+13475550131', source: 'internal', addedBy: 'test', reason: TAG },
+    })
+    // The same database, except that writing an opt-out fails inside the save's transaction.
+    const failing = new Proxy(prisma, {
+      get(target, prop, receiver) {
+        if (prop !== '$transaction') return Reflect.get(target, prop, receiver)
+        return (fn: (tx: unknown) => Promise<unknown>, opts?: unknown) =>
+          target.$transaction(
+            (tx) =>
+              fn(
+                new Proxy(tx, {
+                  get(t, p, r) {
+                    if (p !== 'dncSuppression') return Reflect.get(t, p, r)
+                    return new Proxy(Reflect.get(t, p, r) as object, {
+                      get(d, q, rr) {
+                        if (q === 'createMany' || q === 'create' || q === 'upsert') return async () => { throw new Error('opt-out write failed (test)') }
+                        return Reflect.get(d, q, rr)
+                      },
+                    })
+                  },
+                }),
+              ),
+            opts as never,
+          )
+      },
+    }) as typeof prisma
+    await expect(
+      applyLeadEdit(failing, orgId, lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '347-555-0132' }] }] }),
+    ).rejects.toThrow(/opt-out write failed/)
+    expect((await phonesOf(contact.id)).map((p) => p.phone)).toEqual(['+13475550131'])
+    expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: '+13475550132' } })).toBe(0)
+    expect(await entries(lead.id)).toHaveLength(0)
+  })
+
+  // Review round 1: the other way round. Adding a number that's on the list
+  // puts the lead's other numbers on it too, but not one this save removes.
+  it('adding a number that\'s on the list puts the lead\'s other numbers on it too (not one the save removes)', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550151' }, { phone: '+13475550152' }] })
+    await prisma.dncSuppression.create({
+      data: { organizationId: orgId, phone: '+13475550153', source: 'internal', addedBy: 'settings-do-not-contact', reason: TAG },
+    })
+    const keep = contact.phones.find((p) => p.phone === '+13475550151')!
+    const drop = contact.phones.find((p) => p.phone === '+13475550152')!
+    const res = await put(lead.id, {
+      contacts: [{ id: contact.id, phones: [{ id: keep.id }, { id: drop.id, remove: true }, { phone: '347-555-0153' }] }],
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.changes).toEqual([
+      'Phone added (…0153)',
+      'Phone removed (…0152)',
+      'Put on Do not contact (…0151), like a number just added to this lead',
+    ])
+    const rows = await prisma.dncSuppression.findMany({
+      where: { organizationId: orgId, phone: { in: ['+13475550151', '+13475550152', '+13475550153'] } },
+      orderBy: { phone: 'asc' },
+    })
+    expect(rows.map((r) => [r.phone, r.reason, r.addedBy])).toEqual([
+      ['+13475550151', TAG, 'same-lead-opt-out:lead-edit'],
+      ['+13475550153', TAG, 'settings-do-not-contact'],
+    ])
+    const history = await entries(lead.id)
+    expect(history).toHaveLength(1)
+    expect(history[0].bodyText).not.toMatch(/347|555/)
+    // The lead's own number is locked now.
+    const locked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id, remove: true }] }] })
+    expect(locked.status).toBe(400)
+  })
+
+  it('a lead with no Do not contact number is unaffected: the added number isn\'t put on the list', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550141' }] })
+    const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '347-555-0142' }] }] })
+    expect(res.status).toBe(200)
+    expect(res.body.changes).toEqual(['Phone added (…0142)'])
+    expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: { in: ['+13475550141', '+13475550142'] } } })).toBe(0)
+    // And its numbers can still be changed and removed.
+    const added = (await phonesOf(contact.id)).find((p) => p.phone === '+13475550142')!
+    const removed = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { id: added.id, remove: true }] }] })
+    expect(removed.status).toBe(200)
   })
 
   it('a number marked "texts blocked" and an opted-out email stay: they can\'t be removed or changed here', async () => {

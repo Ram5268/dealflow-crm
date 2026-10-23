@@ -83,6 +83,44 @@ describe('the internal opt-out list matches a number however it was typed (Brief
     })
   }
 
+  // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23):
+  // before PR 13 the parser read an opt-out typed "+917 555 0147" as an Indian
+  // number and stored it as "+9175550147" ("+" and the 10 digits), which the
+  // lead's +19175550147 never matched.
+  it('an opt-out stored before Brief 50 PR 13 as "+9175550147" blocks the lead stored as +19175550147', async () => {
+    const { db } = fakeDncDb([{ phone: '+9175550147' }])
+    expect([...(await internalDncHits(ORG, ['+19175550147'], db))]).toEqual(['+19175550147'])
+    expect([...(await internalDncHits(ORG, ['(917) 555-0147'], db))]).toEqual(['+19175550147'])
+    const r = await callable(db, '+19175550147')
+    expect(r.callable).toBe(false)
+    expect(r.reasons).toEqual(['internal_dnc'])
+  })
+
+  it('…and a different number is still callable next to it', async () => {
+    const { db } = fakeDncDb([{ phone: '+9175550147' }])
+    expect((await callable(db, '+19175550148')).callable).toBe(true)
+  })
+
+  // Matching may only get broader [the planner's review, Brief 50 Revision 2]:
+  // every form the matcher looked a number up in before PR 17 is still looked
+  // up, so a call check never stops blocking anything it blocks today.
+  it('storedForms still includes every form it did before Brief 50 PR 17', () => {
+    const before = (raw: string) => {
+      const canonical = toE164(raw) ?? raw.trim().replace(/[\s()\-.]/g, '')
+      const forms = new Set([canonical, raw.trim().replace(/[\s()\-.]/g, '')])
+      if (/^\+1\d{10}$/.test(canonical)) {
+        forms.add(canonical.slice(1))
+        forms.add(canonical.slice(2))
+      }
+      return [...forms].filter(Boolean)
+    }
+    const inputs = [
+      '+19175550147', '917-555-0147', '(917) 555-0147', '9175550147', '19175550147', '+9175550147', '+917 555 0147',
+      '+1 212 555 0123', '+442079460750', '+91 212 555 0123', '+64 (0)6 555 0123', '9175550147x5', 'not a phone', ' ',
+    ]
+    for (const raw of inputs) expect(storedForms(raw), raw).toEqual(expect.arrayContaining(before(raw)))
+  })
+
   it('a batch with the same number typed two ways still matches an old row stored as typed', async () => {
     const { db } = fakeDncDb([{ phone: '9175550147x5' }])
     const hits = await internalDncHits(ORG, ['917-555-0147 x5', '+19175550147'], db)
@@ -114,8 +152,9 @@ describe('the suppression lookup key (GET /api/compliance/dnc/suppressions?phone
   })
 
   it('looks rows up in every stored form, so a row from before Brief 41 shows too', () => {
-    expect(storedForms('+19175550147').sort()).toEqual(['+19175550147', '19175550147', '9175550147'])
-    expect(storedForms('(917) 555-0147').sort()).toEqual(['+19175550147', '19175550147', '9175550147'])
+    // Brief 50 PR 17: plus "+9175550147", the form PR 13 fixed (until DS-1 rewrites stored rows).
+    expect(storedForms('+19175550147').sort()).toEqual(['+19175550147', '+9175550147', '19175550147', '9175550147'])
+    expect(storedForms('(917) 555-0147').sort()).toEqual(['+19175550147', '+9175550147', '19175550147', '9175550147'])
     expect(storedForms('+442079460750')).toEqual(['+442079460750'])
   })
 })

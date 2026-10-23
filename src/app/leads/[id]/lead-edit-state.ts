@@ -1,3 +1,5 @@
+import { DO_NOT_CONTACT_LABEL, TEXTS_BLOCKED_LABEL } from '@/lib/core-data/leads/edit-text'
+
 // Brief 50 PR 5 — the lead page's Edit mode, the parts that need no page:
 // what the form starts from, what it sends to PUT /api/leads/[id], and its
 // keys. The API's rules are in src/lib/core-data/leads/edit.ts.
@@ -11,8 +13,12 @@ export interface LeadEditInitial {
   contacts: {
     id: string
     displayName: string
-    /** `locked`: an opt-out lives on the row ("texts blocked"), so it can't be removed or changed here. */
-    phones: { id: string; phone: string; locked: boolean }[]
+    /**
+     * `locked`: an opt-out, so it can't be removed or changed here; `lockLabel`
+     * says which ("Do not contact": on the Do not contact list; "Texts
+     * blocked": the row's own flag).
+     */
+    phones: { id: string; phone: string; locked: boolean; lockLabel?: string }[]
     /** `locked`: the email opted out. */
     emails: { id: string; email: string; locked: boolean }[]
   }[]
@@ -24,6 +30,62 @@ export interface DraftRow {
   id?: string
   value: string
   locked: boolean
+  /** Shown on a locked row instead of the list's own label. */
+  lockLabel?: string
+}
+
+// ─── What the page starts from ──────────────────────────────────────────────
+// Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): a
+// phone on the Do not contact list (`doNotContact`: the lead's stored phones
+// the call checks' matcher finds there, src/lib/core-data/leads/opt-out.ts)
+// shows "Do not contact" and is locked; "texts blocked" still locks. The list
+// exists because a homeowner asked not to be contacted. The server refuses a
+// change to either (src/lib/core-data/leads/edit.ts), not just this form.
+
+/** The lead as the page reads it (Prisma's lead with its contacts, phones and emails). */
+export interface LeadForEdit {
+  id: string
+  displayName: string
+  statusLabel: string | null
+  primaryAddressFull: string | null
+  contacts: {
+    id: string
+    displayName: string
+    createdAt: Date
+    phones: { id: string; phone: string; phoneFormatted: string | null; outboundSmsBlocked: boolean; isPrimary: boolean; createdAt: Date }[]
+    emails: { id: string; email: string; isUnsubscribed: boolean; isPrimary: boolean }[]
+  }[]
+}
+
+/** "Do not contact", "Texts blocked", or null when the number can be edited. */
+export function phoneLockLabel(p: { phone: string; outboundSmsBlocked: boolean }, doNotContact: ReadonlySet<string>): string | null {
+  if (doNotContact.has(p.phone)) return DO_NOT_CONTACT_LABEL
+  return p.outboundSmsBlocked ? TEXTS_BLOCKED_LABEL : null
+}
+
+/** What the Edit form starts from. Contacts oldest first and each one's phones primary first (the order DealFlow's copy reads them in). */
+export function leadEditInitialFrom(lead: LeadForEdit, doNotContact: ReadonlySet<string>): LeadEditInitial {
+  return {
+    leadId: lead.id,
+    displayName: lead.displayName,
+    statusLabel: lead.statusLabel,
+    primaryAddressFull: lead.primaryAddressFull,
+    contacts: [...lead.contacts]
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+      .map((c) => ({
+        id: c.id,
+        displayName: c.displayName,
+        phones: [...c.phones]
+          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+          .map((p) => {
+            const lockLabel = phoneLockLabel(p, doNotContact)
+            return { id: p.id, phone: p.phoneFormatted ?? p.phone, locked: lockLabel !== null, ...(lockLabel ? { lockLabel } : {}) }
+          }),
+        emails: [...c.emails]
+          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || (a.id < b.id ? -1 : 1))
+          .map((e) => ({ id: e.id, email: e.email, locked: e.isUnsubscribed })),
+      })),
+  }
 }
 
 export interface DraftContact {
@@ -48,7 +110,7 @@ export function draftFromInitial(initial: LeadEditInitial): LeadEditDraft {
     contacts: initial.contacts.map((c) => ({
       id: c.id,
       displayName: c.displayName,
-      phones: c.phones.map((p) => ({ key: p.id, id: p.id, value: p.phone, locked: p.locked })),
+      phones: c.phones.map((p) => ({ key: p.id, id: p.id, value: p.phone, locked: p.locked, ...(p.lockLabel ? { lockLabel: p.lockLabel } : {}) })),
       emails: c.emails.map((e) => ({ key: e.id, id: e.id, value: e.email, locked: e.locked })),
     })),
   }
