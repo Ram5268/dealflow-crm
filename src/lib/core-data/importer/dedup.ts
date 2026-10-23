@@ -72,7 +72,9 @@ const CELL_SEPARATORS = /[/;,|&\r\n]|\bor\b|\band\b/i
 //   • with libphonenumber's finder, for any other number it knows (a foreign
 //     number written in full).
 // Where two finds overlap, the one starting first (then the longer) is kept.
-const US_SHAPED = /\+?1?[\s.-]?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}/g
+// A US-shaped find never starts or ends inside a longer run of digits, so a
+// number that isn't a phone (an account number) can't yield a made-up one.
+const US_SHAPED = /(?<!\d)\+?1?[\s.-]?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}(?!\d)/g
 
 function numbersInText(part: string): string[] {
   const finds: { start: number; end: number; e164: string }[] = []

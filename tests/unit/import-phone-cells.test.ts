@@ -74,6 +74,9 @@ describe('phonesInCell', () => {
     // A foreign number written in full is still found (libphonenumber's own
     // finder; a fictional UK drama number).
     expect(phonesInCell('212-555-0101 +44 20 7946 0958')).toEqual(['+12125550101', '+442079460958'])
+    // A longer run of digits next to a number is not cut into a made-up phone.
+    expect(phonesInCell('212-555-0101 1234567890123')).toEqual(['+12125550101'])
+    expect(phonesInCell('9876543210123 212-555-0101')).toEqual(['+12125550101'])
   })
 })
 
