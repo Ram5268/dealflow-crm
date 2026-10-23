@@ -272,8 +272,14 @@ export interface NewestList {
 }
 
 // DealFlow's newest list for the slug (read-only), or null when it has none.
-export async function fetchNewestList(orgSlug: string, crmRunId: string | null): Promise<NewestList | null> {
-  const [row] = await roQuery<{ run_id: string; generated_at: string; sellers: LeadKey[] | null }>(NEWEST_LIST_SQL, [orgSlug, crmRunId])
+// opts.statementTimeoutMs: the Queue's notice passes its wait, so an
+// abandoned read stops on DealFlow's server too (PR 21's roQuery option).
+export async function fetchNewestList(
+  orgSlug: string,
+  crmRunId: string | null,
+  opts: { statementTimeoutMs?: number } = {},
+): Promise<NewestList | null> {
+  const [row] = await roQuery<{ run_id: string; generated_at: string; sellers: LeadKey[] | null }>(NEWEST_LIST_SQL, [orgSlug, crmRunId], opts)
   if (!row?.run_id) return null
   return { runId: row.run_id, generatedAt: row.generated_at, sellers: Array.isArray(row.sellers) ? row.sellers : null }
 }

@@ -8,7 +8,7 @@ import { closeDealflowRoPool } from "@/lib/core-data/dealflow-sync/ro-client";
 import { buildSignals, fetchDealflowBatch } from "@/lib/core-data/dealflow-sync/sync";
 import { countBatchMapping } from "@/lib/core-data/dealflow-sync/write";
 import { runDealflowSync } from "@/lib/core-data/dealflow-sync/run";
-import { lastScheduledCopy, readCopyRefusal } from "@/lib/core-data/dealflow-sync/nightly-notice";
+import { COPY_GRACE_MS, lastScheduledCopy, readCopyRefusal } from "@/lib/core-data/dealflow-sync/nightly-notice";
 
 // Brief 50 (PR 19), the planner's review (Revision 2), on a real Postgres.
 // Suite 1: CI's db-suite job runs this on its throwaway Postgres. The CRM side
@@ -82,17 +82,19 @@ async function setup(suffix: string, crm: number, others: number) {
 // wrote (Brief 45 PR F). See tests/dealflow-sync.safety.test.ts.
 const after = (minutes: number) => new Date(Date.now() + minutes * 60_000);
 
-// "This morning", for the Queue's line: half an hour after the first
-// scheduled 7:00 copy (11:00 UTC) that comes at least an hour from now. Every
-// list below is made before it (so that copy saw it, fresh), and every copy
-// below writes before it (on the real clock).
+// "This morning", for the Queue's line: ten minutes after the Queue starts
+// judging the first scheduled 7:00 copy (11:00 UTC) that comes at least an
+// hour from now (COPY_GRACE_MS: Vercel may start it at any minute of its
+// hour). Every list below is made before it (so that copy saw it, fresh), and
+// every copy below writes before it (on the real clock).
 const firstCopyAfter = (t: number) => {
   const d = new Date(t);
   let s = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 11);
   while (s < t) s += DAY;
   return s;
 };
-const thisMorning = new Date(firstCopyAfter(Date.now() + HOUR) + 30 * 60_000);
+const judged = (copy: number) => new Date(copy + COPY_GRACE_MS + 10 * 60_000);
+const thisMorning = judged(firstCopyAfter(Date.now() + HOUR));
 
 const nyDate = (d: Date) =>
   new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(d);
@@ -171,7 +173,7 @@ describe("the Queue's line while a refused copy is the newest copy attempt", () 
 
   it("a list already too old when the copy ran (skipped as stale, not as wrong): no line", async () => {
     const listMade = Date.now() + 2 * 60_000;
-    const muchLater = new Date(firstCopyAfter(listMade + 36 * HOUR + 60_000) + 30 * 60_000);
+    const muchLater = judged(firstCopyAfter(listMade + 36 * HOUR + 60_000));
     expect((await runDealflowSync(o.id, muchLater, db)).skipped).toBe("stale");
     expect(await readCopyRefusal(o.id, { now: muchLater, db })).toBeNull();
   });

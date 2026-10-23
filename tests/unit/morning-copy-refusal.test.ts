@@ -8,6 +8,7 @@ import { RO_SQL, NEWEST_LIST_SQL } from '@/lib/core-data/dealflow-sync/sync'
 import { refuseBatch } from '@/lib/core-data/dealflow-sync/write'
 import { REFUSED_COPY_STATUS, syncHttpStatus } from '@/lib/core-data/dealflow-sync/run'
 import {
+  COPY_GRACE_MS,
   COPY_HOUR_UTC,
   LAST_COPY_SQL,
   copyRefusalText,
@@ -75,9 +76,13 @@ describe('when the last scheduled copy ran (vercel.json, in UTC)', () => {
     expect(copy?.schedule).toBe(`0 ${COPY_HOUR_UTC} * * *`)
   })
 
-  it("today's 11:00 UTC once the copy has had a few minutes to finish; yesterday's before that", () => {
-    expect(lastScheduledCopy(at('2026-10-24T11:30:00Z')).toISOString()).toBe('2026-10-24T11:00:00.000Z')
+  it("today's 11:00 UTC once the copy has had its hour (Vercel Hobby starts it at any minute of 11:00-11:59) and its 300 s; yesterday's before that", () => {
+    expect(COPY_GRACE_MS).toBeGreaterThanOrEqual(60 * 60_000 + 300_000)
+    expect(lastScheduledCopy(at('2026-10-24T12:10:00Z')).toISOString()).toBe('2026-10-24T11:00:00.000Z')
     expect(lastScheduledCopy(at('2026-10-24T23:59:00Z')).toISOString()).toBe('2026-10-24T11:00:00.000Z')
+    // A copy Vercel starts late in its hour hasn't been judged yet.
+    expect(lastScheduledCopy(at('2026-10-24T11:30:00Z')).toISOString()).toBe('2026-10-23T11:00:00.000Z')
+    expect(lastScheduledCopy(at('2026-10-24T12:09:00Z')).toISOString()).toBe('2026-10-23T11:00:00.000Z')
     expect(lastScheduledCopy(at('2026-10-24T11:01:00Z')).toISOString()).toBe('2026-10-23T11:00:00.000Z')
     expect(lastScheduledCopy(at('2026-10-24T09:30:00Z')).toISOString()).toBe('2026-10-23T11:00:00.000Z')
     expect(lastScheduledCopy(at('2026-10-24T00:10:00Z')).toISOString()).toBe('2026-10-23T11:00:00.000Z')
@@ -209,7 +214,8 @@ describe('readCopyRefusal: the line shows only while a refusal is the newest cop
     )
     // DealFlow is asked for its newest list of this organization, with the run the CRM holds.
     expect(f.params).toEqual([['dealflow-ryan', 'run_yesterday']])
-    expect(f.texts).toEqual(['BEGIN READ ONLY', NEWEST_LIST_SQL, 'ROLLBACK'])
+    // With the notice's own 2.5 s as the read's time limit on DealFlow's server.
+    expect(f.texts).toEqual(['BEGIN READ ONLY', 'SET LOCAL statement_timeout = 2500', NEWEST_LIST_SQL, 'ROLLBACK'])
     expect(warn).not.toHaveBeenCalled()
   })
 
@@ -224,6 +230,14 @@ describe('readCopyRefusal: the line shows only while a refusal is the newest cop
     const crm = crmDb()
     const f = fakeDealflow([newest()])
     expect(await readCopyRefusal(ORG, { now: at('2026-10-24T10:00:00Z'), db: crm.db })).toBeNull()
+    expect(f.connect).not.toHaveBeenCalled()
+  })
+
+  it('while Vercel may still start the copy late in its hour (11:00-11:59 UTC): no line, DealFlow not asked', async () => {
+    const crm = crmDb()
+    const f = fakeDealflow([newest()])
+    expect(await readCopyRefusal(ORG, { now: at('2026-10-24T11:45:00Z'), db: crm.db })).toBeNull()
+    expect(await readCopyRefusal(ORG, { now: at('2026-10-24T12:05:00Z'), db: crm.db })).toBeNull()
     expect(f.connect).not.toHaveBeenCalled()
   })
 

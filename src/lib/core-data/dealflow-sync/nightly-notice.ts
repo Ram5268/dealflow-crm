@@ -131,7 +131,8 @@ export async function readNightlyNotice(waitMs = NIGHTLY_NOTICE_WAIT_MS): Promis
 //   • the last copy that went through: the CRM's newest morning signal, its
 //     time and DealFlow run id (LAST_COPY_SQL);
 //   • the last scheduled copy: 11:00 UTC every day (vercel.json; 7:00 am EDT,
-//     6:00 am EST), counted once it has had COPY_GRACE_MS to finish;
+//     6:00 am EST), counted once it has had COPY_GRACE_MS to start and finish
+//     (Vercel's Hobby plan may start it at any minute of that hour);
 //   • only when the last copy that went through is older than the last
 //     scheduled one (that copy wrote nothing), DealFlow's newest list is read
 //     (sync.ts NEWEST_LIST_SQL, through the read-only client) and put through
@@ -152,8 +153,15 @@ export async function readNightlyNotice(waitMs = NIGHTLY_NOTICE_WAIT_MS): Promis
 
 /** The hour (UTC) vercel.json runs the copy at: "0 11 * * *". */
 export const COPY_HOUR_UTC = 11
-/** How long a scheduled copy gets to finish before the Queue judges it (the route's limit is 300 s). */
-export const COPY_GRACE_MS = 10 * 60_000
+/**
+ * How long after 11:00 UTC the Queue waits before judging that day's copy.
+ * Vercel's Hobby plan starts a daily cron at any minute of its hour (11:00 to
+ * 11:59 UTC), and the route may then run for up to 300 s (maxDuration), so a
+ * copy that is merely late is over by 12:05 UTC; 70 minutes covers that with
+ * room. Until then the Queue neither shows the line nor reads DealFlow
+ * [engineering precaution].
+ */
+export const COPY_GRACE_MS = 70 * 60_000
 const DAY_MS = 86_400_000
 
 /** The newest scheduled morning copy that has had COPY_GRACE_MS to finish, at or before `now`. */
@@ -199,7 +207,7 @@ export async function findCopyRefusal(organizationId: string, now: Date, db: Pri
   // The last scheduled copy went through, or DealFlow's new list waits for the next one.
   if (last.copiedAt.getTime() >= due.getTime()) return null
   if (!dealflowRoConfigured()) return null
-  const list = await fetchNewestList(last.slug, last.runId)
+  const list = await fetchNewestList(last.slug, last.runId, { statementTimeoutMs: NIGHTLY_NOTICE_WAIT_MS })
   // DealFlow has no list, or the CRM already holds its newest one.
   if (!list?.sellers) return null
   // Already too old when the copy ran: skipped as stale, not refused as wrong.
