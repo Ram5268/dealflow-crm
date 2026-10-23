@@ -39,6 +39,16 @@ describe('phonesInCell', () => {
     expect(phonesInCell(null)).toEqual([])
     expect(phonesInCell(undefined)).toEqual([])
   })
+
+  it('a "+" before a US number reads as US in a two-number cell too (PR 13)', () => {
+    expect(phonesInCell('+917 555 0123')).toEqual(['+19175550123'])
+    expect(phonesInCell('+917 555 0123 / 212-555-0101')).toEqual(['+19175550123', '+12125550101'])
+    expect(phonesInCell('212-555-0101 / +646 555 0124')).toEqual(['+12125550101', '+16465550124'])
+    // Only a space between them: each number is found in the text, then read
+    // with the shared parser.
+    expect(phonesInCell('212-555-0101 +646 555 0124')).toEqual(['+12125550101', '+16465550124'])
+    expect(phonesInCell('212 555 0101 +929 555 0125')).toEqual(['+12125550101', '+19295550125'])
+  })
 })
 
 describe('buildRowPlan with two numbers in one cell', () => {
