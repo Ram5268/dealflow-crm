@@ -12,13 +12,13 @@ import {
   EmptyState,
   Input,
   Select,
-  Tooltip,
   useToast,
   type Column,
   type SortState,
 } from '@/components/ui'
 import type { AppliedGroup, AppliedSort, LeadRow } from '@/lib/leads/list'
 import { cn } from '@/lib/ui/cn'
+import { sourceLabel, type Uploads } from '@/lib/ui/source'
 import { groupColorStyle } from '@/lib/ui/groupColors'
 import { formatCount, rankedHeadline } from '@/components/lists/format'
 import { BulkActionsMenu } from '@/components/lists/BulkActionsMenu'
@@ -32,14 +32,14 @@ function formatDate(iso: string): string {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(iso))
 }
 
-function toCsv(rows: LeadRow[]): string {
+function toCsv(rows: LeadRow[], uploads?: Uploads): string {
   const head = ['Name', 'Status', 'Priority', 'Contacts', 'Source', 'Address', 'Updated']
   const esc = (v: unknown) => {
     const s = v == null ? '' : String(v)
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   const body = rows.map((r) =>
-    [r.displayName, r.statusLabel, r.priorityScore, r.contactCount, r.source, r.address, r.updatedAt]
+    [r.displayName, r.statusLabel, r.priorityScore, r.contactCount, sourceLabel(r.source, uploads), r.address, r.updatedAt]
       .map(esc)
       .join(','),
   )
@@ -61,6 +61,7 @@ export function LeadsView({
   group = null,
   groupError,
   rankedAt = null,
+  uploads,
 }: {
   rows: LeadRow[]
   total: number
@@ -81,6 +82,8 @@ export function LeadsView({
   groupError?: string
   /** Brief 45: when DealFlow's morning ranking came in (rank order only). */
   rankedAt?: string | null
+  /** Brief 50 PR 14: each upload's Source label, file and date, so Source reads "Mojo Export", not "import:<id>". */
+  uploads?: Uploads
 }) {
   const router = useRouter()
   const { toast } = useToast()
@@ -140,7 +143,7 @@ export function LeadsView({
   const exportSelected = useCallback(() => {
     const chosen = rows.filter((r) => selected.has(r.id))
     if (chosen.length === 0) return
-    const blob = new Blob([toCsv(chosen)], { type: 'text/csv;charset=utf-8' })
+    const blob = new Blob([toCsv(chosen, uploads)], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -248,7 +251,12 @@ export function LeadsView({
       key: 'source',
       header: 'Source',
       width: '130px',
-      cell: (r) => <span className="text-muted">{r.source ?? '—'}</span>,
+      // Brief 50 PR 14: the upload's Source label; the date and file on hover.
+      cell: (r) => (
+        <span className="text-muted" title={sourceLabel(r.source, uploads, { detail: true }) ?? undefined}>
+          {sourceLabel(r.source, uploads) ?? '—'}
+        </span>
+      ),
     },
     {
       key: 'updatedAt',
@@ -324,18 +332,15 @@ export function LeadsView({
                   · Export CSV [brief §5.4]. Organization only; nothing here
                   contacts anyone. */}
               <BulkActionsMenu leadIds={[...selected]} onDone={() => router.refresh()} onExport={exportForMenu}>
-                  {/* Sequences ship in M4; the entry is visible but inert so the
-                      menu shape does not change when it goes live. */}
-                  <Tooltip content={sequencesOffReason ? null : 'Sequences ship in M4'} side="left">
-                    <div>
-                      <DropdownItem disabled aria-describedby={sequencesOffReason ? sequencesOffId : undefined}>
-                        <span className="flex items-center gap-2">
-                          <Zap size={13} className="text-subtle" />
-                          Add to sequence
-                        </span>
-                      </DropdownItem>
-                    </div>
-                  </Tooltip>
+                  {/* Visible but inert: there's no bulk enrolling (a lead is
+                      enrolled from its own page). Brief 50 PR 14 removed its stale
+                      milestone tooltip. */}
+                  <DropdownItem disabled aria-describedby={sequencesOffReason ? sequencesOffId : undefined}>
+                    <span className="flex items-center gap-2">
+                      <Zap size={13} className="text-subtle" />
+                      Add to sequence
+                    </span>
+                  </DropdownItem>
                   {/* Brief 41.2 (PR E): while email and texting are off, the reason
                       sits under the greyed-out entry. Greyed out with the reason,
                       not hidden, is Ryan's decision of 2026-10-17. */}

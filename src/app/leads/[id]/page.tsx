@@ -4,6 +4,8 @@ import { ExternalLink, Mail, Phone, Zap } from 'lucide-react'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { hydrateCustomFields } from '@/lib/core-data/leads/serialize'
+import { loadUploads } from '@/lib/core-data/leads/uploads'
+import { sourceLabel } from '@/lib/ui/source'
 import { Badge, Button, EmptyState, Tooltip } from '@/components/ui'
 import { listSequenceRows } from '@/lib/sequences/queries'
 import { ActivityTimeline } from './ActivityTimeline'
@@ -63,7 +65,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const memberships = getLeadMemberships(organizationId, id)
   memberships.catch(() => {})
 
-  const [customFields, activities, sequences, buyers, property, statuses] = await Promise.all([
+  const [customFields, activities, sequences, buyers, property, statuses, uploads] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
@@ -79,6 +81,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
       where: { organizationId, statusLabel: { not: null } },
       _count: { _all: true },
     }),
+    // Brief 50 PR 14: the upload this lead came from, so Source reads in words.
+    loadUploads(organizationId, [lead.source]),
   ])
   // Brief 38: the sync fills Contact.timezone, so show the primary contact's
   // zone (then the lead's). A blank stays blank rather than guessing Eastern.
@@ -163,16 +167,13 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
               </div>
             </Tooltip>
           )}
-          {/* Compose lands with the Inbox in M3; sequences in M4. Both are shown
-              disabled so the header does not reflow when they go live. */}
-          <Tooltip content="Compose ships in M3">
-            <div>
-              <Button disabled>
-                <Mail size={13} />
-                Email
-              </Button>
-            </div>
-          </Tooltip>
+          {/* Email from this page isn't wired up (the Inbox has its own compose),
+              so the button stays greyed out and the header keeps its shape.
+              Brief 50 PR 14 removed its stale milestone tooltip. */}
+          <Button disabled>
+            <Mail size={13} />
+            Email
+          </Button>
           <EnrollButton
             sequences={sequences.map((s) => ({ id: s.id, name: s.name, stepCount: s.stepCount }))}
             contacts={lead.contacts.map((c) => ({ id: c.id, displayName: c.displayName }))}
@@ -199,7 +200,8 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
             <Card title="Property">
               <dl>
                 <Row label="Address" value={lead.primaryAddressFull} />
-                <Row label="Source" value={lead.source} />
+                {/* Brief 50 PR 14: "Mojo Export · uploaded Oct 18, 2026 · sellers.csv", not "import:<id>". */}
+                <Row label="Source" value={sourceLabel(lead.source, uploads, { detail: true })} />
                 <Row label="Timezone" value={timezoneLabel(timezone)} />
                 <Row
                   label="Match fit"
