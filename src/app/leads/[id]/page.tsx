@@ -22,7 +22,8 @@ import { MatchingBuyers } from './MatchingBuyers'
 import { getLeadMemberships } from '@/lib/core-data/lists/memberships'
 import { LeadMembershipRows } from '@/components/lists/LeadMembershipRows'
 import { EditLeadButton, LeadEditMode, LeadEditPanel } from './LeadEdit'
-import type { LeadEditInitial } from './lead-edit-state'
+import { leadEditInitialFrom, phoneLockLabel } from './lead-edit-state'
+import { phonesOnDoNotContact } from '@/lib/core-data/leads/opt-out'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,7 +66,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
   const memberships = getLeadMemberships(organizationId, id)
   memberships.catch(() => {})
 
-  const [customFields, activities, sequences, buyers, property, statuses, uploads] = await Promise.all([
+  const [customFields, activities, sequences, buyers, property, statuses, uploads, doNotContact] = await Promise.all([
     hydrateCustomFields(id),
     prisma.activity.findMany({
       where: { organizationId, leadId: id },
@@ -83,37 +84,23 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
     }),
     // Brief 50 PR 14: the upload this lead came from, so Source reads in words.
     loadUploads(organizationId, [lead.source]),
+    // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2): the lead's
+    // numbers on the Do not contact list, by the call checks' own matcher.
+    // They show "Do not contact" and are locked in the Edit form.
+    phonesOnDoNotContact(prisma, organizationId, lead.contacts.flatMap((c) => c.phones.map((p) => p.phone))),
   ])
   // Brief 38: the sync fills Contact.timezone, so show the primary contact's
   // zone (then the lead's). A blank stays blank rather than guessing Eastern.
   const timezone = pickPrimaryContact(lead.contacts)?.timezone ?? lead.timezone
   const { lists, groupIds } = await memberships
 
-  // Brief 50 PR 5: what the Edit form starts from. Contacts oldest first and
-  // each one's phones primary first (the order DealFlow's copy reads them in).
+  // Brief 50 PR 5: what the Edit form starts from (lead-edit-state.ts).
   const statusOptions = statuses
     .filter((s) => s.statusLabel?.trim())
     .sort((a, b) => b._count._all - a._count._all || a.statusLabel!.localeCompare(b.statusLabel!))
     .slice(0, 100)
     .map((s) => s.statusLabel!.trim())
-  const editInitial: LeadEditInitial = {
-    leadId: lead.id,
-    displayName: lead.displayName,
-    statusLabel: lead.statusLabel,
-    primaryAddressFull: lead.primaryAddressFull,
-    contacts: [...lead.contacts]
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
-      .map((c) => ({
-        id: c.id,
-        displayName: c.displayName,
-        phones: [...c.phones]
-          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
-          .map((p) => ({ id: p.id, phone: p.phoneFormatted ?? p.phone, locked: p.outboundSmsBlocked })),
-        emails: [...c.emails]
-          .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || (a.id < b.id ? -1 : 1))
-          .map((e) => ({ id: e.id, email: e.email, locked: e.isUnsubscribed })),
-      })),
-  }
+  const editInitial = leadEditInitialFrom(lead, doNotContact)
 
   return (
     // Brief 45 (PR C): this page is the lead's contact card, so keys 1–9
@@ -243,8 +230,28 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
                         {c.displayName}
                         {c.title && <span className="font-normal text-muted"> · {c.title}</span>}
                       </p>
+                      {/* Brief 50 PR 17: a number on the Do not contact list (or with
+                          texts blocked) says so next to it. */}
                       <p className="mt-0.5 text-sm text-muted">
-                        {c.phones.map((p) => p.phoneFormatted ?? p.phone).join(', ') || 'No phone'}
+                        {c.phones.length === 0
+                          ? 'No phone'
+                          : c.phones.map((p, i) => {
+                              const lock = phoneLockLabel(p, doNotContact)
+                              // The number and its label stay together; the line breaks after a comma.
+                              return (
+                                <span key={p.id}>
+                                  <span className="whitespace-nowrap">
+                                    {p.phoneFormatted ?? p.phone}
+                                    {lock && (
+                                      <Badge tone="warning" className="ml-1.5">
+                                        {lock}
+                                      </Badge>
+                                    )}
+                                  </span>
+                                  {i < c.phones.length - 1 && ', '}
+                                </span>
+                              )
+                            })}
                       </p>
                       {c.emails.length > 0 && (
                         <p className="text-sm text-muted">{c.emails.map((e) => e.email).join(', ')}</p>

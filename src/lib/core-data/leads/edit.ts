@@ -3,8 +3,10 @@ import type { Lead, Prisma, PrismaClient } from '@prisma/client'
 import { HttpError } from '@/lib/shared/http'
 import { toE164 } from '@/lib/shared/phone'
 import {
+  DO_NOT_CONTACT_LABEL,
   LEAD_EDIT_ACTIVITY_TYPE,
   NAME_CHANGED,
+  TEXTS_BLOCKED_LABEL,
   addressChange,
   emailAdded,
   emailChanged,
@@ -12,10 +14,11 @@ import {
   maskEmail,
   phoneAdded,
   phoneChanged,
-  phoneLast4,
   phoneRemoved,
+  putOnDoNotContactLine,
   statusChange,
 } from './edit-text'
+import { SAME_LEAD_ADDED_BY, lockedMessage, numbersToPutOnDoNotContact, phonesOnDoNotContact, putOnDoNotContact } from './opt-out'
 
 // Brief 50 PR 5 — editing a lead from its page (item 6.5): the name, status,
 // address, and each contact's phones and emails, through PUT
@@ -31,11 +34,17 @@ import {
 //   do-not-contact list matches on (Brief 41 H13). A new or changed number
 //   that doesn't come out as +1 and 10 digits is refused rather than stored
 //   as a foreign number [engineering precaution].
-// - Nothing here writes or deletes a do-not-contact entry: those are kept by
-//   number (DncSuppression), so removing a phone from a lead leaves its entry
-//   in force. A phone marked "texts blocked" and an email marked opted out
-//   carry their opt-out on the row itself, so those rows can't be removed or
-//   changed here [engineering precaution].
+// - Nothing here deletes a do-not-contact entry: those are kept by number
+//   (DncSuppression), so they outlive any edit. An email marked opted out
+//   carries its opt-out on the row itself, so it can't be removed or changed
+//   here [engineering precaution].
+// - Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23;
+//   the list exists because a homeowner asked not to be contacted): a phone on
+//   the Do not contact list, as the call checks match it, or marked "texts
+//   blocked" can't be removed or changed here. A number added to a lead that
+//   has a number on the list goes on the list too, with the same reason, in
+//   this save's transaction, and the timeline entry says so (last 4 digits
+//   only). See ./opt-out.ts.
 // - One save that changes something writes ONE timeline entry (an Activity of
 //   type 'Edit', see ./edit-text.ts) in the same transaction. A save that
 //   changes nothing writes nothing.
@@ -270,14 +279,23 @@ const PHONES: RowKind<PhoneRow> = {
     }
     return e164
   },
-  optedOut: (r) =>
-    r.outboundSmsBlocked
-      ? bad(`The number ending ${phoneLast4(r.phone) ?? '…'} has texts blocked (an opt-out), so it stays on the lead: it can't be removed or changed here.`)
-      : null,
+  optedOut: (r) => (r.outboundSmsBlocked ? phoneLocked(r.phone, TEXTS_BLOCKED_LABEL) : null),
   defaultType: 'mobile', // the CRM's default (the importer's and POST /api/contacts')
   added: phoneAdded,
   removed: phoneRemoved,
   changed: phoneChanged,
+}
+
+const phoneLocked = (phone: string, label: string) =>
+  bad(lockedMessage({ phone, label }, "it stays on the lead: it can't be removed or changed here."))
+
+// Brief 50 PR 17: the lock also covers a number on the Do not contact list
+// (`listed`: the lead's stored phones the call checks' matcher finds there).
+function phonesKind(listed: ReadonlySet<string>): RowKind<PhoneRow> {
+  return {
+    ...PHONES,
+    optedOut: (r) => (listed.has(r.phone) ? phoneLocked(r.phone, DO_NOT_CONTACT_LABEL) : PHONES.optedOut(r)),
+  }
 }
 
 const EMAILS: RowKind<EmailRow> = {
@@ -386,6 +404,11 @@ export async function applyLeadEdit(
       const phonePlans: [string, RowPlan][] = []
       const emailPlans: [string, RowPlan][] = []
       const seen = new Set<string>()
+      // Brief 50 PR 17: the lead's numbers on the Do not contact list, read in
+      // this transaction, only when the save sends phones.
+      const leadPhones = contacts.flatMap((c) => c.phones.map((p) => p.phone))
+      const sendsPhones = (input.contacts ?? []).some((c) => c.phones)
+      const phoneKind = phonesKind(sendsPhones ? await phonesOnDoNotContact(tx, organizationId, leadPhones) : new Set())
       for (const c of input.contacts ?? []) {
         if (seen.has(c.id)) throw bad(`The same contact was sent twice. ${RELOAD}`)
         seen.add(c.id)
@@ -394,7 +417,7 @@ export async function applyLeadEdit(
         if (!contact) throw bad(`One of the contacts isn't on this lead. ${RELOAD}`)
         if (c.phones) {
           const items = c.phones.map((p) => ({ id: p.id, value: p.phone, remove: p.remove }))
-          phonePlans.push([contact.id, planRows(PHONES, contact.id, contact.phones, items, changes)])
+          phonePlans.push([contact.id, planRows(phoneKind, contact.id, contact.phones, items, changes)])
         }
         if (c.emails) {
           const items = c.emails.map((e) => ({ id: e.id, value: e.email, remove: e.remove }))
@@ -419,6 +442,15 @@ export async function applyLeadEdit(
             data: plan.create.map((p) => ({ contactId, phone: p.value, type: p.type, isPrimary: p.isPrimary })),
           })
         }
+      }
+      // Brief 50 PR 17: a number new to a lead that has a number on the Do not
+      // contact list goes on the list too, in this transaction: if that write
+      // fails, the number isn't added either.
+      const adding = phonePlans.flatMap(([, plan]) => plan.create.map((p) => p.value))
+      const follow = adding.length ? await numbersToPutOnDoNotContact(tx, organizationId, { existing: leadPhones, adding }) : null
+      if (follow) {
+        await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.leadEdit)
+        changes.push(...follow.phones.map((p) => putOnDoNotContactLine(p)))
       }
       for (const [contactId, plan] of emailPlans) {
         if (plan.removeIds.length) {

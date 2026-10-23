@@ -367,8 +367,7 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
                 new Proxy(tx, {
                   get(t, p, r) {
                     if (p !== 'dncSuppression') return Reflect.get(t, p, r)
-                    const real = Reflect.get(t, p, r) as Record<string, unknown>
-                    return new Proxy(real, {
+                    return new Proxy(Reflect.get(t, p, r) as object, {
                       get(d, q, rr) {
                         if (q === 'createMany' || q === 'create' || q === 'upsert') return async () => { throw new Error('opt-out write failed (test)') }
                         return Reflect.get(d, q, rr)

@@ -54,6 +54,24 @@ export const emailAdded = (email: string) => `Email added (${maskEmail(email)})`
 export const emailRemoved = (email: string) => `Email removed (${maskEmail(email)})`
 export const emailChanged = (from: string, to: string) => `Email changed (${maskEmail(from)} → ${maskEmail(to)})`
 
+// Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): what
+// a locked number says on the lead page and in the Edit form. "Do not contact":
+// the number is on the CRM's own Do not contact list (a homeowner asked not to
+// be contacted), as the call checks read it. "Texts blocked": the phone row's
+// own outboundSmsBlocked flag.
+export const DO_NOT_CONTACT_LABEL = 'Do not contact'
+export const TEXTS_BLOCKED_LABEL = 'Texts blocked'
+
+// Brief 50 PR 17: a number added to a lead that has a number on the Do not
+// contact list goes on the list too (src/lib/core-data/leads/opt-out.ts). The
+// timeline line says so, with the last 4 digits only, and how the number came
+// in: the Edit form, a new contact (POST /api/contacts) or an upload.
+export function putOnDoNotContactLine(phone: string, via: 'edit' | 'contact' | 'upload' = 'edit'): string {
+  const tag = phoneTag(phone)
+  const what = { edit: 'Put', contact: "A new contact's phone put", upload: 'A phone from an upload put' }[via]
+  return `${what} on Do not contact${tag ? ` (${tag})` : ''}, like another number on this lead`
+}
+
 export const NAME_CHANGED = 'Name changed'
 
 export function statusChange(from: string | null, to: string | null): string {

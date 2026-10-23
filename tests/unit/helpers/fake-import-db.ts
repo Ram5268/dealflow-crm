@@ -326,6 +326,12 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
         },
       },
       contactPhone: {
+        // Brief 50 PR 17: a merge reads the lead's numbers before adding the row's.
+        async findMany({ where }: { where: { contact: { leadId: string } } }) {
+          await step('contactPhone.findMany', where)
+          const l = leads.find((x) => x.id === where.contact.leadId)
+          return (l?.phones ?? []).map((phone) => ({ phone }))
+        },
         async createMany({ data }: { data: Array<{ contactId: string; phone: string }> }) {
           await step('contactPhone.createMany', data)
           for (const p of data) {
@@ -338,6 +344,9 @@ export function importWorld(csv: string, init: Partial<FakeBatch> = {}) {
         },
       },
       contactEmail: { async createMany() { return { count: 0 } } },
+      // Brief 50 PR 17: the Do not contact list, which a merge checks
+      // (src/lib/core-data/leads/opt-out.ts). This fake world has no opt-outs.
+      dncSuppression: { async findMany() { return [] } },
       customFieldValue: {
         // No await before the change, so a $transaction([deleteMany, createMany])
         // applies in order, as in Postgres.

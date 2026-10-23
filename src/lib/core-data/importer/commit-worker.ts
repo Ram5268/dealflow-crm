@@ -18,6 +18,8 @@ import {
 } from './batch'
 import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict, sameName } from './names'
 import { addImportLeadsToList } from './list-membership'
+import { LEAD_EDIT_ACTIVITY_TYPE, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
+import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact } from '@/lib/core-data/leads/opt-out'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -691,10 +693,46 @@ async function upsertRow(
     }
   }
   if (plan.phones.length) {
-    await db.contactPhone.createMany({
-      data: plan.phones.map((p, idx) => ({ contactId: contact!.id, phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
-      skipDuplicates: true,
+    const addPhones = (on: Pick<Prisma.TransactionClient, 'contactPhone'>) =>
+      on.contactPhone.createMany({
+        data: plan.phones.map((p, idx) => ({ contactId: contact!.id, phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
+        skipDuplicates: true,
+      })
+    // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23):
+    // when the lead has a number on the Do not contact list (as the call
+    // checks match it), the row's numbers new to the lead go on the list too,
+    // with the same reason, in one transaction with adding them, and the
+    // lead's timeline says so (last 4 digits only). The list exists because a
+    // homeowner asked not to be contacted. A lead with none (nearly every
+    // merge) adds its numbers as before, after two small reads (the lead's
+    // numbers, then the list when the row brings a number new to the lead).
+    const before = await db.contactPhone.findMany({ where: { contact: { leadId } }, select: { phone: true } })
+    const follow = await numbersToPutOnDoNotContact(db, organizationId, {
+      existing: before.map((p) => p.phone),
+      adding: plan.phones.map((p) => p.phoneE164),
     })
+    if (!follow) {
+      await addPhones(db)
+    } else {
+      await db.$transaction(
+        async (tx) => {
+          await addPhones(tx)
+          await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.upload)
+          await tx.activity.create({
+            data: {
+              organizationId,
+              leadId,
+              userId: null,
+              contactId: null,
+              type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact
+              activityAt: new Date(),
+              bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'upload')).join('\n'),
+            },
+          })
+        },
+        { maxWait: 10_000, timeout: 30_000 }, // the Railway link is slow (as src/lib/core-data/leads/edit.ts)
+      )
+    }
   }
   if (plan.emails.length) {
     await db.contactEmail.createMany({

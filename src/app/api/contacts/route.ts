@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { withRoute, json, parseBody, HttpError } from '@/lib/shared/http'
 import { canonicalPhones } from '@/lib/shared/phone'
+import { LEAD_EDIT_ACTIVITY_TYPE, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
+import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact } from '@/lib/core-data/leads/opt-out'
 
 const phoneSchema = z.object({
   phone: z.string().min(1),
@@ -50,18 +52,50 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
   // so opt-out checks match them however they were typed.
   const phones = canonicalPhones(body.phones)
   if (!phones.ok) throw new HttpError(400, `"${phones.invalid}" is not a valid phone number`)
-  const contact = await prisma.contact.create({
-    data: {
-      organizationId,
-      leadId: body.leadId,
-      displayName: body.displayName,
-      name: body.name,
-      title: body.title,
-      timezone: body.timezone,
-      phones: { create: phones.phones },
-      emails: { create: body.emails },
+  // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): a
+  // new contact's numbers on a lead that has a number on the Do not contact
+  // list go on the list too, with the same reason, in the same transaction as
+  // the contact, and the lead's timeline says so (last 4 digits only). The list
+  // exists because a homeowner asked not to be contacted; this contacts no one.
+  const contact = await prisma.$transaction(
+    async (tx) => {
+      const existing = phones.phones.length
+        ? await tx.contactPhone.findMany({ where: { contact: { leadId: lead.id } }, select: { phone: true } })
+        : []
+      const created = await tx.contact.create({
+        data: {
+          organizationId,
+          leadId: body.leadId,
+          displayName: body.displayName,
+          name: body.name,
+          title: body.title,
+          timezone: body.timezone,
+          phones: { create: phones.phones },
+          emails: { create: body.emails },
+        },
+        include: { phones: true, emails: true },
+      })
+      const follow = await numbersToPutOnDoNotContact(tx, organizationId, {
+        existing: existing.map((p) => p.phone),
+        adding: phones.phones.map((p) => p.phone),
+      })
+      if (follow) {
+        await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.newContact)
+        await tx.activity.create({
+          data: {
+            organizationId,
+            leadId: lead.id,
+            userId: null,
+            contactId: null,
+            type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact (query-dsl TIMELINE_NOTE_TYPES)
+            activityAt: new Date(),
+            bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'contact')).join('\n'),
+          },
+        })
+      }
+      return created
     },
-    include: { phones: true, emails: true },
-  })
+    { maxWait: 10_000, timeout: 30_000 }, // the Railway link is slow (as src/lib/core-data/leads/edit.ts)
+  )
   return json({ contact }, correlationId, { status: 201 })
 })
