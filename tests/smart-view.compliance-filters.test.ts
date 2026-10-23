@@ -49,8 +49,9 @@ async function person(key: string, contacts: { phone: string; smsBlocked?: boole
   ids[key] = lead.id;
 }
 
-// A federal/state registry check, as the compliance engine's vendor step logs it.
-const check = (organizationId: string, phone: string, result: "clean" | "blocked" | "error", hoursAgo: number, operation = "check-federal", vendor?: string) =>
+// A federal/state registry check, as the compliance engine's vendor step logs it
+// (it records the vendor's name). `vendor: null` = a row that doesn't say.
+const check = (organizationId: string, phone: string, result: "clean" | "blocked" | "error", hoursAgo: number, operation = "check-federal", vendor: string | null = "tcpa_shield") =>
   db.scrubLog.create({
     data: { organizationId, phone, operation, result, checkedAt: new Date(Date.now() - hoursAgo * HOUR), ...(vendor ? { detail: { vendor } } : {}) },
   });
@@ -115,6 +116,9 @@ beforeAll(async () => {
   // Brief 40 audit H16: a "clean" written by the mock vendor proves nothing.
   await person("mockVendorCheck", [[{ phone: "+12125550177" }]]);
   await check(org, "+12125550177", "clean", 1, "check-federal", "mock");
+  // Nor does a "clean" that doesn't say which vendor wrote it.
+  await person("noVendorCheck", [[{ phone: "+12125550178" }]]);
+  await check(org, "+12125550178", "clean", 1, "check-federal", null);
   await person("otherOrgCheck", [[{ phone: "+12125550173" }]]);
   await check(otherOrg, "+12125550173", "clean", 1);
 

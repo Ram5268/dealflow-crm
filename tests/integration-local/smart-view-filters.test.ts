@@ -76,7 +76,7 @@ describe.runIf(enabled)('Smart View filters through the API (Brief 50 PR 4)', ()
     await person('opted out', OPTED_OUT_PHONE)
     await person('never checked', UNCHECKED_PHONE)
     for (const phone of [CLEAN_PHONE, OPTED_OUT_PHONE]) {
-      await prisma.scrubLog.create({ data: { organizationId: orgId, phone, operation: 'check-federal', result: 'clean' } })
+      await prisma.scrubLog.create({ data: { organizationId: orgId, phone, operation: 'check-federal', result: 'clean', detail: { vendor: 'tcpa_shield' } } })
     }
     await prisma.dncSuppression.create({ data: { organizationId: orgId, phone: OPTED_OUT_PHONE, source: 'internal', addedBy: 'test' } })
   })

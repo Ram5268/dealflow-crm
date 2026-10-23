@@ -173,7 +173,9 @@ const LEAD_PHONES =
  *     suppression row has since gone); and
  *  6. HAS a clean federal or state check in the last 24 hours (one is enough,
  *     as for the engine), for this exact number in this organization, from a
- *     real vendor: a "clean" row the mock vendor wrote never counts
+ *     real vendor: a "clean" row the mock vendor wrote never counts, and nor
+ *     does one that doesn't say which vendor wrote it (every vendor check the
+ *     engine logs records its vendor: dnc/check.ts, dnc/refresh.ts)
  *     [engineering precaution; Brief 40 audit H16].
  * Anything the CRM can't vouch for leaves the lead out [engineering
  * precaution: fail safe]. Each list lookup is uncorrelated, so Postgres hashes
@@ -196,7 +198,7 @@ export function dncCleanSql(org: string): string {
       `WHERE dnc_b."organizationId" = ${org} AND dnc_b.${REGISTRY_CHECK} AND dnc_b.result = 'blocked' AND dnc_b.${FRESH})`,
     `dnc_p.phone NOT IN (SELECT dnc_k.phone FROM "ScrubLog" dnc_k ` +
       `WHERE dnc_k."organizationId" = ${org} AND dnc_k.${REGISTRY_CHECK} AND dnc_k.result = 'clean' AND dnc_k.${FRESH} ` +
-      `AND coalesce(dnc_k.detail->>'vendor', '') <> 'mock')`,
+      `AND dnc_k.detail->>'vendor' <> 'mock')`,
   ]
   return (
     `(EXISTS (SELECT 1 FROM ${LEAD_PHONES}) ` +
