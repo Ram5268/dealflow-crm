@@ -5,17 +5,21 @@ import type {
   SQuery,
   DslObjectType,
 } from './schema'
+import { DNC_CLEAN_CONDITION_MESSAGE, dncCleanSql, isDncCleanTrue, unavailableFilterMessage } from './compliance-filters'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // s_query → parameterized SQL compiler.
 //
 // Contract (brief §9 M1):
-//  - Pure function. compile(sQuery, ctx) -> { sql, params, compliancePredicates }.
+//  - Pure function. compile(sQuery, ctx) -> { whereSql, params }.
 //  - EVERY value is a $N placeholder. Identifiers (table/column) are NEVER
 //    interpolated from caller input — they are resolved through an allow-list
 //    (FIELD_REGISTRY) so a malicious sQuery cannot inject SQL via a column name.
-//  - `compliance` field refs are extracted here (not emitted to SQL) and handed
-//    back to the caller for post-fetch evaluation via /api/compliance/callable-now.
+//  - `compliance` field refs (Brief 50 PR 4, compliance-filters.ts): 'dnc_clean'
+//    compiles to SQL over the do-not-call data stored in the CRM; the hidden
+//    'callable_now' is refused with a plain CompileError. (Both used to compile
+//    to TRUE, lifted out "for post-fetch evaluation" that nothing ever ran, so
+//    a view using either silently showed everyone.)
 //  - Custom fields compile to a correlated EXISTS against CustomFieldValue,
 //    choosing value_number / value_text / value_date from the definition type.
 //  - Base object is always Lead (alias `lead`). Non-lead object refs compile to
@@ -37,17 +41,11 @@ export interface CompileContext {
   customFieldTypes: Record<string, CustomFieldType>
 }
 
-export interface CompliancePredicate {
-  predicate: 'callable_now' | 'dnc_clean'
-}
-
 export interface CompiledQuery {
   // WHERE-clause fragment (already parenthesized where needed). Does NOT include
   // the leading `WHERE`. Always org-scoped by the executor separately.
   whereSql: string
   params: unknown[]
-  // Compliance predicates lifted out of the tree for post-fetch evaluation.
-  compliancePredicates: CompliancePredicate[]
 }
 
 // Registry of query-able regular columns. Maps a DSL (table, column) to the
@@ -88,8 +86,12 @@ const LEAD_COLUMNS: Record<string, { col: string; kind: ColKind }> = {
 // Brief 45 [engineering precaution]: adding or removing a group label writes a
 // timeline entry of type 'Group' (src/lib/core-data/lists/timeline.ts). That is
 // a note about the label, not activity with the lead, so no Smart View counts
-// it: every `activity` reference skips those rows.
-export const NOT_A_GROUP_LABEL = `a."type" <> 'Group'`
+// it: every `activity` reference skips those rows. Brief 50 PR 4 [engineering
+// precaution]: the same for Ryan's own edits to a lead, which Brief 50 PR 5
+// writes as type 'Edit' (its LEAD_EDIT_ACTIVITY_TYPE); an edit is never
+// activity with the homeowner.
+export const TIMELINE_NOTE_TYPES = ['Group', 'Edit'] as const
+export const NOT_A_TIMELINE_NOTE = `a."type" NOT IN (${TIMELINE_NOTE_TYPES.map((t) => `'${t}'`).join(', ')})`
 
 // Related tables addressable by a `regular` field ref with a non-lead `table`.
 const RELATED_TABLES: Record<string, RelatedTable> = {
@@ -137,7 +139,7 @@ const RELATED_TABLES: Record<string, RelatedTable> = {
   activity: {
     sql: '"Activity" a',
     alias: 'a',
-    correlation: `a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL}`,
+    correlation: `a."leadId" = lead.id AND ${NOT_A_TIMELINE_NOTE}`,
     columns: {
       type: { col: 'a."type"', kind: 'text' },
       activityAt: { col: 'a."activityAt"', kind: 'date' },
@@ -151,7 +153,7 @@ const OBJECT_TYPE_EXISTS: Record<DslObjectType, string | null> = {
   contact: 'EXISTS (SELECT 1 FROM "Contact" c WHERE c."leadId" = lead.id)',
   opportunity:
     'EXISTS (SELECT 1 FROM "Opportunity" o WHERE o."leadId" = lead.id)',
-  activity: `EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL})`,
+  activity: `EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id AND ${NOT_A_TIMELINE_NOTE})`,
 }
 
 class ParamBag {
@@ -262,13 +264,14 @@ function emitFieldCondition(
   condition: Condition,
   bag: ParamBag,
   ctx: CompileContext,
-  compliance: CompliancePredicate[],
   base: string
 ): string {
   if (field.kind === 'compliance') {
-    // Lifted out — evaluated post-fetch. Emits a no-op TRUE so SQL stays valid.
-    compliance.push({ predicate: field.predicate })
-    return 'TRUE'
+    // Brief 50 PR 4: never TRUE. "Do-not-call clean" (condition "true" only)
+    // is SQL; anything else, i.e. the hidden "Callable now", is refused out loud.
+    if (field.predicate !== 'dnc_clean') fail(unavailableFilterMessage(field.predicate))
+    if (!isDncCleanTrue(condition)) fail(DNC_CLEAN_CONDITION_MESSAGE)
+    return dncCleanSql(bag.add(ctx.organizationId))
   }
 
   if (field.kind === 'custom') {
@@ -298,7 +301,6 @@ function emitNode(
   node: SQuery,
   bag: ParamBag,
   ctx: CompileContext,
-  compliance: CompliancePredicate[],
   base: string
 ): string {
   switch (node.type) {
@@ -309,7 +311,7 @@ function emitNode(
       return (
         '(' +
         node.queries
-          .map((q) => emitNode(q, bag, ctx, compliance, base))
+          .map((q) => emitNode(q, bag, ctx, base))
           .join(' AND ') +
         ')'
       )
@@ -319,7 +321,7 @@ function emitNode(
       return (
         '(' +
         node.queries
-          .map((q) => emitNode(q, bag, ctx, compliance, base))
+          .map((q) => emitNode(q, bag, ctx, base))
           .join(' OR ') +
         ')'
       )
@@ -329,9 +331,9 @@ function emitNode(
       return sql ?? 'TRUE'
     }
     case 'field_condition':
-      return emitFieldCondition(node.field, node.condition, bag, ctx, compliance, base)
+      return emitFieldCondition(node.field, node.condition, bag, ctx, base)
     case 'has_related':
-      return emitHasRelated(node, bag, ctx, compliance)
+      return emitHasRelated(node, bag, ctx)
   }
 }
 
@@ -341,16 +343,15 @@ function emitNode(
 function emitHasRelated(
   node: Extract<SQuery, { type: 'has_related' }>,
   bag: ParamBag,
-  ctx: CompileContext,
-  compliance: CompliancePredicate[]
+  ctx: CompileContext
 ): string {
   if (node.object_type === 'lead') {
     // Degenerate: "leads related to leads" — just evaluate the sub-query inline.
-    return emitNode(node.query, bag, ctx, compliance, 'lead')
+    return emitNode(node.query, bag, ctx, 'lead')
   }
   const rel = RELATED_TABLES[node.object_type]
   if (!rel) fail(`has_related on unsupported object_type: ${node.object_type}`)
-  const inner = emitNode(node.query, bag, ctx, compliance, node.object_type)
+  const inner = emitNode(node.query, bag, ctx, node.object_type)
   return (
     `EXISTS (SELECT 1 FROM ${rel.sql} ` +
     `WHERE ${rel.correlation} AND (${inner}))`
@@ -359,9 +360,8 @@ function emitHasRelated(
 
 export function compile(sQuery: SQuery, ctx: CompileContext): CompiledQuery {
   const bag = new ParamBag()
-  const compliance: CompliancePredicate[] = []
-  const whereSql = emitNode(sQuery, bag, ctx, compliance, 'lead')
-  return { whereSql, params: bag.params, compliancePredicates: compliance }
+  const whereSql = emitNode(sQuery, bag, ctx, 'lead')
+  return { whereSql, params: bag.params }
 }
 
 // Build the ORDER BY clause from a sort spec. Only allow-listed lead columns are

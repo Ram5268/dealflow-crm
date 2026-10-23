@@ -290,19 +290,34 @@ describe('compiler — custom fields', () => {
   })
 })
 
-describe('compiler — compliance extraction', () => {
-  it('compliance predicate lifted to compliancePredicates, emits TRUE', () => {
+// Brief 50 PR 4: compliance predicates used to be lifted out and compiled to
+// TRUE (silently matching everyone). Full coverage lives in
+// compiler-compliance-filters.test.ts; this keeps the old case honest.
+describe('compiler — compliance predicates', () => {
+  it('callable_now is refused, never emitted as TRUE', () => {
+    expect(() =>
+      compile(
+        {
+          type: 'field_condition',
+          field: { kind: 'compliance', predicate: 'callable_now' },
+          condition: { type: 'term', op: 'in', values: ['x'] },
+        },
+        ctx
+      )
+    ).toThrow(CompileError)
+  })
+
+  it('dnc_clean compiles to an org-scoped SQL filter', () => {
     const r = compile(
       {
         type: 'field_condition',
-        field: { kind: 'compliance', predicate: 'callable_now' },
-        condition: { type: 'term', op: 'in', values: ['x'] },
+        field: { kind: 'compliance', predicate: 'dnc_clean' },
+        condition: { type: 'term', op: 'in', values: ['true'] },
       },
       ctx
     )
-    expect(r.whereSql).toBe('TRUE')
-    expect(r.compliancePredicates).toEqual([{ predicate: 'callable_now' }])
-    expect(r.params).toEqual([])
+    expect(r.whereSql).not.toBe('TRUE')
+    expect(r.params).toEqual(['org_1'])
   })
 })
 

@@ -10,7 +10,8 @@ import {
   type CompiledQuery,
 } from '@/lib/core-data/query-dsl/compiler'
 import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
-import { sQuerySchema, sortSpecSchema, type SortSpec, type SQuery } from '@/lib/core-data/query-dsl/schema'
+import { parseSavedViewQuery, sortSpecSchema, type SortSpec, type SQuery } from '@/lib/core-data/query-dsl/schema'
+import { DNC_CLEAN_NOTE, narrowingPredicatesIn } from '@/lib/core-data/query-dsl/compliance-filters'
 import { getRankedPage } from '@/lib/core-data/lists/ranked'
 import { isGroupColor } from '@/lib/core-data/lists/rules'
 import { MAX_PAGE, type GroupColor, type MemberFilters } from '@/lib/core-data/lists/types'
@@ -95,6 +96,11 @@ export interface ListLeadsResult {
   sort: AppliedSort
   /** Set when a Smart View could not be applied, so the UI can say why. */
   viewError?: string
+  /**
+   * Brief 50 PR 4: what an applied Smart View's "Do-not-call clean" filter
+   * means, shown above the list (so an empty view isn't a mystery).
+   */
+  viewNote?: string
   /** Brief 45: the group filter that was applied, else null. */
   group?: AppliedGroup | null
   /** Brief 45: set when ?group= names a group that doesn't exist (here). */
@@ -143,7 +149,7 @@ async function compileView(
   organizationId: string,
   viewId: string,
   term: string | undefined,
-): Promise<{ compiled: CompiledQuery; viewSort: SortSpec }> {
+): Promise<{ compiled: CompiledQuery; viewSort: SortSpec; viewNote?: string }> {
   const view = await db.savedView.findFirst({ where: { id: viewId, organizationId } })
   if (!view) throw new Error('Smart View not found')
   if (view.type !== 'lead') throw new Error(`Smart View type must be 'lead', got '${view.type}'`)
@@ -156,11 +162,14 @@ async function compileView(
     defs.map((d) => [d.id, d.type]),
   ) as CompileContext['customFieldTypes']
 
-  const viewQuery = sQuerySchema.parse(view.sQuery)
+  // Brief 50 PR 4: a view saved with the hidden "Callable now" filter throws a
+  // plain UnavailableFilterError here, which the page shows (viewError).
+  const viewQuery = parseSavedViewQuery(view.sQuery)
   const query: SQuery = term ? { type: 'and', queries: [viewQuery, searchQuery(term)] } : viewQuery
   return {
     compiled: compile(query, { organizationId, customFieldTypes }),
     viewSort: sortSpecSchema.parse(view.sort ?? []),
+    viewNote: narrowingPredicatesIn(viewQuery).includes('dnc_clean') ? DNC_CLEAN_NOTE : undefined,
   }
 }
 
@@ -193,9 +202,9 @@ async function listViewPage(
     page: number
     pageSize: number
   },
-): Promise<{ rows: LeadRow[]; total: number; sort: AppliedSort }> {
+): Promise<{ rows: LeadRow[]; total: number; sort: AppliedSort; viewNote?: string }> {
   const { organizationId, viewId, term, sortKey, sortDir, page, pageSize } = args
-  const { compiled, viewSort } = await compileView(db, organizationId, viewId, term)
+  const { compiled, viewSort, viewNote } = await compileView(db, organizationId, viewId, term)
   // A chosen column leads; the view's own saved sort still breaks its ties.
   const orderSpec: SortSpec = sortKey
     ? [{ field: sortKey, direction: sortDir }, ...viewSort.filter((s) => s.field !== sortKey)]
@@ -211,7 +220,7 @@ async function listViewPage(
     }),
     executeCount(compiled, db, organizationId),
   ])
-  if (idRows.length === 0) return { rows: [], total, sort }
+  if (idRows.length === 0) return { rows: [], total, sort, viewNote }
 
   const leads = await db.lead.findMany({
     where: { organizationId, id: { in: idRows.map((r) => r.id) } },
@@ -225,6 +234,7 @@ async function listViewPage(
     }),
     total,
     sort,
+    viewNote,
   }
 }
 
@@ -290,7 +300,7 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
 
   if (viewId) {
     try {
-      const { rows, total, sort } = await listViewPage(db, {
+      const { rows, total, sort, viewNote } = await listViewPage(db, {
         organizationId,
         viewId,
         term,
@@ -300,7 +310,7 @@ export async function listLeads(params: ListLeadsParams, db: PrismaClient = pris
         pageSize,
       })
       // A Smart View has its own filter; the group filter doesn't apply to it.
-      return { rows, total, page, pageSize, sort, group: null }
+      return { rows, total, page, pageSize, sort, group: null, viewNote }
     } catch (err) {
       // A broken saved view must not blank the page — fall back to all leads
       // and surface the reason inline.

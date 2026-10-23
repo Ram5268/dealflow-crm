@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { AlertTriangle, ChevronLeft, ChevronRight, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, Info, ListOrdered, Search, Users, X, Zap } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -56,6 +56,7 @@ export function LeadsView({
   viewId,
   views,
   viewError,
+  viewNote,
   sequencesOffReason,
   group = null,
   groupError,
@@ -70,6 +71,8 @@ export function LeadsView({
   viewId: string
   views: { id: string; name: string }[]
   viewError?: string
+  /** Brief 50 PR 4: what the Smart View's "Do-not-call clean" filter means. */
+  viewNote?: string
   /** Brief 41.2 (PR E): why "Add to sequence" is greyed out (email and texting off). */
   sequencesOffReason?: string | null
   /** Brief 45: the group the page is narrowed to (?group=), shown as a removable chip. */
@@ -377,6 +380,15 @@ export function LeadsView({
         <div className="flex shrink-0 items-center gap-2 border-b border-line bg-warning-subtle px-4 py-2 text-sm text-warning">
           <AlertTriangle size={14} />
           Smart View could not be applied: {viewError}. Showing all leads.
+        </div>
+      )}
+
+      {/* Brief 50 PR 4: a view using "Do-not-call clean" says what it keeps, so
+          an empty or short list isn't a mystery (unchecked numbers are left out). */}
+      {viewNote && (
+        <div role="note" className="flex shrink-0 items-start gap-2 border-b border-line bg-accent-subtle px-4 py-2 text-sm text-fg">
+          <Info size={14} className="mt-0.5 shrink-0 text-accent" />
+          {viewNote}
         </div>
       )}
 

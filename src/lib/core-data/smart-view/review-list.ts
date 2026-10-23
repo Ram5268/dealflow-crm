@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { HttpError } from '@/lib/shared/http'
 import { compile } from '@/lib/core-data/query-dsl/compiler'
 import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
-import { sQuerySchema, sortSpecSchema, type SQuery } from '@/lib/core-data/query-dsl/schema'
+import { parseSavedViewQuery, sortSpecSchema, UnavailableFilterError, type SQuery } from '@/lib/core-data/query-dsl/schema'
 import { loadCustomFieldTypes, queueOrder } from './queue-service'
 import { HAS_DEALFLOW_PRIORITY } from './defaultView'
 import { bestBuyerLookup } from '@/lib/core-data/dealflow-sync/buyer-lookup'
@@ -43,13 +43,26 @@ export function reviewQuery(viewQuery: SQuery): SQuery {
   return { type: 'and', queries: [viewQuery, HAS_DEALFLOW_PRIORITY] }
 }
 
+// A saved view's query. Brief 50 PR 4: a view saved with the hidden "Callable
+// now" filter is refused with its plain message (400) rather than listed as if
+// the filter applied.
+function savedViewQuery(raw: unknown): SQuery {
+  try {
+    return parseSavedViewQuery(raw)
+  } catch (err) {
+    // The Queue page shows the message on its own, so it gets its full stop here.
+    if (err instanceof UnavailableFilterError) throw new HttpError(400, `${err.message}.`)
+    throw err
+  }
+}
+
 export async function getReviewList(viewId: string, organizationId: string): Promise<ReviewList> {
   const view = await prisma.savedView.findFirst({ where: { id: viewId, organizationId } })
   if (!view) throw new HttpError(404, 'SavedView not found')
   if (view.type !== 'lead') throw new HttpError(400, `SavedView type must be 'lead', got '${view.type}'`)
 
   const customFieldTypes = await loadCustomFieldTypes(organizationId)
-  const compiled = compile(reviewQuery(sQuerySchema.parse(view.sQuery)), { organizationId, customFieldTypes })
+  const compiled = compile(reviewQuery(savedViewQuery(view.sQuery)), { organizationId, customFieldTypes })
   // The Queue's order: DealFlow's rank (Brief 50 PR 10, queue-service.ts queueOrder).
   const ordered = queueOrder(compiled, sortSpecSchema.parse(view.sort ?? []), organizationId)
   const [leads, total, bestBuyer] = await Promise.all([
