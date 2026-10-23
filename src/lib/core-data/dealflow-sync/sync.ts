@@ -2,6 +2,7 @@ import { roQuery } from './ro-client'
 import { toBuyers } from './buyers'
 import { MAX_VALUE_AGE_DAYS, toPropertyFacts } from './property'
 import { logger } from '@/lib/logger'
+import type { LeadKey } from './write'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DealFlow signal sync — reads the latest nightly CallQueueEntry batch from
@@ -236,6 +237,46 @@ export const RO_SQL = `
   LEFT JOIN "Match" m   ON m."id" = cqe."primaryMatchId"
   ORDER BY cqe."rank"
 `
+
+// Brief 50 (PR 19): DealFlow's newest call list of the organization with this
+// slug ($1), the same list RO_SQL reads (the same organization, ordering and
+// LIMIT 1), for the Queue's line when a morning copy was refused
+// (nightly-notice.ts readCopyRefusal). One row with its run id and when it was
+// made (UTC ISO; the column has no zone), and, only when it isn't the run the
+// CRM already holds ($2), its sellers as the copy maps them to CRM leads:
+// each one's Mojo ID and the CRM lead id DealFlow keeps (Brief 34). No row
+// when DealFlow has no list. Selects nothing about a person beyond those two
+// ids (engineering precaution: data minimization).
+export const NEWEST_LIST_SQL = `
+  WITH latest AS (
+    SELECT q."organizationId", q."generationRunId", q."generatedAt" FROM "CallQueueEntry" q
+    JOIN "Organization" o ON o."id" = q."organizationId"
+    WHERE o."slug" = $1
+    ORDER BY q."generatedAt" DESC LIMIT 1
+  )
+  SELECT latest."generationRunId" AS run_id,
+    to_char(latest."generatedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS generated_at,
+    CASE WHEN latest."generationRunId" IS DISTINCT FROM $2::text THEN (
+      SELECT COALESCE(jsonb_agg(jsonb_build_object('mojoId', mc."mojoId", 'crmLeadId', mc."metadata"->>'crmLeadId')), '[]'::jsonb)
+      FROM "CallQueueEntry" cqe
+      JOIN "MojoContact" mc ON mc."id" = cqe."contactId" AND mc."organizationId" = cqe."organizationId"
+      WHERE cqe."organizationId" = latest."organizationId" AND cqe."generationRunId" = latest."generationRunId"
+    ) END AS sellers
+  FROM latest
+`
+
+export interface NewestList {
+  runId: string
+  generatedAt: string // UTC ISO
+  sellers: LeadKey[] | null // null when it is the run the CRM already holds
+}
+
+// DealFlow's newest list for the slug (read-only), or null when it has none.
+export async function fetchNewestList(orgSlug: string, crmRunId: string | null): Promise<NewestList | null> {
+  const [row] = await roQuery<{ run_id: string; generated_at: string; sellers: LeadKey[] | null }>(NEWEST_LIST_SQL, [orgSlug, crmRunId])
+  if (!row?.run_id) return null
+  return { runId: row.run_id, generatedAt: row.generated_at, sellers: Array.isArray(row.sellers) ? row.sellers : null }
+}
 
 // Whether DealFlow's latest scoring run used test buyers (drives the banner).
 // Brief 50 (PR 11): that organization's own run ($1 = slug, as RO_SQL).

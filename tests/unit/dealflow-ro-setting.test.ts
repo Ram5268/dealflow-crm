@@ -25,6 +25,9 @@ const MAY_SET: Record<string, string> = {
   'tests/dealflow-ro-client.session.test.ts': "CI's throwaway test database (db-suite), never DealFlow's", // Brief 50 (PR 11)
   'tests/dealflow-sync.property-fallback.test.ts': "CI's throwaway test database (db-suite), never DealFlow's", // Brief 50 (PR 12)
   'tests/unit/property-lookup-fallback.test.ts': 'an address nothing listens on; pg connect() is replaced', // Brief 50 (PR 12)
+  'tests/unit/morning-copy-refusal.test.ts': 'an address nothing listens on; pg connect() is replaced', // Brief 50 (PR 19)
+  'tests/dealflow-sync.refusal-notice.test.ts': "CI's throwaway test database (db-suite), never DealFlow's", // Brief 50 (PR 19)
+  'tests/integration-local/morning-copy-refusal.test.ts': "CI's throwaway test database (db-suite), never DealFlow's", // Brief 50 (PR 19)
 }
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))

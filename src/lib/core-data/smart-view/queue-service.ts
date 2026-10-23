@@ -123,15 +123,18 @@ export async function loadCustomFieldTypes(organizationId: string): Promise<Comp
 }
 
 // ── The Queue's order (Brief 50 PR 10, open item 6.8) ──────────────────────
-// DealFlow ranks its call list by an unrounded priority (87.4 above 87.2), but
-// the CRM stores that priority as a whole number (sync.ts rounds it into an
-// Int column), so sorting by it tied sellers DealFlow had told apart and broke
-// the tie by "top match" and lead id instead. When a view is ordered by
-// DealFlow's priority, leads with the same whole-number priority now go in
-// DealFlow's own rank order (the signal's queueRank); the stored whole-number
-// priority is still what's shown, and still the first key. DealFlow numbers
-// its list by sorting on that same priority (best first), and rounding never
-// swaps two numbers, so for every ranked lead this IS DealFlow's order.
+// DealFlow rounds each seller's priority to a whole number first
+// (composeCallPriority), then ranks its call list by that whole number, best
+// first; sellers with the same number keep the order its ranker read them in
+// (a stable sort), and only the rank records that order. The CRM stores the
+// same whole number (sync.ts's rounding changes nothing), so sorting by it
+// alone tied sellers DealFlow had put in order and broke the tie by "top
+// match" and lead id instead. When a view is ordered by DealFlow's priority,
+// leads with the same whole-number priority now go in DealFlow's own rank
+// order (the signal's queueRank); the priority is still what's shown, and
+// still the first key. So for every ranked lead this IS DealFlow's order.
+// (Brief 50 PR 19 corrected this note: it said DealFlow ranked by an
+// unrounded priority.)
 //
 // A lead's rank is its signal's, found the way the morning copy assigns
 // signals to leads (dealflow-sync/write.ts MAPPED_LEADS): the lead DealFlow

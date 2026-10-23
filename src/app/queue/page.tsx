@@ -7,7 +7,7 @@ import { getReviewList } from '@/lib/core-data/smart-view/review-list'
 import { DEFAULT_VIEW_ID } from '@/lib/core-data/smart-view/defaultView'
 import { dialingEnabled } from '@/lib/telephony/dialingSwitch'
 import { CallingOffBanner } from '@/components/CallingOffBanner'
-import { NightlyNoticeBanner } from '@/components/NightlyNoticeBanner'
+import { MorningCopyNotice, NightlyNoticeBanner } from '@/components/NightlyNoticeBanner'
 import { Badge } from '@/components/ui'
 import { buyerName } from '@/lib/core-data/dealflow-sync/buyers'
 import { captureLabel, reasonText } from '@/lib/core-data/dealflow-sync/labels'
@@ -66,6 +66,12 @@ export default async function QueuePage({ searchParams }: { searchParams: Promis
             DealFlow (up to the pool's 8-second connect timeout if it's down). */}
         <Suspense key={viewId ?? ''} fallback={null}>
           <NightlyNoticeBanner />
+        </Suspense>
+        {/* Brief 50 (PR 19): this morning's copy from DealFlow was refused, so
+            the Queue (either list below) still shows an earlier order. Its own
+            boundary, keyed by the view for the same reason as the one above. */}
+        <Suspense key={`copy:${viewId ?? ''}`} fallback={null}>
+          <MorningCopyNotice organizationId={organizationId} />
         </Suspense>
         {reviewMode && (
           <div className="mb-4">

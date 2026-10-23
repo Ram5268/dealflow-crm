@@ -1,4 +1,10 @@
+import type { PrismaClient } from '@prisma/client'
+import { DateTime } from 'luxon'
+import { prisma } from '@/lib/prisma'
+import { IMPORT_SCORING_SOURCE } from '@/lib/core-data/dealflow-score/marker'
 import { dealflowRoConfigured, roQuery } from './ro-client'
+import { MAX_BATCH_AGE_MS, fetchNewestList } from './sync'
+import { countBatchMapping, refuseBatch } from './write'
 import { logger } from '@/lib/logger'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,10 +26,13 @@ import { logger } from '@/lib/logger'
 // zone holding UTC, so the window is measured from (now() AT TIME ZONE 'UTC'),
 // never a bare now() (which Postgres would compare in the session's zone).
 //
-// No organization filter, matching the sync (RO_SQL and RUN_INFO_SQL in
-// sync.ts read DealFlow's newest rows without one): DealFlow holds one
-// organization (slug dealflow-ryan), its nightly writes every row under it,
-// and the CRM's own organization id means nothing in DealFlow's database.
+// No organization filter. The morning copy no longer reads that way: since
+// Brief 50 PR 11 it reads only the DealFlow organization with the CRM
+// organization's slug (RO_SQL and RUN_INFO_SQL in sync.ts take it as $1), and
+// so does the refused-copy line below (NEWEST_LIST_SQL). This statement was
+// left as Brief 47 wrote it: DealFlow holds one organization (slug
+// dealflow-ryan), its nightly writes every row under it, and the CRM's own
+// organization id means nothing in DealFlow's database.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type NightlyNoticeCode = 'refused' | 'rollback'
@@ -105,6 +114,143 @@ export async function readNightlyNotice(waitMs = NIGHTLY_NOTICE_WAIT_MS): Promis
   } catch (err) {
     const code = (err as { code?: unknown } | null)?.code
     logger.warn({ code: typeof code === 'string' ? code : null }, "Queue notice: couldn't read DealFlow's last night, so no notice")
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Brief 50 (PR 19): the Queue's line when this morning's copy from DealFlow was
+// refused [Ryan's no-babysitting rule, 2026-10-18: checks show up in the
+// product]. The 7:00 copy (run.ts) refuses a list that reaches no CRM lead, or
+// fewer than half the leads the last copy reached, and writes nothing
+// (write.ts refuseBatch; the check is an engineering precaution, Brief 50 PR
+// 11). Nothing records a refusal (Revision 2 adds no table or column), so the
+// line is worked out from what the CRM and DealFlow already hold:
+//   • the last copy that went through: the CRM's newest morning signal, its
+//     time and DealFlow run id (LAST_COPY_SQL);
+//   • the last scheduled copy: 11:00 UTC every day (vercel.json; 7:00 am EDT,
+//     6:00 am EST), counted once it has had COPY_GRACE_MS to finish;
+//   • only when the last copy that went through is older than the last
+//     scheduled one (that copy wrote nothing), DealFlow's newest list is read
+//     (sync.ts NEWEST_LIST_SQL, through the read-only client) and put through
+//     the copy's own check (countBatchMapping and refuseBatch: the same code
+//     and SQL the copy runs). Refused → the line: N = the leads that list
+//     reaches, M = the leads the last copy reached, and the date of the order
+//     the Queue still shows (the last copy's, New York time).
+// So the line shows only while a refused copy is the newest copy attempt: a
+// later copy that goes through holds DealFlow's newest list, so no line; a
+// list skipped as too old (sync.ts MAX_BATCH_AGE_MS, 36 h) or a copy that
+// couldn't read DealFlow shows no line (the list didn't look wrong); and a
+// list DealFlow made after the last scheduled copy isn't judged before the
+// next one has had its chance. DealFlow keeps only its newest list, so N is
+// that list's, counted when the page loads, and after a refused morning the
+// line goes once DealFlow's next list looks right (the next copy takes it). A
+// normal morning costs one small CRM read and no DealFlow read at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The hour (UTC) vercel.json runs the copy at: "0 11 * * *". */
+export const COPY_HOUR_UTC = 11
+/** How long a scheduled copy gets to finish before the Queue judges it (the route's limit is 300 s). */
+export const COPY_GRACE_MS = 10 * 60_000
+const DAY_MS = 86_400_000
+
+/** The newest scheduled morning copy that has had COPY_GRACE_MS to finish, at or before `now`. */
+export function lastScheduledCopy(now: Date): Date {
+  const t = now.getTime() - COPY_GRACE_MS
+  const d = new Date(t)
+  const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), COPY_HOUR_UTC)
+  return new Date(today <= t ? today : today - DAY_MS)
+}
+
+// $1 = organizationId. The organization's slug, and its newest morning
+// signal's time and DealFlow run id: the last copy that went through (every
+// row one copy writes carries the same time and run). An upload's scoring
+// rows don't count (dealflow-score/marker.ts). copiedAt is null before the
+// first copy; no row for an unknown organization.
+export const LAST_COPY_SQL = `
+  SELECT o."slug", s."syncedAt" AS "copiedAt", s."dealflowRawJson"->>'generationRunId' AS "runId"
+  FROM "Organization" o
+  LEFT JOIN LATERAL (
+    SELECT x."syncedAt", x."dealflowRawJson" FROM "DealFlowDerivedSignal" x
+    WHERE x."organizationId" = o."id"
+      AND (x."dealflowRawJson"->>'source') IS DISTINCT FROM '${IMPORT_SCORING_SOURCE}'
+    ORDER BY x."syncedAt" DESC LIMIT 1
+  ) s ON true
+  WHERE o."id" = $1`
+
+export interface CopyRefusal {
+  reached: number // N: the organization's leads DealFlow's newest list reaches
+  usual: number // M: the organization's leads the last copy reached
+  copiedAt: Date // when the last copy went through: the order the Queue still shows
+}
+
+/**
+ * The refused copy the Queue shows, or null (see above). Throws when a read
+ * fails; readCopyRefusal turns that into no line.
+ */
+export async function findCopyRefusal(organizationId: string, now: Date, db: PrismaClient = prisma): Promise<CopyRefusal | null> {
+  const [last] = await db.$queryRawUnsafe<{ slug: string; copiedAt: Date | null; runId: string | null }[]>(LAST_COPY_SQL, organizationId)
+  // No earlier copy: no order for the Queue to "still show". (A first copy
+  // that matches nobody is refused all the same; the cron's 409 says so.)
+  if (!last?.copiedAt) return null
+  const due = lastScheduledCopy(now)
+  // The last scheduled copy went through, or DealFlow's new list waits for the next one.
+  if (last.copiedAt.getTime() >= due.getTime()) return null
+  if (!dealflowRoConfigured()) return null
+  const list = await fetchNewestList(last.slug, last.runId)
+  // DealFlow has no list, or the CRM already holds its newest one.
+  if (!list?.sellers) return null
+  // Already too old when the copy ran: skipped as stale, not refused as wrong.
+  if (due.getTime() - Date.parse(list.generatedAt) > MAX_BATCH_AGE_MS) return null
+  const mapping = await countBatchMapping(organizationId, list.sellers, db)
+  if (!refuseBatch(mapping)) return null
+  return { reached: mapping.mappedLeads, usual: mapping.lastCopyLeads, copiedAt: last.copiedAt }
+}
+
+const NY = 'America/New_York'
+
+/** The line, word for word as Brief 50 Revision 2 gives it; the date in New York time ("Oct 23"; with the year when it isn't this one). */
+export function copyRefusalText({ reached, usual, copiedAt }: CopyRefusal, now: Date = new Date()): string {
+  const day = DateTime.fromJSDate(copiedAt).setZone(NY).setLocale('en-US')
+  const date = day.toFormat(day.hasSame(DateTime.fromJSDate(now).setZone(NY), 'year') ? 'LLL d' : 'LLL d, yyyy')
+  const count = (n: number) => n.toLocaleString('en-US')
+  return (
+    `This morning's ranking from DealFlow looked wrong (it reached ${count(reached)} of your usual ${count(usual)} sellers), ` +
+    `so the Queue still shows ${date}'s order.`
+  )
+}
+
+// The line, or null. Never throws, and waits at most waitMs (the nightly
+// notice's 2.5 s; the page streams it in on its own, so the Queue never
+// waits): in stub mode, with no read-only setting, when a read fails or takes
+// longer, there is no line. The log line carries an error code only: no
+// address, no SQL, no values.
+export async function readCopyRefusal(
+  organizationId: string,
+  opts: { now?: Date; waitMs?: number; db?: PrismaClient } = {}
+): Promise<string | null> {
+  if (process.env.DEALFLOW_SYNC_STUB === '1') return null
+  const now = opts.now ?? new Date()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const work = findCopyRefusal(organizationId, now, opts.db ?? prisma)
+    // An abandoned check still ends on its own (reads only); a failure after
+    // the wait is ignored, never thrown.
+    work.catch(() => undefined)
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), opts.waitMs ?? NIGHTLY_NOTICE_WAIT_MS)
+    })
+    const outcome = await Promise.race([work, timedOut])
+    if (outcome === 'timeout') {
+      logger.warn({ code: 'timeout' }, "Queue notice: checking this morning's copy took too long, so no line")
+      return null
+    }
+    return outcome ? copyRefusalText(outcome, now) : null
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code
+    logger.warn({ code: typeof code === 'string' ? code : null }, "Queue notice: couldn't check this morning's copy, so no line")
     return null
   } finally {
     clearTimeout(timer)
