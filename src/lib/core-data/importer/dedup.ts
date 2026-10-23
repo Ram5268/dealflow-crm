@@ -1,4 +1,4 @@
-import { parsePhoneNumberFromString } from 'libphonenumber-js'
+import { toValidE164 } from '@/lib/shared/phone'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Import dedup + normalization helpers (brief §9 Milestone 6).
@@ -46,13 +46,10 @@ export function normalizePhoneType(raw: string | null | undefined): NormalizedPh
 
 // Normalizes a raw phone string to E.164 (US default). Returns null if the value
 // cannot be parsed as a valid number — the caller drops it rather than fabricate.
+// Brief 50 PR 13: the shared parser's reading, so an imported phone, its
+// duplicate key and an opt-out are the same string ("+917 555 0147" is US).
 export function normalizePhoneE164(raw: string | null | undefined): string | null {
-  if (!raw) return null
-  const trimmed = String(raw).trim()
-  if (!trimmed) return null
-  const parsed = parsePhoneNumberFromString(trimmed, 'US')
-  if (!parsed || !parsed.isValid()) return null
-  return parsed.number // E.164, e.g. +12125551234
+  return toValidE164(raw) // E.164, e.g. +12125550134
 }
 
 // Deterministic dedup key for a row within an org: prefer the E.164 phone;
