@@ -32,3 +32,5 @@ Harness: `scripts/perf-25k.ts` (importable `runPerfSuite`; asserted in `tests/pe
 | **OVERALL** | **85** | **95** |
 
 Run standalone: `pnpm run seed:perf && pnpm run perf` (or `pnpm run test:perf`).
+
+**Since Brief 50 (2026-10-19):** `tests/perf/25k.test.ts` seeds this data itself (`seedPerf` in `scripts/seed-dev.ts`) into its own schema, `perf_25k`, of the suite's test database (`DATABASE_URL_PERF`, a `*_perf` or `*_test` database only), and drops that schema afterwards, so no hand seed is needed and CI's db-suite runs it. The seed is made up: fictional streets ("N Example St") and phones only in 555-0100..0199.
