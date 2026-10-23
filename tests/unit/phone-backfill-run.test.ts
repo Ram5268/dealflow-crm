@@ -138,11 +138,11 @@ describe('phone backfill: before-image, --expect, conditional writes', () => {
     const dnc = [opt('a', '9175550147'), opt('b', '7185550102')]
     const db = fakeDb(dnc, [], {
       // Someone edits row b while the script runs (after it was read).
-      onUpdate: (_t, id) => { if (id === 'a') dnc[1].phone = '+13475550000' },
+      onUpdate: (_t, id) => { if (id === 'a') dnc[1].phone = '+13475550199' },
     })
     await run(db, ['--apply', '--expect', '2'])
     expect(jsonLine('rewritten')).toEqual({ rewritten: 1, changedSinceDryRun: ['DncSuppression:b'], conflicts: [] })
-    expect(dnc.map((r) => r.phone)).toEqual(['+19175550147', '+13475550000'])
+    expect(dnc.map((r) => r.phone)).toEqual(['+19175550147', '+13475550199'])
   })
 
   it('a canonical row that appeared meanwhile is a reported conflict, not a crash', async () => {

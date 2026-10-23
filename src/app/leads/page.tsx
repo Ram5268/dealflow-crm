@@ -3,6 +3,7 @@ import { NewLeadModal } from './NewLeadModal'
 import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { isLeadSortKey, listLeads } from '@/lib/leads/list'
+import { loadUploads } from '@/lib/core-data/leads/uploads'
 import { pageParam } from '@/lib/ui/pageParam'
 import { sequencesOffReason } from '@/lib/comms/sequences/channel-gate'
 import { LeadsView } from './LeadsView'
@@ -42,6 +43,9 @@ export default async function LeadsPage({
       select: { id: true, name: true },
     }),
   ])
+  // Brief 50 PR 14: the uploads this page's leads came from, so Source reads
+  // "Mojo Export" instead of "import:<id>". One small query.
+  const uploads = await loadUploads(organizationId, result.rows.map((r) => r.source))
 
   return (
     <>
@@ -66,6 +70,7 @@ export default async function LeadsPage({
         group={result.group ?? null}
         groupError={result.groupError}
         rankedAt={result.rankedAt ?? null}
+        uploads={uploads}
       />
     </>
   )

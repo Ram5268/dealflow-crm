@@ -31,7 +31,10 @@ export function DialerShell({ dialingEnabled }: { dialingEnabled: boolean }) {
       setActiveCallId((prev) => nextActiveCallId(prev, evt));
     };
     es.onerror = () => {
-      /* browser auto-reconnects */
+      // Nothing to do. While calling is off the stream answers 204, which
+      // closes this EventSource for good (Brief 50 PR 1): it doesn't retry.
+      // While calling is on, a dropped stream reconnects on its own after the
+      // server's `retry:` delay.
     };
     return () => es.close();
   }, []);
