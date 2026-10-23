@@ -19,7 +19,7 @@ import {
 import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict, sameName } from './names'
 import { addImportLeadsToList } from './list-membership'
 import { LEAD_EDIT_ACTIVITY_TYPE, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
-import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact } from '@/lib/core-data/leads/opt-out'
+import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact, type OptOutFollow } from '@/lib/core-data/leads/opt-out'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -714,24 +714,10 @@ async function upsertRow(
     if (!follow) {
       await addPhones(db)
     } else {
-      await db.$transaction(
-        async (tx) => {
-          await addPhones(tx)
-          await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.upload)
-          await tx.activity.create({
-            data: {
-              organizationId,
-              leadId,
-              userId: null,
-              contactId: null,
-              type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact
-              activityAt: new Date(),
-              bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'upload')).join('\n'),
-            },
-          })
-        },
-        { maxWait: 10_000, timeout: 30_000 }, // the Railway link is slow (as src/lib/core-data/leads/edit.ts)
-      )
+      await db.$transaction(async (tx) => {
+        await addPhones(tx)
+        await followOptOut(tx, organizationId, leadId, follow)
+      }, OPT_OUT_TX)
     }
   }
   if (plan.emails.length) {
@@ -747,8 +733,36 @@ async function upsertRow(
   return { leadId, merged: true }
 }
 
+// Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23, and
+// the executor's follow-up): the Do not contact entries for a row's numbers
+// and the lead's timeline line (last 4 digits only), written inside the
+// transaction that adds the numbers. The list exists because a homeowner
+// asked not to be contacted; this contacts no one.
+const OPT_OUT_TX = { maxWait: 10_000, timeout: 30_000 } // the Railway link is slow (as src/lib/core-data/leads/edit.ts)
+
+async function followOptOut(tx: Prisma.TransactionClient, organizationId: string, leadId: string, follow: OptOutFollow): Promise<void> {
+  await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.upload)
+  await tx.activity.create({
+    data: {
+      organizationId,
+      leadId,
+      userId: null,
+      contactId: null,
+      type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact
+      activityAt: new Date(),
+      bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'upload')).join('\n'),
+    },
+  })
+}
+
 // A brand-new lead is created with its contact(s) + phones + emails nested in a
 // SINGLE query (no contact lookup — there is nothing to reuse yet).
+//
+// Brief 50 PR 17 (the executor's follow-up): a row that holds a number on the
+// Do not contact list and others puts the others on the list too, with the
+// same reason, in one transaction with the new lead. That costs one lookup,
+// and only for a row with two or more numbers; a one-number row has nothing to
+// follow and creates its lead as before.
 async function createLead(
   db: PrismaClient,
   organizationId: string,
@@ -760,7 +774,8 @@ async function createLead(
   // emails; a co-owner is a second contact with a name only (rowContacts).
   const [primary, ...others] = rowContacts(plan)
   const times = others.length ? contactTimes(1 + others.length) : []
-  const lead = await db.lead.create({
+  const follow = await numbersToPutOnDoNotContact(db, organizationId, { existing: [], adding: plan.phones.map((p) => p.phoneE164) })
+  const create = (on: Pick<Prisma.TransactionClient, 'lead'>) => on.lead.create({
     data: {
       organizationId,
       displayName: plan.displayName,
@@ -788,6 +803,13 @@ async function createLead(
       },
     },
   })
+  const lead = !follow
+    ? await create(db)
+    : await db.$transaction(async (tx) => {
+        const created = await create(tx)
+        await followOptOut(tx, organizationId, created.id, follow)
+        return created
+      }, OPT_OUT_TX)
   await writeCustomValues(db, organizationId, lead.id, plan.customValues, 'fill', rowErrors)
   return { leadId: lead.id, merged: false }
 }

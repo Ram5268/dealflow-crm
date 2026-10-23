@@ -20,9 +20,11 @@ import { DO_NOT_CONTACT_LABEL, TEXTS_BLOCKED_LABEL, phoneLast4 } from './edit-te
 //   locks too.
 // - A number added to a lead that has a number on the list goes on the list
 //   too, with that entry's reason, in the same transaction as the add (the lead
-//   edit, a new contact, an upload merging into the lead), so a new number
-//   can't route around the opt-out. Only numbers new to the lead: a number
-//   already on it isn't touched here.
+//   edit, a new contact, an upload merging into the lead, and, the executor's
+//   follow-up, an upload or "add anyway" making a new lead whose row holds a
+//   listed number and others), so a new number can't route around the
+//   opt-out. Only numbers new to the lead: a number already on it isn't
+//   touched here.
 //
 // This writes to the CRM's own list only. It never contacts anyone, and it
 // never removes an entry. Emails: the CRM has no email opt-out list (nothing
@@ -59,7 +61,10 @@ export interface OptOutFollow {
  * What a write that adds `adding` to a lead whose numbers are `existing` must
  * put on the Do not contact list: null when the lead (with the new numbers)
  * holds no number on the list, or every new number is already on it. One
- * lookup when nothing is listed; a second only to read the reason.
+ * lookup when nothing is listed; a second only to read the reason; none when
+ * nothing new is added, or when a lead with no numbers gets a single one
+ * (there is no other number for it to follow, so a one-number upload row
+ * costs nothing).
  */
 export async function numbersToPutOnDoNotContact(
   db: OptOutDb,
@@ -75,7 +80,7 @@ export async function numbersToPutOnDoNotContact(
     seen.add(key)
     fresh.push(p)
   }
-  if (fresh.length === 0) return null
+  if (fresh.length === 0 || (lead.existing.length === 0 && fresh.length < 2)) return null
 
   // A save that brings a listed number and another one counts too: the same
   // number added in two saves would have been covered.
