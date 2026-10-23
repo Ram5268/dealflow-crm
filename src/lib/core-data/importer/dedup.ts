@@ -1,3 +1,4 @@
+import { findPhoneNumbersInText } from 'libphonenumber-js'
 import { toValidE164 } from '@/lib/shared/phone'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +51,61 @@ export function normalizePhoneType(raw: string | null | undefined): NormalizedPh
 // duplicate key and an opt-out are the same string ("+917 555 0147" is US).
 export function normalizePhoneE164(raw: string | null | undefined): string | null {
   return toValidE164(raw) // E.164, e.g. +12125550134
+}
+
+// Brief 50 PR 6 (audit L6): every valid number in one cell, in the order
+// written. A cell that is one valid number reads exactly as normalizePhoneE164.
+// A cell holding two ("212-555-0101 / 917-555-0102", "…; …", "… or …", one per
+// line, or just a space between them) wasn't a valid number as a whole, so
+// both were dropped; now each is kept. Anything that isn't a number is still
+// dropped. The first number stays first: it is the one a row is matched on.
+const CELL_SEPARATORS = /[/;,|&\r\n]|\bor\b|\band\b/i
+
+// A part that still holds more than one number (just a space between them)
+// is scanned twice, and each number found is read with the shared parser, so
+// it is stored exactly as it would be alone:
+//   • for US-shaped numbers (an optional "+" or "+1", then the 10 digits with
+//     the usual separators). libphonenumber's own finder reports only numbers
+//     valid in the country their digits suggest, and a "+" before most New
+//     York area codes isn't a valid foreign number ("+212…", "+718…", "+917…"),
+//     so it skipped them and they were lost (Brief 50 PR 6, review round 3);
+//   • with libphonenumber's finder, for any other number it knows (a foreign
+//     number written in full).
+// Where two finds overlap, the one starting first (then the longer) is kept.
+// A US-shaped find never starts or ends inside a longer run of digits, so a
+// number that isn't a phone (an account number) can't yield a made-up one.
+const US_SHAPED = /(?<!\d)\+?1?[\s.-]?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}(?!\d)/g
+
+function numbersInText(part: string): string[] {
+  const finds: { start: number; end: number; e164: string }[] = []
+  for (const m of part.matchAll(US_SHAPED)) {
+    const e164 = normalizePhoneE164(m[0])
+    if (e164) finds.push({ start: m.index, end: m.index + m[0].length, e164 })
+  }
+  for (const m of findPhoneNumbersInText(part, 'US')) {
+    const e164 = m.number.isValid() ? normalizePhoneE164(part.slice(m.startsAt, m.endsAt)) : null
+    if (e164) finds.push({ start: m.startsAt, end: m.endsAt, e164 })
+  }
+  finds.sort((a, b) => a.start - b.start || b.end - a.end)
+  const out: string[] = []
+  let end = -1
+  for (const f of finds) {
+    if (f.start < end) continue
+    out.push(f.e164)
+    end = f.end
+  }
+  return out
+}
+
+export function phonesInCell(raw: string | null | undefined): string[] {
+  const whole = normalizePhoneE164(raw)
+  if (whole) return [whole]
+  const out: string[] = []
+  for (const part of String(raw ?? '').split(CELL_SEPARATORS)) {
+    const one = normalizePhoneE164(part)
+    for (const e164 of one ? [one] : numbersInText(part)) if (!out.includes(e164)) out.push(e164)
+  }
+  return out
 }
 
 // Deterministic dedup key for a row within an org: prefer the E.164 phone;

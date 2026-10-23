@@ -204,6 +204,15 @@ export function repairMappingKinds(raw: unknown): RepairResult {
 
     const t = target as Record<string, unknown>
     const kind = t.kind
+    // Brief 50 PR 6 (audit L5): a valid kind naming a standard field that
+    // doesn't exist ("Lead.phone") failed the whole answer the same way. That
+    // column becomes `ignore`, listed like any other rewrite, and Ryan picks
+    // its field on the review screen.
+    if (kind === 'standard_field' && !(STANDARD_FIELDS as readonly unknown[]).includes(t.field)) {
+      coerced.push({ column: String(e.column ?? '(unknown column)'), from: typeof t.field === 'string' ? t.field : JSON.stringify(t.field ?? null), to: 'ignore' })
+      e.target = { kind: 'ignore' }
+      continue
+    }
     if (typeof kind === 'string' && VALID_KINDS.has(kind)) continue
 
     const from = typeof kind === 'string' ? kind : JSON.stringify(kind ?? null)

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { emit as defaultEmit } from '@/lib/core-data/events/emit'
 import { getObject } from './storage'
 import { parseFile } from './parser'
-import { normalizePhoneE164, normalizePhoneType, dedupKey } from './dedup'
+import { phonesInCell, normalizePhoneType, dedupKey } from './dedup'
 import { buildCustomValueColumns } from '@/lib/core-data/leads/custom-values'
 import { normalizeStreet, sameStreet, streetIdentity } from './address'
 import {
@@ -16,7 +16,7 @@ import {
   withImportRun,
   type ResumeState,
 } from './batch'
-import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict } from './names'
+import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict, sameName } from './names'
 import { addImportLeadsToList } from './list-membership'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
@@ -107,9 +107,9 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
   const typeNorm = normalizePhoneType(rawType)
   const phones: RowPlan['phones'] = []
   for (const col of m.phoneColumns) {
-    const e164 = normalizePhoneE164(row[col])
-    if (e164 && !phones.some((p) => p.phoneE164 === e164)) {
-      phones.push({ phoneE164: e164, type: typeNorm.type, nonstandard: typeNorm.nonstandard })
+    // Every number in the cell (Brief 50 PR 6: two in one cell were dropped).
+    for (const e164 of phonesInCell(row[col])) {
+      if (!phones.some((p) => p.phoneE164 === e164)) phones.push({ phoneE164: e164, type: typeNorm.type, nonstandard: typeNorm.nonstandard })
     }
   }
   const emails: string[] = []
@@ -142,6 +142,47 @@ export function buildRowPlan(row: Record<string, string>, m: ResolvedMapping): R
     customValues,
     dedup: dedupKey({ phoneE164: phones[0]?.phoneE164 ?? null, name: displayName, addressFull: lead.primaryAddressFull }),
   }
+}
+
+// A row with no Mojo ID, phone, name or address: nothing to match it to a
+// person on, so the commit skips it (and the review screen's preview counts it).
+export function nothingToMatch(plan: RowPlan): boolean {
+  return !plan.lead.mojoId && plan.phones.length === 0 && !plan.lead.name && !plan.contact.name && !plan.lead.primaryAddressFull
+}
+
+export interface ContactPlan {
+  displayName: string
+  name: string | null
+  title: string | null
+}
+
+// Brief 50 PR 6 (open item 6.7): the contacts a new lead gets from its row,
+// primary first. A Mojo row names the main owner in "Full Name" (Lead.name)
+// and the co-owner in "Second Name" (Contact.name). The import made one
+// contact, named after the co-owner, holding every phone on the row, so the
+// co-owner read as the person to call. When the row has both, and they are
+// two real, different people, the main owner's contact comes first and holds
+// the row's phones and emails; the co-owner follows as a contact with a name
+// only. Any other row keeps its single contact as before.
+export function rowContacts(plan: RowPlan): ContactPlan[] {
+  const single: ContactPlan = { displayName: plan.contact.name ?? plan.displayName, name: plan.contact.name ?? null, title: plan.contact.title ?? null }
+  const owner = plan.lead.name
+  const second = plan.contact.name
+  const context = { address: plan.lead.primaryAddressFull, mojoId: plan.lead.mojoId }
+  if (!owner || !second || !isRealName(owner, context) || !isRealName(second, context) || sameName(owner, second)) return [single]
+  return [
+    { displayName: plan.displayName, name: owner, title: null },
+    { displayName: collapseWs(second), name: second, title: plan.contact.title ?? null },
+  ]
+}
+
+// The contacts' createdAt when there are two: the primary contact is the
+// oldest (createdAt, then id) for every reader (the Queue's pickPrimaryContact,
+// the list pages and DealFlow's copy of CRM leads, which reads the first
+// contact's phones), so the owner's is stamped first, never by chance of id.
+function contactTimes(count: number): Date[] {
+  const at = Date.now()
+  return Array.from({ length: count }, (_, i) => new Date(at + i))
 }
 
 // Rows that could resolve to the same lead (same Mojo ID, any shared phone, or
@@ -487,7 +528,7 @@ export async function commitImport(
       }
       const plan = plans[i]
       const rowErrors = (message: string) => errorLog.push({ row: i + 2, message })
-      if (!plan.lead.mojoId && plan.phones.length === 0 && !plan.lead.name && !plan.contact.name && !plan.lead.primaryAddressFull) {
+      if (nothingToMatch(plan)) {
         // Nothing to match it on: it would merge into every other such row.
         result.errorRows++
         counted()
@@ -593,7 +634,17 @@ interface LeadMatch {
   // existing address (a same-street match already has it, often more
   // completely).
   by: 'mojo' | 'street' | 'other'
+  // Which rule found it (for the review screen's "already in your CRM"
+  // list, Brief 50 PR 6); the merge doesn't read it.
+  via: 'mojo' | 'phone' | 'name-address'
 }
+
+// What findExistingLead reads of a lead.
+export const MATCH_SELECT = {
+  id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true,
+  contacts: { select: { name: true, displayName: true } },
+} as const
+export type MatchRow = Prisma.LeadGetPayload<{ select: typeof MATCH_SELECT }>
 
 // Returns the affected leadId + whether it merged into an existing lead, or
 // 'skipped'. Kept as its own function so commitImport stays readable.
@@ -622,20 +673,22 @@ async function upsertRow(
   await db.lead.update({ where: { id: existing.id }, data: mergeUpdate(plan, source, existing) })
   const leadId = existing.id
 
-  // Reuse its primary contact, dedup phones.
+  // Reuse its primary contact, dedup phones. A lead with no contact yet gets
+  // the row's contacts, the main owner's first (Brief 50 PR 6), which takes
+  // the phones and emails below.
   let contact = await db.contact.findFirst({
     where: { leadId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   })
   if (!contact) {
+    const [primary, ...others] = rowContacts(plan)
+    const times = others.length ? contactTimes(1 + others.length) : []
     contact = await db.contact.create({
-      data: {
-        organizationId, leadId,
-        displayName: plan.contact.name ?? plan.displayName,
-        name: plan.contact.name ?? null,
-        title: plan.contact.title ?? null,
-      },
+      data: { organizationId, leadId, ...primary, ...(times.length ? { createdAt: times[0] } : {}) },
     })
+    for (const [i, other] of others.entries()) {
+      await db.contact.create({ data: { organizationId, leadId, ...other, createdAt: times[i + 1] } })
+    }
   }
   if (plan.phones.length) {
     await db.contactPhone.createMany({
@@ -656,7 +709,7 @@ async function upsertRow(
   return { leadId, merged: true }
 }
 
-// A brand-new lead is created with its contact + phones + emails nested in a
+// A brand-new lead is created with its contact(s) + phones + emails nested in a
 // SINGLE query (no contact lookup — there is nothing to reuse yet).
 async function createLead(
   db: PrismaClient,
@@ -665,6 +718,10 @@ async function createLead(
   plan: RowPlan,
   rowErrors: (message: string) => void
 ): Promise<UpsertOk> {
+  // Brief 50 PR 6: the main owner's contact holds the row's phones and
+  // emails; a co-owner is a second contact with a name only (rowContacts).
+  const [primary, ...others] = rowContacts(plan)
+  const times = others.length ? contactTimes(1 + others.length) : []
   const lead = await db.lead.create({
     data: {
       organizationId,
@@ -676,18 +733,20 @@ async function createLead(
       mojoId: plan.lead.mojoId ?? null,
       source,
       contacts: {
-        create: {
-          organizationId,
-          displayName: plan.contact.name ?? plan.displayName,
-          name: plan.contact.name ?? null,
-          title: plan.contact.title ?? null,
-          phones: {
-            create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
+        create: [
+          {
+            organizationId,
+            ...primary,
+            ...(times.length ? { createdAt: times[0] } : {}),
+            phones: {
+              create: plan.phones.map((p, idx) => ({ phone: p.phoneE164, type: p.type, isPrimary: idx === 0 })),
+            },
+            emails: {
+              create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
+            },
           },
-          emails: {
-            create: plan.emails.map((e, idx) => ({ email: e, type: 'work', isPrimary: idx === 0 })),
-          },
-        },
+          ...others.map((other, i) => ({ organizationId, ...other, createdAt: times[i + 1] })),
+        ],
       },
     },
   })
@@ -803,15 +862,18 @@ async function mapWithConcurrency<T>(
 // only fills blanks. Names are compared forgivingly ("OWNER, Alice Q." is
 // "Alice Owner", "O'Brien" is "OBrien"); a row or lead with no real name (a
 // phone-only list, "Imported Lead", "Current Resident") never conflicts.
-async function findExistingLead(
+//
+// Brief 50 PR 6: also used, read-only, by the review screen's "already in your
+// CRM" preview (duplicate-preview.ts), which may pass the Mojo ID lookups it
+// already made for the whole file (`byMojo`: Mojo ID → that lead, or null for
+// none); the rules are the same.
+export async function findExistingLead(
   db: PrismaClient,
   organizationId: string,
-  plan: RowPlan
+  plan: RowPlan,
+  known: { byMojo?: ReadonlyMap<string, MatchRow | null> } = {}
 ): Promise<LeadMatch | null> {
-  const select = {
-    id: true, mojoId: true, name: true, displayName: true, primaryAddressFull: true, statusLabel: true,
-    contacts: { select: { name: true, displayName: true } },
-  } as const
+  const select = MATCH_SELECT
   const rowAddress = plan.lead.primaryAddressFull ?? null
   const rowNames = [plan.lead.name, plan.contact.name].filter(
     (n): n is string => !!n && isRealName(n, { address: rowAddress, mojoId: plan.lead.mojoId })
@@ -819,14 +881,16 @@ async function findExistingLead(
   // Both sides have real names and none agree.
   const otherPerson = (l: Parameters<typeof leadRealNames>[0]) => namesConflict(rowNames, leadRealNames(l))
   if (plan.lead.mojoId) {
-    const byMojo = await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
+    const byMojo = known.byMojo?.has(plan.lead.mojoId)
+      ? known.byMojo.get(plan.lead.mojoId)
+      : await db.lead.findFirst({ where: { organizationId, mojoId: plan.lead.mojoId }, select })
     // Brief 41.1 (Ryan: "keep my name for good"): a fill-only merge links the
     // row's Mojo ID to a lead that kept its own name. When the names conflict,
     // a Mojo ID match only fills blanks too, so a later pass (a re-import, the
     // same row again in the file, a re-run) never renames the lead or changes
     // its status, address or custom values. Names that agree, or a side with
     // no real name, update as before.
-    if (byMojo) return { ...byMojo, sameProperty: !otherPerson(byMojo), by: 'mojo' }
+    if (byMojo) return { ...byMojo, sameProperty: !otherPerson(byMojo), by: 'mojo', via: 'mojo' }
   }
   const otherProperty = (l: { mojoId: string | null }) => !!(plan.lead.mojoId && l.mojoId && l.mojoId !== plan.lead.mojoId)
 
@@ -846,13 +910,13 @@ async function findExistingLead(
       // or changes its status (Ryan's decision, Brief 41.1 review).
       const atStreet = candidates.filter((l) => sameStreet(l.primaryAddressFull, rowAddress))
       const same = atStreet.find((l) => !otherPerson(l)) ?? atStreet[0]
-      if (same) return { ...same, sameProperty: !otherPerson(same), by: 'street' }
+      if (same) return { ...same, sameProperty: !otherPerson(same), by: 'street', via: 'phone' }
       // A lead with no address, or one with no street name (Brief 41.1 review).
       const blank = candidates.find((l) => !hasStreet(l.primaryAddressFull) && !otherPerson(l))
-      if (blank) return { ...blank, sameProperty: false, by: 'other' }
+      if (blank) return { ...blank, sameProperty: false, by: 'other', via: 'phone' }
     } else {
       const usable = candidates.find((l) => !otherPerson(l) && !(plan.lead.mojoId && !l.mojoId && hasStreet(l.primaryAddressFull)))
-      if (usable) return { ...usable, sameProperty: false, by: 'other' }
+      if (usable) return { ...usable, sameProperty: false, by: 'other', via: 'phone' }
     }
     // Leads with this phone are other properties: try the exact name + address.
   }
@@ -872,7 +936,7 @@ async function findExistingLead(
     select,
   })
   if (byNameAddr && !otherProperty(byNameAddr) && !(plan.lead.mojoId && !byNameAddr.mojoId && !rowAddress)) {
-    return { ...byNameAddr, sameProperty: !!rowAddress, by: rowAddress ? 'street' : 'other' }
+    return { ...byNameAddr, sameProperty: !!rowAddress, by: rowAddress ? 'street' : 'other', via: 'name-address' }
   }
   return null
 }
