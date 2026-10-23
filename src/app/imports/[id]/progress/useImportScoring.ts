@@ -85,7 +85,7 @@ export async function driveScoring(importId: string, deps: DriveDeps = {}, mode:
   let ranAgain = false
   // 1,000 chunks of 500 is far beyond any upload.
   for (let i = 0; i < 1_000; i++) {
-    const body = ask ? { retry: true } : after ? { after } : {}
+    const body: { retry?: true; after?: string } = ask ? { retry: true } : after ? { after } : {}
     const res: Response | null = await fetchImpl(`/api/imports/${encodeURIComponent(importId)}/score`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

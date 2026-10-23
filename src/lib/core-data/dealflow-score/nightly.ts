@@ -28,7 +28,11 @@
 // second ask always fits. Nothing here contacts anyone.
 //
 // Not covered: a run started by hand at another time of day (Vercel's "Run"
-// button). Browser-safe: no imports.
+// button); and a first ranking cut short during the run's hour and resumed 7+
+// minutes after the upload while DealFlow is down, which ends quietly ("done")
+// instead of showing the error, because nothing records which pass is the
+// second one (no column for it; the next morning's nightly ranks those people).
+// Browser-safe: no imports.
 
 /** DealFlow's nightly cron hour, UTC (DealFlow vercel.json: "0 9 * * *"). */
 export const DEALFLOW_NIGHTLY_UTC_HOUR = 9

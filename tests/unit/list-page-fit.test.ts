@@ -46,7 +46,7 @@ function render(rows: RankedRow[]): string {
   const data: RankedPage = {
     list: {
       id: 'l1', name: 'Expireds – Oct 2026', folderId: null, folderName: null, source: 'manual', sortOrder: 0,
-      archivedAt: null, memberCount: rows.length, createdAt: '2026-10-18T14:00:00.000Z', uploadedAt: null,
+      archivedAt: null, memberCount: rows.length, createdAt: '2026-10-18T14:00:00.000Z',
     },
     total: rows.length, memberCount: rows.length, page: 1, pageSize: 100, rankedAt: '2026-10-14T11:02:00.000Z',
     callingOffReason: 'Calling is off',

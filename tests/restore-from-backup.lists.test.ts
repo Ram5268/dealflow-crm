@@ -31,7 +31,7 @@ const P: Record<"folder" | "list" | "group", string> = { folder: "", list: "", g
 
 function restore(file: string, url = perfConnectionString()) {
   const r = spawnSync("node_modules/.bin/tsx", ["scripts/restore-from-backup.ts", file], {
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, DATABASE_URL_MAIN: url },
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, NODE_ENV: "test", DATABASE_URL_MAIN: url },
     encoding: "utf8",
     timeout: 90_000,
   });
