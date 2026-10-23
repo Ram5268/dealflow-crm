@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { POST as createContact } from '@/app/api/contacts/route'
 import { DELETE as deleteContact } from '@/app/api/contacts/[id]/route'
 import { DELETE as deleteLead } from '@/app/api/leads/[id]/route'
+import { POST as createLead } from '@/app/api/leads/route'
 import { mainIsTestDb } from '../setup/live-guard'
 
 // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): the
@@ -88,6 +89,26 @@ describe.runIf(enabled)('the contacts API and deletes respect the Do not contact
     expect(res.status).toBe(201)
     expect(await prisma.dncSuppression.count({ where: { organizationId: orgId, phone: { in: ['+13475550163', '+13475550164'] } } })).toBe(0)
     expect(await entries(lead.id)).toHaveLength(0)
+  })
+
+  // Executor's follow-up: POST /api/leads takes no contacts or phones (its
+  // schema drops anything else), so a new lead made there has no number that
+  // could route around an opt-out. Numbers come in through POST /api/contacts.
+  it('POST /api/leads never creates a phone, even when one is sent', async () => {
+    await optOut('+13475550192')
+    const res = await createLead(
+      req('/api/leads', {
+        method: 'POST',
+        body: {
+          displayName: 'Test Owner New', source: TAG,
+          contacts: { create: { organizationId: orgId, displayName: 'x', phones: { create: [{ phone: '+13475550192', type: 'mobile' }, { phone: '+13475550193', type: 'mobile' }] } } },
+        },
+      }),
+    )
+    expect(res.status).toBe(201)
+    const { lead } = await res.json()
+    expect(await prisma.contact.count({ where: { leadId: lead.id } })).toBe(0)
+    expect(await prisma.contactPhone.count({ where: { phone: { in: ['+13475550192', '+13475550193'] } } })).toBe(0)
   })
 
   it('a contact holding a number on the list, or with texts blocked, can\'t be deleted; one with neither can', async () => {

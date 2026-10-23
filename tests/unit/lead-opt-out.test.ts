@@ -161,6 +161,22 @@ describe('a number added to a lead that has a Do not contact number', () => {
     expect(rows).toHaveLength(1)
   })
 
+  // Executor's follow-up (Brief 50 PR 17): a brand-new lead, e.g. from an upload.
+  it('a new lead with a listed number and another: the other goes on the list too', async () => {
+    const { db } = fakeDb([{ phone: '+13475550185', reason: 'Asked not to be called' }])
+    expect(await numbersToPutOnDoNotContact(db, ORG, { existing: [], adding: ['+13475550185', '+13475550186'] })).toEqual({
+      phones: ['+13475550186'],
+      reason: 'Asked not to be called',
+    })
+  })
+
+  it('a new lead with a single number asks nothing: there is no other number to put on the list', async () => {
+    const { db, calls } = fakeDb([{ phone: '+13475550185' }])
+    expect(await numbersToPutOnDoNotContact(db, ORG, { existing: [], adding: ['+13475550185'] })).toBeNull()
+    expect(await numbersToPutOnDoNotContact(db, ORG, { existing: [], adding: ['+13475550185', '(347) 555-0185'] })).toBeNull()
+    expect(calls).toEqual([])
+  })
+
   it('a write that adds nothing asks nothing', async () => {
     const { db, calls } = fakeDb([{ phone: '+13475550101' }])
     expect(await numbersToPutOnDoNotContact(db, ORG, { existing: ['+13475550101'], adding: [] })).toBeNull()
