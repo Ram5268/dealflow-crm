@@ -194,6 +194,13 @@ describe('an opt-out blocks the lead however either side was typed', () => {
     expect((await callable(db, '+9175550123')).callable).toBe(false)
   })
 
+  it('an opt-out typed with a "0" after the first digits ("+64 (0)6 555 0123") blocks the lead stored as +16465550123', async () => {
+    const { db, rows } = fakeDncDb()
+    await addInternalDnc(ORG, { phone: '+64 (0)6 555 0123' }, db)
+    expect(rows.map((r) => r.phone)).toEqual(['+16465550123'])
+    expect((await callable(db, toE164('+646 555 0123')!)).callable).toBe(false)
+  })
+
   it('the importer finds a "+917…" row a duplicate of the lead already stored as +19175550123', () => {
     expect(normalizePhoneE164('+917 555 0123')).toBe(normalizePhoneE164('(917) 555-0123'))
   })

@@ -21,13 +21,18 @@ function usNumberAfterStrayPlus(text: string): PhoneNumber | undefined {
 }
 
 // The one reading of a typed phone: libphonenumber's (US by default), with the
-// stray-"+" rule above.
+// stray-"+" rule above. The rule is also tried on the foreign reading's own
+// E.164: libphonenumber drops a national "0" typed after the country code
+// ("+64 (0)6 555 0123" → +6465550123), and that stored form, read again, is
+// "+" and 10 digits. So the same digits typed with or without the "0" give one
+// canonical string, and a canonical string reads back as itself (DS-1 leaves
+// toE164(x) === x alone) [engineering precaution].
 function readPhone(raw: string | null | undefined): PhoneNumber | undefined {
   const text = String(raw ?? '').trim()
   if (!text) return undefined
   const parsed = parsePhoneNumberFromString(text, 'US')
   if (parsed?.countryCallingCode === '1') return parsed
-  return usNumberAfterStrayPlus(text) ?? parsed
+  return usNumberAfterStrayPlus(text) ?? (parsed && usNumberAfterStrayPlus(parsed.number)) ?? parsed
 }
 
 // Brief 41 (H13): the one form a phone is stored and matched in: E.164

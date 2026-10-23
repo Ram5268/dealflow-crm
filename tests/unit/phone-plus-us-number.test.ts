@@ -34,6 +34,17 @@ describe('a "+" before a US number\'s 10 digits is read as US: +1 and the 10 dig
     expect(toE164('+876 555 0123')).toBe('+18765550123')
   })
 
+  it('a "0" typed after the "+" and the first digits gives the same number, and the stored form reads back as itself', () => {
+    // libphonenumber drops the "0" as a national prefix; the result is "+" and
+    // the same 10 digits, so it must read the same way as without the "0".
+    for (const typed of ['+64 (0)6 555 0123', '+64 06 555 0123', '+646 555 0123']) expect(toE164(typed), typed).toBe('+16465550123')
+    expect(toE164('+51 (0)6 555 0123')).toBe('+15165550123')
+    for (const typed of ['+917 555 0123', '+64 (0)6 555 0123', '+51 (0)6 555 0123', '+44 20 7946 0750', '+44 (0)20 7946 0750', '+61 2 5550 0123', '+555 555 0123', '+1 555 555 0101']) {
+      const once = toE164(typed)
+      expect(once && toE164(once), typed).toBe(once)
+    }
+  })
+
   it('an extension is dropped from the stored form, as for every other number', () => {
     expect(toE164('+917 555 0123 ext 5')).toBe('+19175550123')
     expect(toE164('+917 555 0123 x5')).toBe('+19175550123')
