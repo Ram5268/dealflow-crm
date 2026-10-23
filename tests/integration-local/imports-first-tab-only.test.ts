@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { mainIsTestDb } from '../setup/live-guard'
 import { putObject } from '@/lib/core-data/importer/storage'
 import { commitImport } from '@/lib/core-data/importer/commit-worker'
-import type { MappingProposal } from '@/lib/core-data/importer/ai-mapping'
+import type { MappingProposal, MappingTarget } from '@/lib/core-data/importer/ai-mapping'
 import type { EmitResult } from '@/lib/core-data/events/emit'
 import { POST as proposePOST } from '@/app/api/imports/[id]/proposed-mapping/route'
 import { POST as previewPOST } from '@/app/api/imports/[id]/duplicate-preview/route'
@@ -30,7 +30,8 @@ const DNC: FakeSheet = { name: 'DNC', rows: [HEAD, [`${TAG}_3`, 'Test Owner Thre
 const BACKUP: FakeSheet = { name: 'Sheet1 (2)', rows: [HEAD, [`${TAG}_1`, 'Test Owner One Old', '212-555-0181']] }
 const LOOKUPS: FakeSheet = { name: 'Lookups', rows: [['Code', 'Meaning'], ['A', 'Active']], hidden: true }
 
-const col = (column: string, field: string) => ({ column, sampleValues: [], target: { kind: 'standard_field' as const, field }, confidence: 1, reasoning: '' })
+type StandardField = Extract<MappingTarget, { kind: 'standard_field' }>['field']
+const col = (column: string, field: StandardField) => ({ column, sampleValues: [], target: { kind: 'standard_field' as const, field }, confidence: 1, reasoning: '' })
 const MAPPING: MappingProposal = {
   mapping: [col('Contact ID', 'Lead.mojoId'), col('Full Name', 'Lead.name'), col('Phone', 'ContactPhone.phone')],
   likelyDuplicates: [],
