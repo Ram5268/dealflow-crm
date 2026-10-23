@@ -13,8 +13,10 @@ import {
   type CustomFieldChoice,
 } from '@/lib/core-data/importer/mapping-edit'
 import type { DuplicatePreviewDTO } from '@/lib/core-data/importer/duplicate-preview-view'
+import type { TabsForReview } from '@/lib/core-data/importer/parser'
 import { MappingTable } from './MappingTable'
 import { DuplicatePreview, type PreviewState } from './DuplicatePreview'
+import { FileTabsNote } from './FileTabsNote'
 
 interface Proposal {
   mapping: ColumnMapping[]
@@ -27,6 +29,8 @@ interface Proposal {
   source?: 'ai' | 'manual' | 'last-run'
   notice?: string | null
   customFields?: CustomFieldChoice[]
+  // Brief 50 PR 20: an Excel file's tabs that aren't imported, and the row limit.
+  tabs?: TabsForReview | null
 }
 
 // Brief 50 PR 6 (open item 6.6): Ryan changes any column's field (or "Don't
@@ -159,7 +163,8 @@ export default function MappingReviewPage({ params }: { params: Promise<{ id: st
         {!proposal && !error && <p className="text-base text-muted">Proposing column mapping…</p>}
         {proposal && (
           <>
-            <p className="mb-3 text-base text-muted">{proposal.totalRowsDetected} rows detected</p>
+            <p className="mb-3 text-base text-muted">{proposal.totalRowsDetected.toLocaleString('en-US')} rows detected</p>
+            <FileTabsNote tabs={proposal.tabs} totalRows={proposal.totalRowsDetected} />
             {proposal.notice && (
               <p className="mb-3 rounded-md border border-line bg-elevated p-3 text-base text-fg" data-testid="mapping-notice">
                 {proposal.notice}
