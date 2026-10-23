@@ -49,6 +49,32 @@ describe('phonesInCell', () => {
     expect(phonesInCell('212-555-0101 +646 555 0124')).toEqual(['+12125550101', '+16465550124'])
     expect(phonesInCell('212 555 0101 +929 555 0125')).toEqual(['+12125550101', '+19295550125'])
   })
+
+  it('a "+" before a US number in a space-only two-number cell, for area codes that are not valid under any other country (review round 3)', () => {
+    // 212, 347, 718, 973 and 908 read as invalid numbers under the country
+    // code their own digits suggest (e.g. "+212…" as Morocco), unlike 646 and
+    // 929 above, which happen to be valid under some other country's plan.
+    // Before review round 3's fix, libphonenumber-js's findPhoneNumbersInText
+    // never reported these as a match at all (not even a wrong one), so the
+    // number was silently dropped from the import, not merely misfiled.
+    expect(phonesInCell('718-555-0101 +212 555 0147')).toEqual(['+17185550101', '+12125550147'])
+    expect(phonesInCell('718-555-0101 +347 555 0147')).toEqual(['+17185550101', '+13475550147'])
+    expect(phonesInCell('718-555-0101 +718 555 0147')).toEqual(['+17185550101', '+17185550147'])
+    expect(phonesInCell('718-555-0101 +973 555 0147')).toEqual(['+17185550101', '+19735550147'])
+    expect(phonesInCell('718-555-0101 +908 555 0147')).toEqual(['+17185550101', '+19085550147'])
+    // Order independence: the stray-"+" number first, not second.
+    expect(phonesInCell('+212 555 0147 718-555-0101')).toEqual(['+12125550147', '+17185550101'])
+    expect(phonesInCell('+917 555 0147 718-555-0101')).toEqual(['+19175550147', '+17185550101'])
+    // Three numbers, space-only, one with a stray "+".
+    expect(phonesInCell('718-555-0101 212-555-0102 +347 555 0103')).toEqual([
+      '+17185550101',
+      '+12125550102',
+      '+13475550103',
+    ])
+    // A foreign number written in full is still found (libphonenumber's own
+    // finder; a fictional UK drama number).
+    expect(phonesInCell('212-555-0101 +44 20 7946 0958')).toEqual(['+12125550101', '+442079460958'])
+  })
 })
 
 describe('buildRowPlan with two numbers in one cell', () => {

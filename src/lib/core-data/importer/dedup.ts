@@ -61,21 +61,47 @@ export function normalizePhoneE164(raw: string | null | undefined): string | nul
 // dropped. The first number stays first: it is the one a row is matched on.
 const CELL_SEPARATORS = /[/;,|&\r\n]|\bor\b|\band\b/i
 
+// A part that still holds more than one number (just a space between them)
+// is scanned twice, and each number found is read with the shared parser, so
+// it is stored exactly as it would be alone:
+//   • for US-shaped numbers (an optional "+" or "+1", then the 10 digits with
+//     the usual separators). libphonenumber's own finder reports only numbers
+//     valid in the country their digits suggest, and a "+" before most New
+//     York area codes isn't a valid foreign number ("+212…", "+718…", "+917…"),
+//     so it skipped them and they were lost (Brief 50 PR 6, review round 3);
+//   • with libphonenumber's finder, for any other number it knows (a foreign
+//     number written in full).
+// Where two finds overlap, the one starting first (then the longer) is kept.
+const US_SHAPED = /\+?1?[\s.-]?\(?[2-9]\d{2}\)?[\s.-]?[2-9]\d{2}[\s.-]?\d{4}/g
+
+function numbersInText(part: string): string[] {
+  const finds: { start: number; end: number; e164: string }[] = []
+  for (const m of part.matchAll(US_SHAPED)) {
+    const e164 = normalizePhoneE164(m[0])
+    if (e164) finds.push({ start: m.index, end: m.index + m[0].length, e164 })
+  }
+  for (const m of findPhoneNumbersInText(part, 'US')) {
+    const e164 = m.number.isValid() ? normalizePhoneE164(part.slice(m.startsAt, m.endsAt)) : null
+    if (e164) finds.push({ start: m.startsAt, end: m.endsAt, e164 })
+  }
+  finds.sort((a, b) => a.start - b.start || b.end - a.end)
+  const out: string[] = []
+  let end = -1
+  for (const f of finds) {
+    if (f.start < end) continue
+    out.push(f.e164)
+    end = f.end
+  }
+  return out
+}
+
 export function phonesInCell(raw: string | null | undefined): string[] {
   const whole = normalizePhoneE164(raw)
   if (whole) return [whole]
   const out: string[] = []
   for (const part of String(raw ?? '').split(CELL_SEPARATORS)) {
     const one = normalizePhoneE164(part)
-    // Each number found is read again with the shared parser (PR 13's "+"
-    // rule), so a number in a two-number cell is stored as it would be alone.
-    const found = one
-      ? [one]
-      : findPhoneNumbersInText(part, 'US').flatMap((m) => {
-          const e164 = m.number.isValid() ? toValidE164(part.slice(m.startsAt, m.endsAt)) : null
-          return e164 ? [e164] : []
-        })
-    for (const e164 of found) if (!out.includes(e164)) out.push(e164)
+    for (const e164 of one ? [one] : numbersInText(part)) if (!out.includes(e164)) out.push(e164)
   }
   return out
 }
