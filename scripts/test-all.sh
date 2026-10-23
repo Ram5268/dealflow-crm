@@ -51,6 +51,14 @@ echo "suite 2 (agent-d): exit $E2"
 if [ -z "${DATABASE_URL_MAIN:-}" ]; then
   echo "NOTE: DATABASE_URL_MAIN was not set, so suite 1's tests/integration-local files were SKIPPED (CI's db-suite runs them)."
 fi
+# Brief 50 (PR 21): tests/perf/25k.test.ts (the 25,000-lead speed test) runs
+# only when asked (CRM_RUN_PERF_25K=1), so a routine local run doesn't reseed
+# and requery it against DATABASE_URL_PERF -- which this repo's own docs point
+# at the shared Railway perf database the live CRM shares. CI sets the opt-in
+# itself, since its db-suite job uses its own throwaway Postgres.
+if [ "${CRM_RUN_PERF_25K:-}" != "1" ]; then
+  echo "NOTE: CRM_RUN_PERF_25K was not set, so tests/perf/25k.test.ts (the 25,000-lead speed test) was SKIPPED (CI sets it)."
+fi
 
 if [ $E1 -ne 0 ] || [ $E2 -ne 0 ]; then
   echo "RESULT: FAILED"

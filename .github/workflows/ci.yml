@@ -82,6 +82,12 @@ jobs:
       # instead of letting the database suites skip without a word
       # (tests/setup/live-guard.ts).
       CRM_TEST_DB_REQUIRED: '1'
+      # Brief 50 (PR 21): tests/perf/25k.test.ts (the 25,000-lead speed test)
+      # now runs only when asked (tests/perf/perf-25k-gate.ts), since a routine
+      # local run's DATABASE_URL_PERF points at the shared Railway perf
+      # database. This job's DATABASE_URL_PERF above is its own throwaway
+      # Postgres service container, not Railway, so it opts in here.
+      CRM_RUN_PERF_25K: '1'
     steps:
       - uses: actions/checkout@v5
 

@@ -24,6 +24,12 @@ import { logger } from '@/lib/logger'
 //     so roQuery is the only way the CRM reads DealFlow.
 // Brief 50 (PR 11): a 60 s time limit on every read, and a connection dropped
 // mid-read fails only that read (both below).
+// Brief 50 (PR 21), engineering precaution (open item: small tidy-ups): a
+// caller may ask for a tighter limit than the pool's 60 s default, for one
+// call only (roQuery's statementTimeoutMs, below). It's set with SET LOCAL
+// inside the read-only transaction, so it reverts at ROLLBACK and never
+// changes the session's own 60 s default for the next checkout or any other
+// caller that doesn't ask for it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 let pool: Pool | null = null
@@ -175,9 +181,18 @@ function holdsSecondStatement(sql: string): boolean {
 // transaction Postgres enforces, and the extended protocol (one command).
 export async function roQuery<T = Record<string, unknown>>(
   sql: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  opts: { statementTimeoutMs?: number } = {}
 ): Promise<T[]> {
   assertReadOnlySql(sql)
+  const { statementTimeoutMs } = opts
+  // Brief 50 (PR 21): validated before connecting, like the SQL checks above.
+  // Postgres's SET doesn't take a bind parameter, and this number is never
+  // request input (every caller passes its own constant), but a bad value
+  // (NaN, negative, a float) is refused rather than sent as-is.
+  if (statementTimeoutMs !== undefined && !(Number.isInteger(statementTimeoutMs) && statementTimeoutMs > 0)) {
+    throw new Error('DealFlow RO client: statementTimeoutMs must be a positive integer')
+  }
   const client = await getPool().connect()
   let broken = false
   // Brief 50 (PR 11), the patch from Brief 41.2 PR F's review (r2), an
@@ -192,6 +207,14 @@ export async function roQuery<T = Record<string, unknown>>(
   client.on('error', onError)
   try {
     await client.query('BEGIN READ ONLY')
+    // Brief 50 (PR 21): a caller's own, tighter limit for this one statement,
+    // set with SET LOCAL so it only ever holds inside this transaction (it
+    // reverts at ROLLBACK below, whatever happens) -- every other caller, and
+    // this same caller's next checkout, keeps the pool's 60 s default
+    // (DEALFLOW_STATEMENT_TIMEOUT_MS, set at connect time, unchanged here).
+    if (statementTimeoutMs !== undefined) {
+      await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs}`)
+    }
     // A variable, not an inline literal: @types/pg doesn't list queryMode.
     const statement = { text: sql, values: params, queryMode: 'extended' }
     const res = await client.query(statement)
