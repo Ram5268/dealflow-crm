@@ -90,6 +90,12 @@ describe('a save from another website is refused (403) before any route runs', (
     ['an unreadable Referer only', { referer: 'garbage' }],
     ["another website's Origin, even with our Referer", { origin: EVIL, referer: `${OURS}/leads` }],
     ["a forged Host can't help another website's Origin", { origin: EVIL, 'x-forwarded-host': 'crm.example.test' }],
+    // WebKit (Safari) re-sends a refused POST on Back (or when another site's
+    // page calls history.back() over a frame of the CRM) with Sec-Fetch-Site
+    // `same-origin` but the original Origin: the Origin decides.
+    ["Safari re-sending another website's refused form (same-origin, the other site's Origin)", { origin: EVIL, 'sec-fetch-site': 'same-origin' }],
+    ["Safari re-sending a no-referrer page's refused form (same-origin, Origin \"null\")", { origin: 'null', 'sec-fetch-site': 'same-origin' }],
+    ['the browser says same-origin but the Origin names a host this request was not sent to', { 'sec-fetch-site': 'same-origin', origin: 'https://crm.example.test' }],
     // Deliberate (this PR): a request with none of the three headers isn't
     // from a current browser (they all send Origin on every POST), and an old
     // browser that sends none of them could be another site's form. Scripts
@@ -150,11 +156,7 @@ describe("the CRM's own pages still save", () => {
     ["Origin matches X-Forwarded-Host (Vercel's proxy)", { origin: 'https://crm.example.test', 'x-forwarded-host': 'crm.example.test' }],
     ['Origin matches the first of several X-Forwarded-Host values', { origin: 'https://crm.example.test', 'x-forwarded-host': 'crm.example.test, inner.example.test' }],
     ['no Origin, the browser says same-origin', { 'sec-fetch-site': 'same-origin' }],
-    // The browser's own verdict wins (Brief 50 PR 16's reviewed behaviour): a
-    // page can't set it, and it keeps saves working if a proxy ever changed
-    // the host the server sees.
-    ['the browser says same-origin, behind a proxy that changed the host', { 'sec-fetch-site': 'same-origin', origin: 'https://crm.example.test' }],
-    ['the browser says same-origin, Origin "null" (a CRM page with a no-referrer policy)', { 'sec-fetch-site': 'same-origin', origin: 'null' }],
+    ['the browser says same-origin, Origin matches the Host header (behind a proxy)', { 'sec-fetch-site': 'same-origin', origin: 'https://crm.example.test', host: 'crm.example.test' }],
     ['no Origin, the browser says the person started it (none)', { 'sec-fetch-site': 'none' }],
     ['no Origin and no Sec-Fetch-Site, our Referer', { referer: `${OURS}/leads/lead_made_up` }],
   ])('%s', (_label, headers) => {
@@ -228,5 +230,20 @@ describe('with the password wall on (as in production)', () => {
   it('a deployment with no password stays locked (503) before the check', () => {
     vi.stubEnv('BASIC_AUTH_PASSWORD', '')
     expect(run('POST', SAVE, { origin: OURS }).status).toBe(503)
+  })
+})
+
+describe('no other website may frame a CRM page (review round 1)', () => {
+  it('every page and route the middleware lets through says so', () => {
+    for (const [method, path, headers] of [
+      ['GET', '/leads', {}],
+      ['GET', '/queue', {}],
+      ['POST', '/api/leads/x', { origin: CRM }],
+    ] as const) {
+      const res = run(method, path, headers)
+      expect(wentThrough(res)).toBe(true)
+      expect(res.headers.get('x-frame-options')).toBe('DENY')
+      expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'none'")
+    }
   })
 })

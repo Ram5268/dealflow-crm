@@ -18,16 +18,23 @@ import { isExemptPath } from './basicAuth'
 // this site. Browsers set these headers themselves; a page can't set or
 // forge them. In order:
 //   1. `Sec-Fetch-Site` (every current browser): `cross-site` or `same-site`
-//      (another site started it) is refused, whatever the other headers say;
-//      `same-origin` (a CRM page) passes. Like Brief 50 PR 16's reviewed
-//      check, the browser's own verdict also keeps the CRM's pages working if
-//      a proxy ever changed the host the server sees.
-//   2. Otherwise `Origin`, when present (every current browser sends it on
-//      every POST, PUT, PATCH and DELETE): its host must be this request's own
+//      (another site started it) is refused, whatever the other headers say.
+//   2. Then `Origin`, when present (every current browser sends it on every
+//      POST, PUT, PATCH and DELETE): its host must be this request's own
 //      host. `null` (a sandboxed frame, a data: page, a no-referrer form) and
-//      anything unreadable are refused.
-//   3. No Origin: `Sec-Fetch-Site: none` (the person started it themselves,
-//      e.g. a reload) passes; any other value is refused.
+//      anything unreadable are refused. This comes BEFORE trusting
+//      `Sec-Fetch-Site: same-origin`, because WebKit (Safari) gets that one
+//      wrong on a history re-send: when the person goes Back (or another
+//      site's page calls history.back() over a frame of the CRM) to a POST
+//      that was refused, WebKit sends the same form again with
+//      `Sec-Fetch-Site: same-origin` but the original `Origin` (the other
+//      site's, or `null`). Seen in Playwright's WebKit, 2026-10-23 (Brief 50
+//      PR 18 review); Chromium keeps `cross-site` there. On Vercel the Origin
+//      of a CRM page always matches the Host/X-Forwarded-Host (the comparison
+//      Next.js itself makes for Server Actions), so this costs nothing.
+//   3. No Origin: `Sec-Fetch-Site: same-origin` (a CRM page) or `none` (the
+//      person started it themselves, e.g. a reload) passes; any other value
+//      is refused.
 //   4. No Origin and no Sec-Fetch-Site: the `Referer`'s host must be this
 //      request's own host.
 //   5. None of the three: refused (a deliberate choice, Brief 50 PR 18). A
@@ -73,8 +80,9 @@ export function checkSameOrigin(req: NextRequest): SameOriginVerdict {
 
   const site = req.headers.get('sec-fetch-site')?.trim().toLowerCase() ?? null
   if (site === 'cross-site' || site === 'same-site') return { allowed: false, by: 'browser-says-another-site' }
-  if (site === 'same-origin') return { allowed: true, by: 'sec-fetch-site' }
 
+  // Origin decides before a `same-origin` Sec-Fetch-Site is trusted (WebKit's
+  // history re-send, see the note above).
   const origin = req.headers.get('origin')
   if (origin !== null) {
     if (origin.trim().toLowerCase() === 'null') return { allowed: false, by: 'origin-null' }
@@ -84,7 +92,9 @@ export function checkSameOrigin(req: NextRequest): SameOriginVerdict {
   }
 
   if (site !== null) {
-    return site === 'none' ? { allowed: true, by: 'sec-fetch-site' } : { allowed: false, by: 'sec-fetch-site-not-same-origin' }
+    return site === 'same-origin' || site === 'none'
+      ? { allowed: true, by: 'sec-fetch-site' }
+      : { allowed: false, by: 'sec-fetch-site-not-same-origin' }
   }
 
   const referer = req.headers.get('referer')

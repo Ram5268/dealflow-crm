@@ -36,6 +36,12 @@ export function middleware(req: NextRequest) {
 
   const res = NextResponse.next({ request: { headers: requestHeaders } })
   res.headers.set(CORRELATION_HEADER, correlationId)
+  // Brief 50 (PR 18, review round 1), engineering precaution: no other
+  // website may show a CRM page inside a frame. A framed page can be steered
+  // while the browser holds the login (a hidden click, or Safari re-sending a
+  // refused form from history). The CRM never frames its own pages.
+  res.headers.set('X-Frame-Options', 'DENY')
+  res.headers.set('Content-Security-Policy', "frame-ancestors 'none'")
   return res
 }
 

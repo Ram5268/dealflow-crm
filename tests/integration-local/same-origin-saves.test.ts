@@ -112,6 +112,21 @@ describe.runIf(enabled)('every save refuses other websites (through the middlewa
     expect(await prisma.callingWindowConfig.count({ where: { organizationId: orgId, timezone: MADE_UP_TZ } })).toBe(0)
   })
 
+  it("confirming calling hours: Safari re-sending another website's refused form on Back (same-origin, the other site's or a null Origin) gets 403 and nothing is confirmed", async () => {
+    // WebKit re-sends a refused POST on a history navigation with
+    // Sec-Fetch-Site `same-origin` but the original Origin (seen in
+    // Playwright's WebKit, Brief 50 PR 18 review); the Origin decides.
+    for (const origin of ['https://evil.example', 'null']) {
+      const { response, reachedRoute } = await throughMiddleware(
+        req('POST', '/api/compliance/policy/confirm', policy, { 'content-type': 'text/plain', origin, 'sec-fetch-site': 'same-origin' }),
+        (r) => confirmPolicy(r),
+      )
+      expect(response.status).toBe(403)
+      expect(reachedRoute).toBe(false)
+    }
+    expect(await prisma.callingWindowConfig.count({ where: { organizationId: orgId, timezone: MADE_UP_TZ } })).toBe(0)
+  })
+
   it("confirming calling hours: the CRM's own page reaches the route (its own 400 for an incomplete form; no gate opened here)", async () => {
     const { response, reachedRoute } = await throughMiddleware(
       req('POST', '/api/compliance/policy/confirm', { timezone: MADE_UP_TZ }, FROM_THE_CRM),
