@@ -33,7 +33,7 @@ function RowGroupsAsLoaded({ groups }: { groups: GroupChipDTO[] }) {
       {groups.map((g) => (
         <span key={g.id} className={chipClassName(g.color, true, true)}>
           <Check size={10} aria-hidden="true" className="shrink-0" />
-          <span className="min-w-0 max-w-[13rem] truncate">{g.name}</span>
+          <span className="min-w-0 max-w-[9rem] truncate">{g.name}</span>
         </span>
       ))}
     </span>

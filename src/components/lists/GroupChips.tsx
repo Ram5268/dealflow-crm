@@ -136,7 +136,8 @@ export function GroupChipsView({
               className={chipClassName(g.color, on, compact)}
             >
               {on ? <Check size={compact ? 10 : 12} aria-hidden="true" className="shrink-0" /> : <ChipDot color={g.color} />}
-              <span className="min-w-0 max-w-[13rem] truncate">{g.name}</span>
+              {/* Brief 50 PR 7: a long name is cut shorter in a table row, so one group can't widen the table. */}
+              <span className={cn('min-w-0 truncate', compact ? 'max-w-[9rem]' : 'max-w-[13rem]')}>{g.name}</span>
             </button>
           )
         })

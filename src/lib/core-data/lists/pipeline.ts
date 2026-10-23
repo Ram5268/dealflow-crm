@@ -28,7 +28,7 @@ import { Prisma, type PrismaClient } from '@prisma/client'
 import { DateTime } from 'luxon'
 import { prisma } from '@/lib/prisma'
 import {
-  BOARD_PAGE_SIZE, BOROUGHS, MAX_PAGE, PAGE_SIZE, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
+  BOARD_PAGE_SIZE, BOROUGHS, IDS_CAP, MAX_PAGE, PAGE_SIZE, PIPELINE_SORT_KEYS, PIPELINE_VIEWS,
   type GroupChipDTO, type PipelineCard, type PipelineColumn, type PipelineFilterOptions,
   type PipelineFilters, type PipelineQuery, type PipelineResult, type PipelineRow, type PipelineSortKey, type SortDir,
 } from './types'
@@ -332,18 +332,11 @@ function sortSql(alias: string, key: PipelineSortKey, dir: SortDir): Prisma.Sql 
 
 // ─── The query ───────────────────────────────────────────────────────────────
 
-export async function getPipeline(
-  organizationId: string,
-  query: PipelineQuery,
-  opts: { now?: Date } = {},
-  db: PrismaClient = prisma,
-): Promise<PipelineResult> {
-  const now = opts.now ?? new Date()
+// The shown groups (sidebar order, whatever order they were asked in; another
+// org's or an unknown group is ignored) and the query's context.
+function context<G extends { id: string }>(organizationId: string, query: PipelineQuery, groups: G[], now: Date) {
   const today = DateTime.fromJSDate(now).setZone(NY).startOf('day')
   const sunday = today.plus({ days: (7 - today.weekday) % 7 })
-  const [groups, filterOptions] = await Promise.all([listGroups(organizationId, db), loadFilterOptions(organizationId, db)])
-  // Columns in sidebar order, whatever order they were asked in; another
-  // org's or an unknown group is ignored.
   const wanted = query.groups ? new Set(query.groups) : null
   const shownGroups = groups.filter((g) => !wanted || wanted.has(g.id))
   const ctx: Ctx = {
@@ -354,6 +347,43 @@ export async function getPipeline(
     today: today.toISODate()!,
     sunday: sunday.toISODate()!,
   }
+  return { shownGroups, ctx }
+}
+
+// The table's rows before paging: one per lead in any shown group, filtered.
+const tableRows = (ctx: Ctx) => Prisma.sql`${ctes(ctx)},
+      per_lead AS (SELECT c.id, min(c.added_at) AS in_group_since FROM cand c GROUP BY c.id),
+      f AS (SELECT p.in_group_since, i.* FROM per_lead p JOIN info i ON i.id = p.id
+            WHERE ${and([...leadConditions(ctx), ...timeInGroup(ctx, 'p.in_group_since')])})`
+
+/**
+ * Brief 50 PR 7 (open item 6.12): every lead the Pipeline table shows for
+ * these groups, filters and sort (all its pages), in the table's order, at
+ * most IDS_CAP at once, like the list pages' and All leads' ids=1: the
+ * table's "Select all N matching", so a bulk action reaches all of them.
+ */
+export async function getPipelineIds(
+  organizationId: string,
+  query: PipelineQuery,
+  opts: { now?: Date; cap?: number } = {},
+  db: PrismaClient = prisma,
+): Promise<string[]> {
+  const { ctx } = context(organizationId, query, await listGroups(organizationId, db), opts.now ?? new Date())
+  if (ctx.shown.length === 0) return []
+  const rows = await db.$queryRaw<{ id: string }[]>`${tableRows(ctx)}
+      SELECT f.id FROM f ORDER BY ${sortSql('f', query.sort ?? 'rank', query.dir ?? 'asc')} LIMIT ${opts.cap ?? IDS_CAP}`
+  return rows.map((r) => r.id)
+}
+
+export async function getPipeline(
+  organizationId: string,
+  query: PipelineQuery,
+  opts: { now?: Date } = {},
+  db: PrismaClient = prisma,
+): Promise<PipelineResult> {
+  const now = opts.now ?? new Date()
+  const [groups, filterOptions] = await Promise.all([listGroups(organizationId, db), loadFilterOptions(organizationId, db)])
+  const { shownGroups, ctx } = context(organizationId, query, groups, now)
   const nextTask = (r: { next_text: string | null; next_due_date: Date | null }) =>
     r.next_text === null ? null : { text: r.next_text, dueDate: r.next_due_date?.toISOString() ?? null }
 
@@ -362,10 +392,7 @@ export async function getPipeline(
     if (ctx.shown.length === 0) return { view: 'table', rows: [], total: 0, page, pageSize: PAGE_SIZE, filterOptions }
     const sort = query.sort ?? 'rank'
     const dir = query.dir ?? 'asc'
-    const rows = await db.$queryRaw<RowSql[]>`${ctes(ctx)},
-      per_lead AS (SELECT c.id, min(c.added_at) AS in_group_since FROM cand c GROUP BY c.id),
-      f AS (SELECT p.in_group_since, i.* FROM per_lead p JOIN info i ON i.id = p.id
-            WHERE ${and([...leadConditions(ctx), ...timeInGroup(ctx, 'p.in_group_since')])}),
+    const rows = await db.$queryRaw<RowSql[]>`${tableRows(ctx)},
       page AS (SELECT * FROM f ORDER BY ${sortSql('f', sort, dir)} LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}),
       ${bestBuyerCtes(organizationId, 'page')}${shownValues(ctx, 'page')}
       SELECT t.total, p.id, p."displayName", p."primaryAddressSummary" AS address, p.in_group_since, p.rank, p."mojoId",
