@@ -1,6 +1,6 @@
 import { roQuery } from './ro-client'
 import { toBuyers } from './buyers'
-import { toPropertyFacts } from './property'
+import { MAX_VALUE_AGE_DAYS, toPropertyFacts } from './property'
 import { logger } from '@/lib/logger'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,7 +175,14 @@ export const BUYERS_SQL = `(
 // sources, or NULL before any published run. publishedAt (stored as UTC with no
 // zone) is written as UTC ISO. Selects no tax lot number and nothing about a
 // person (engineering precaution: data minimization).
-export const PROPERTY_SQL = `(
+// Brief 50 (PR 12): one builder for any contact (the call list's here, one
+// lead's on the lead page: property-lookup.ts). A run published more than
+// MAX_VALUE_AGE_DAYS ago is ignored, as DealFlow's matching ignores it (Brief
+// 49 PR 3); filtering before "newest" gives the same answer as dropping an old
+// newest one, since every other run is older still. Measured by DealFlow's
+// clock in UTC (publishedAt has no zone), whatever the session's time zone.
+export function propertySql(contactId: string): string {
+  return `(
     SELECT jsonb_build_object(
       'asOf', pv."asOf", 'dataThrough', vr."dataThrough",
       'publishedAt', to_char(vr."publishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
@@ -183,9 +190,12 @@ export const PROPERTY_SQL = `(
       'facts', pv."factsJson", 'comps', pv."compsJson", 'sources', vr."sourcesJson")
     FROM "PropertyValuation" pv
     JOIN "ValuationRun" vr ON vr."id" = pv."runId"
-    WHERE pv."contactId" = cqe."contactId" AND vr."published" = true
+    WHERE pv."contactId" = ${contactId} AND vr."published" = true
+      AND vr."publishedAt" >= (now() AT TIME ZONE 'UTC') - interval '${MAX_VALUE_AGE_DAYS} days'
     ORDER BY vr."publishedAt" DESC NULLS LAST
     LIMIT 1)`
+}
+export const PROPERTY_SQL = propertySql('cqe."contactId"')
 
 // Brief 37: the whole latest batch (the run owning the newest generatedAt), in
 // rank order, no cap.
