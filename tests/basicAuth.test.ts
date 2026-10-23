@@ -31,6 +31,9 @@ beforeEach(() => {
   // Brief 47 (PR 3): every test starts off Vercel (local dev / E2E / CI) unless
   // it says otherwise, so a VERCEL_ENV in the shell can't change the results.
   vi.stubEnv('VERCEL_ENV', undefined)
+  // Brief 50 (PR 16): with no VERCEL_ENV, a production build counts as
+  // deployed, so pin vitest's own NODE_ENV for the same reason.
+  vi.stubEnv('NODE_ENV', 'test')
 })
 
 afterEach(() => {
@@ -362,5 +365,110 @@ describe('basicAuth — on Vercel with a password: unchanged', () => {
     for (const pathname of BASIC_AUTH_EXEMPT_PATHS) {
       expect(basicAuth(req(pathname)).ok).toBe(true)
     }
+  })
+})
+
+// Brief 50 (PR 16), engineering precaution (Brief 40 audit M5; Brief 47's
+// report, "found but not fixed"; Brief 47's tested hardening patch). Two gaps
+// in the lock above:
+//   1. A password of only spaces (a mistyped setting) counted as set: the app
+//      asked for it, and "ryan" plus those spaces opened it. It now counts as
+//      missing: locked (503) on a deployment, the no-prompt path in `next dev`.
+//   2. With no VERCEL_ENV at all (Vercel's system variables not exposed to the
+//      project), a missing password opened the app. A production build
+//      (`next build` inlines NODE_ENV=production) now counts as deployed.
+//      `next dev` (local dev, E2E, boot-standalone) keeps the no-prompt path.
+const BLANK_PASSWORDS = [' ', '   ', '\n', '\t ', ' \r\n '] as const
+
+describe('basicAuth — a password of only spaces counts as missing', () => {
+  it.each(
+    VERCEL_DEPLOYMENTS.flatMap((vercelEnv) =>
+      BLANK_PASSWORDS.map((blank) => [vercelEnv, blank] as const),
+    ),
+  )('503s on %s with the password %j, even with matching credentials', (vercelEnv, blank) => {
+    vi.stubEnv('VERCEL_ENV', vercelEnv)
+    vi.stubEnv('BASIC_AUTH_PASSWORD', blank)
+    expectNotConfigured(basicAuth(req('/leads')))
+    expectNotConfigured(basicAuth(req('/leads', basicHeader(USER, blank))))
+    expectNotConfigured(basicAuth(req('/api/leads', basicHeader(USER, ''))))
+  })
+
+  it('still lets the exempt routes through on production (they check their own secret)', () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '   ')
+    for (const pathname of BASIC_AUTH_EXEMPT_PATHS) {
+      expect(basicAuth(req(pathname)).ok).toBe(true)
+    }
+  })
+
+  it('in next dev (no VERCEL_ENV) it is the no-prompt path, like a missing password', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '   ')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('a real password with spaces around it is still compared exactly as set', () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', ' pw-fake ')
+    const prompt = basicAuth(req('/leads'))
+    if (prompt.ok) throw new Error('expected the Basic prompt')
+    expect(prompt.response.status).toBe(401)
+    expect(basicAuth(req('/leads', basicHeader(USER, ' pw-fake '))).ok).toBe(true)
+    expect(basicAuth(req('/leads', basicHeader(USER, 'pw-fake'))).ok).toBe(false)
+  })
+})
+
+describe('basicAuth — no VERCEL_ENV: a production build counts as deployed', () => {
+  it.each([
+    ['empty', ''],
+    ['unset', undefined],
+    ['only spaces', '  '],
+  ])('503s /leads in a production build when the password is %s', (_label, value) => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', value)
+    expectNotConfigured(basicAuth(req('/leads')))
+    expectNotConfigured(basicAuth(req('/api/leads', basicHeader(USER, ''))))
+  })
+
+  it('treats an empty VERCEL_ENV like a missing one', () => {
+    vi.stubEnv('VERCEL_ENV', '')
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expectNotConfigured(basicAuth(req('/leads')))
+  })
+
+  it('lets the exempt routes through in a production build with no password', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    for (const pathname of BASIC_AUTH_EXEMPT_PATHS) {
+      expect(basicAuth(req(pathname)).ok).toBe(true)
+    }
+  })
+
+  it('keeps the no-prompt path in next dev (NODE_ENV=development): local dev and E2E', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('keeps the no-prompt path under vitest (NODE_ENV=test)', () => {
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('an explicit VERCEL_ENV=development wins over a production build (no prompt)', () => {
+    vi.stubEnv('VERCEL_ENV', 'development')
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', '')
+    expect(basicAuth(req('/leads')).ok).toBe(true)
+  })
+
+  it('a production build with a password set asks for it as usual', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('BASIC_AUTH_PASSWORD', PASSWORD)
+    const prompt = basicAuth(req('/leads'))
+    if (prompt.ok) throw new Error('expected the Basic prompt')
+    expect(prompt.response.status).toBe(401)
+    expect(basicAuth(req('/leads', basicHeader(USER, PASSWORD))).ok).toBe(true)
   })
 })
