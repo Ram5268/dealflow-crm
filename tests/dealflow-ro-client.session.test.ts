@@ -66,3 +66,31 @@ describe('the DealFlow read-only session', () => {
     expect((await roQuery<{ ok: number }>('SELECT 1 AS ok'))[0].ok).toBe(1)
   })
 })
+
+// Brief 50 (PR 21), engineering precaution (small tidy-up): one caller can ask
+// for a tighter limit than the session's own 60 s default, for its one
+// statement only -- and the database, not just the caller, actually stops the
+// query. Proved on a real Postgres with pg_sleep as a stand-in for a slow
+// DealFlow read: the statement is cancelled around the short limit, far short
+// of how long pg_sleep asked to run, and the pooled connection's own 60 s
+// default is unaffected afterward (SET LOCAL reverts at ROLLBACK).
+describe("roQuery's own, tighter statement time limit", () => {
+  it('Postgres itself cancels the statement around the limit, not after pg_sleep finishes', async () => {
+    const started = Date.now()
+    await expect(roQuery('SELECT pg_sleep(2)', [], { statementTimeoutMs: 150 })).rejects.toThrow(/canceling statement due to statement timeout/)
+    expect(Date.now() - started).toBeLessThan(1_500) // well short of the 2 s sleep
+  })
+
+  it("doesn't touch the session's own default: a plain read right after still carries the 60 s limit", async () => {
+    await expect(roQuery('SELECT pg_sleep(2)', [], { statementTimeoutMs: 100 })).rejects.toThrow()
+    const [s] = await roQuery<{ t: string }>(`SELECT current_setting('statement_timeout') AS t`)
+    expect(s.t).toBe('1min')
+  })
+
+  it('a non-integer or non-positive limit is refused, and the pool keeps working afterward', async () => {
+    await expect(roQuery('SELECT 1', [], { statementTimeoutMs: 0 })).rejects.toThrow(/positive integer/)
+    await expect(roQuery('SELECT 1', [], { statementTimeoutMs: -5 })).rejects.toThrow(/positive integer/)
+    await expect(roQuery('SELECT 1', [], { statementTimeoutMs: 1.5 })).rejects.toThrow(/positive integer/)
+    expect((await roQuery<{ n: number }>('SELECT 1 AS n'))[0].n).toBe(1)
+  })
+})
