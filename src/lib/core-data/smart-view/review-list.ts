@@ -50,7 +50,8 @@ function savedViewQuery(raw: unknown): SQuery {
   try {
     return parseSavedViewQuery(raw)
   } catch (err) {
-    if (err instanceof UnavailableFilterError) throw new HttpError(400, err.message)
+    // The Queue page shows the message on its own, so it gets its full stop here.
+    if (err instanceof UnavailableFilterError) throw new HttpError(400, `${err.message}.`)
     throw err
   }
 }

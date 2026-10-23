@@ -11,7 +11,7 @@ import {
 } from '@/lib/core-data/query-dsl/compiler'
 import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
 import { parseSavedViewQuery, sortSpecSchema, type SortSpec, type SQuery } from '@/lib/core-data/query-dsl/schema'
-import { compliancePredicatesIn, DNC_CLEAN_NOTE } from '@/lib/core-data/query-dsl/compliance-filters'
+import { DNC_CLEAN_NOTE, narrowingPredicatesIn } from '@/lib/core-data/query-dsl/compliance-filters'
 import { getRankedPage } from '@/lib/core-data/lists/ranked'
 import { isGroupColor } from '@/lib/core-data/lists/rules'
 import { MAX_PAGE, type GroupColor, type MemberFilters } from '@/lib/core-data/lists/types'
@@ -169,7 +169,7 @@ async function compileView(
   return {
     compiled: compile(query, { organizationId, customFieldTypes }),
     viewSort: sortSpecSchema.parse(view.sort ?? []),
-    viewNote: compliancePredicatesIn(viewQuery).includes('dnc_clean') ? DNC_CLEAN_NOTE : undefined,
+    viewNote: narrowingPredicatesIn(viewQuery).includes('dnc_clean') ? DNC_CLEAN_NOTE : undefined,
   }
 }
 

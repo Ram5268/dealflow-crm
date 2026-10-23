@@ -312,7 +312,7 @@ describe('compiler — compliance predicates', () => {
       {
         type: 'field_condition',
         field: { kind: 'compliance', predicate: 'dnc_clean' },
-        condition: { type: 'term', op: 'in', values: ['x'] },
+        condition: { type: 'term', op: 'in', values: ['true'] },
       },
       ctx
     )

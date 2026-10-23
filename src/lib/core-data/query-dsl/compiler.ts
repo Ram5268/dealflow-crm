@@ -5,7 +5,7 @@ import type {
   SQuery,
   DslObjectType,
 } from './schema'
-import { dncCleanSql, unavailableFilterMessage } from './compliance-filters'
+import { DNC_CLEAN_CONDITION_MESSAGE, dncCleanSql, isDncCleanTrue, unavailableFilterMessage } from './compliance-filters'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // s_query → parameterized SQL compiler.
@@ -86,8 +86,12 @@ const LEAD_COLUMNS: Record<string, { col: string; kind: ColKind }> = {
 // Brief 45 [engineering precaution]: adding or removing a group label writes a
 // timeline entry of type 'Group' (src/lib/core-data/lists/timeline.ts). That is
 // a note about the label, not activity with the lead, so no Smart View counts
-// it: every `activity` reference skips those rows.
-export const NOT_A_GROUP_LABEL = `a."type" <> 'Group'`
+// it: every `activity` reference skips those rows. Brief 50 PR 4 [engineering
+// precaution]: the same for Ryan's own edits to a lead, which Brief 50 PR 5
+// writes as type 'Edit' (its LEAD_EDIT_ACTIVITY_TYPE); an edit is never
+// activity with the homeowner.
+export const TIMELINE_NOTE_TYPES = ['Group', 'Edit'] as const
+export const NOT_A_TIMELINE_NOTE = `a."type" NOT IN (${TIMELINE_NOTE_TYPES.map((t) => `'${t}'`).join(', ')})`
 
 // Related tables addressable by a `regular` field ref with a non-lead `table`.
 const RELATED_TABLES: Record<string, RelatedTable> = {
@@ -135,7 +139,7 @@ const RELATED_TABLES: Record<string, RelatedTable> = {
   activity: {
     sql: '"Activity" a',
     alias: 'a',
-    correlation: `a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL}`,
+    correlation: `a."leadId" = lead.id AND ${NOT_A_TIMELINE_NOTE}`,
     columns: {
       type: { col: 'a."type"', kind: 'text' },
       activityAt: { col: 'a."activityAt"', kind: 'date' },
@@ -149,7 +153,7 @@ const OBJECT_TYPE_EXISTS: Record<DslObjectType, string | null> = {
   contact: 'EXISTS (SELECT 1 FROM "Contact" c WHERE c."leadId" = lead.id)',
   opportunity:
     'EXISTS (SELECT 1 FROM "Opportunity" o WHERE o."leadId" = lead.id)',
-  activity: `EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id AND ${NOT_A_GROUP_LABEL})`,
+  activity: `EXISTS (SELECT 1 FROM "Activity" a WHERE a."leadId" = lead.id AND ${NOT_A_TIMELINE_NOTE})`,
 }
 
 class ParamBag {
@@ -263,11 +267,11 @@ function emitFieldCondition(
   base: string
 ): string {
   if (field.kind === 'compliance') {
-    // Brief 50 PR 4: never TRUE. "Do-not-call clean" is SQL (its condition is
-    // ignored: it keeps the clean leads either way); anything else, i.e. the
-    // hidden "Callable now", is refused out loud.
-    if (field.predicate === 'dnc_clean') return dncCleanSql(bag.add(ctx.organizationId))
-    fail(unavailableFilterMessage(field.predicate))
+    // Brief 50 PR 4: never TRUE. "Do-not-call clean" (condition "true" only)
+    // is SQL; anything else, i.e. the hidden "Callable now", is refused out loud.
+    if (field.predicate !== 'dnc_clean') fail(unavailableFilterMessage(field.predicate))
+    if (!isDncCleanTrue(condition)) fail(DNC_CLEAN_CONDITION_MESSAGE)
+    return dncCleanSql(bag.add(ctx.organizationId))
   }
 
   if (field.kind === 'custom') {

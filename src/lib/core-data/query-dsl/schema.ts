@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { UnavailableFilterError, firstUnavailableFilter, unavailableFilterMessage } from './compliance-filters'
+import { UnavailableFilterError, complianceFilterProblem, firstUnavailableFilter } from './compliance-filters'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Advanced Filtering DSL — recursive s_query schema (Close-CRM style).
@@ -34,7 +34,8 @@ export const fieldRefSchema = z.discriminatedUnion('kind', [
   }),
   // Both names stay in the shape so a view saved with either still reads;
   // 'callable_now' is hidden (Brief 50 PR 4, compliance-filters.ts), so
-  // sQuerySchema and parseSavedViewQuery refuse it. The condition is ignored.
+  // sQuerySchema and parseSavedViewQuery refuse it. 'dnc_clean' takes only the
+  // condition { type: 'term', op: 'in', values: ['true'] }.
   z.object({
     kind: z.literal('compliance'),
     predicate: z.enum(['callable_now', 'dnc_clean']),
@@ -115,9 +116,10 @@ export const sQueryShapeSchema: z.ZodType<SQuery> = z.lazy(() =>
 // /api/data/search): the shape, minus the hidden filters. Brief 50 PR 4: a
 // query naming "Callable now" is refused (400) with a plain message instead of
 // being saved, or searched, as if it filtered anything (compliance-filters.ts).
+// The same check refuses a "Do-not-call clean" condition other than "true".
 export const sQuerySchema: z.ZodType<SQuery> = sQueryShapeSchema.superRefine((q, ctx) => {
-  const hidden = firstUnavailableFilter(q)
-  if (hidden) ctx.addIssue({ code: 'custom', message: unavailableFilterMessage(hidden) })
+  const problem = complianceFilterProblem(q)
+  if (problem) ctx.addIssue({ code: 'custom', message: problem })
 })
 
 /**

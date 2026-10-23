@@ -50,8 +50,10 @@ async function person(key: string, contacts: { phone: string; smsBlocked?: boole
 }
 
 // A federal/state registry check, as the compliance engine's vendor step logs it.
-const check = (organizationId: string, phone: string, result: "clean" | "blocked" | "error", hoursAgo: number, operation = "check-federal") =>
-  db.scrubLog.create({ data: { organizationId, phone, operation, result, checkedAt: new Date(Date.now() - hoursAgo * HOUR) } });
+const check = (organizationId: string, phone: string, result: "clean" | "blocked" | "error", hoursAgo: number, operation = "check-federal", vendor?: string) =>
+  db.scrubLog.create({
+    data: { organizationId, phone, operation, result, checkedAt: new Date(Date.now() - hoursAgo * HOUR), ...(vendor ? { detail: { vendor } } : {}) },
+  });
 const suppress = (organizationId: string, phone: string, source: string) =>
   db.dncSuppression.create({ data: { organizationId, phone, source, addedBy: "test" } });
 
@@ -107,9 +109,12 @@ beforeAll(async () => {
   // check failed, the only clean check belongs to another organization).
   await person("neverChecked", [[{ phone: "+12125550168" }]]);
   await person("staleCheck", [[{ phone: "+12125550169" }]]);
-  await check(org, "+12125550169", "clean", 30);
+  await check(org, "+12125550169", "clean", 26);
   await person("checkFailed", [[{ phone: "+12125550172" }]]);
   await check(org, "+12125550172", "error", 1);
+  // Brief 40 audit H16: a "clean" written by the mock vendor proves nothing.
+  await person("mockVendorCheck", [[{ phone: "+12125550177" }]]);
+  await check(org, "+12125550177", "clean", 1, "check-federal", "mock");
   await person("otherOrgCheck", [[{ phone: "+12125550173" }]]);
   await check(otherOrg, "+12125550173", "clean", 1);
 
@@ -130,6 +135,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const o of [org, otherOrg].filter(Boolean)) {
+    await db.activity.deleteMany({ where: { organizationId: o } });
     await db.scrubLog.deleteMany({ where: { organizationId: o } });
     await db.dncSuppression.deleteMany({ where: { organizationId: o } });
     await db.litigatorSuppression.deleteMany({ where: { organizationId: o } });
@@ -155,6 +161,25 @@ describe('"Do-not-call clean" Smart View filter (Brief 50 PR 4)', () => {
     expect(r.count).toBe(KEPT.length);
   });
 
+  it("measures the 24 hours in UTC, whatever the database session's time zone", async () => {
+    // checkedAt is stored as UTC without a zone; a bare now() would compare it
+    // in the session's zone (New York: a 26-hour-old check looks 22 hours old;
+    // Tokyo: a 23-hour-old one looks 32 hours old).
+    for (const tz of ["America/New_York", "Asia/Tokyo", "UTC"]) {
+      const keys = await db.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE '${tz}'`);
+        const compiled = compile(DNC_CLEAN, { organizationId: org, customFieldTypes: {} });
+        const rows = await execute<{ id: string }>(compiled, tx as unknown as PrismaClient, {
+          organizationId: org,
+          selectSql: "lead.id",
+          orderBySql: compileOrderBy([]),
+        });
+        return keysOf(rows.map((r) => r.id));
+      });
+      expect(keys, tz).toEqual([...KEPT].sort());
+    }
+  });
+
   it("narrows with other filters (and), and adds to them (or)", async () => {
     const priority60: SQuery = {
       type: "field_condition",
@@ -178,6 +203,38 @@ describe('"Do-not-call clean" Smart View filter (Brief 50 PR 4)', () => {
     expect(keysOf(r.rows.map((x) => x.id))).toEqual([...KEPT].sort());
     expect(r.viewNote).toMatch(/do-not-call/i);
     expect(r.viewNote).toMatch(/24 hours/);
+  });
+
+  it("explains itself only when it narrows the list, not as one side of an or", async () => {
+    const hot: SQuery = {
+      type: "field_condition",
+      field: { kind: "regular", table: "lead", column: "statusLabel" },
+      condition: { type: "term", op: "in", values: ["Hot"] },
+    };
+    const view = await db.savedView.create({
+      data: { organizationId: org, name: "clean or hot", type: "lead", sQuery: { type: "or", queries: [DNC_CLEAN, hot] } },
+    });
+    const r = await listLeads({ organizationId: org, viewId: view.id, pageSize: 50 }, db);
+    expect(r.viewError).toBeUndefined();
+    expect(keysOf(r.rows.map((x) => x.id))).toEqual([...KEPT].sort());
+    expect(r.viewNote).toBeUndefined();
+  });
+});
+
+// Brief 50 PR 4 [engineering precaution]: Ryan's own edit to a lead (Activity
+// type 'Edit', written by Brief 50 PR 5) is not activity with the homeowner,
+// like a group label's entry ('Group').
+describe("Smart View activity filters skip timeline notes", () => {
+  it("a lead whose only timeline entries are an edit or a group label has no activity", async () => {
+    const at = new Date();
+    await db.activity.createMany({
+      data: [
+        { organizationId: org, leadId: ids.noContact, type: "Edit", activityAt: at, bodyText: "Name changed" },
+        { organizationId: org, leadId: ids.contactNoPhone, type: "Group", activityAt: at },
+        { organizationId: org, leadId: ids.neverChecked, type: "Call", activityAt: at },
+      ],
+    });
+    expect((await run({ type: "object_type", object_type: "activity" })).keys).toEqual(["neverChecked"]);
   });
 });
 

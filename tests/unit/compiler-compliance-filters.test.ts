@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { compile, CompileError, type CompileContext } from '@/lib/core-data/query-dsl/compiler'
 import * as dsl from '@/lib/core-data/query-dsl/schema'
+import { narrowingPredicatesIn } from '@/lib/core-data/query-dsl/compliance-filters'
 import type { SQuery } from '@/lib/core-data/query-dsl/schema'
 
 // Brief 50 PR 4 (open item 6.4, audit finding L15): the Smart View filters
@@ -80,6 +81,29 @@ describe('compiler: "Do-not-call clean" (dnc_clean)', () => {
     const opens = (and.whereSql.match(/\(/g) ?? []).length
     const closes = (and.whereSql.match(/\)/g) ?? []).length
     expect(opens).toBe(closes)
+  })
+})
+
+describe('"Do-not-call clean" takes only its "true" form', () => {
+  const NOT_CLEAN: SQuery = { ...DNC_CLEAN, condition: { type: 'term', op: 'in', values: ['false'] } } as SQuery
+  const MESSAGE = /"Do-not-call clean" filter only keeps people who are do-not-call clean/
+
+  it('any other condition is refused (it would otherwise return the clean people)', () => {
+    expect(() => compile(NOT_CLEAN, ctx)).toThrow(MESSAGE)
+    expect(() => compile({ ...DNC_CLEAN, condition: { type: 'text', mode: 'exact', value: 'true' } } as SQuery, ctx)).toThrow(CompileError)
+    const r = dsl.sQuerySchema.safeParse({ type: 'and', queries: [HOT, NOT_CLEAN] })
+    expect(r.success).toBe(false)
+    expect(r.error?.issues.map((i) => i.message).join(' ')).toMatch(MESSAGE)
+  })
+})
+
+describe('when "Do-not-call clean" narrows the list (for the Leads page note)', () => {
+  it('counts it under and / has_related, not as one alternative of an or', () => {
+    expect(narrowingPredicatesIn({ type: 'and', queries: [HOT, DNC_CLEAN] })).toEqual(['dnc_clean'])
+    expect(narrowingPredicatesIn({ type: 'has_related', object_type: 'contact', query: DNC_CLEAN })).toEqual(['dnc_clean'])
+    expect(narrowingPredicatesIn({ type: 'or', queries: [DNC_CLEAN] })).toEqual(['dnc_clean'])
+    expect(narrowingPredicatesIn({ type: 'or', queries: [HOT, DNC_CLEAN] })).toEqual([])
+    expect(narrowingPredicatesIn({ type: 'and', queries: [HOT, { type: 'or', queries: [PRIORITY_50, DNC_CLEAN] }] })).toEqual([])
   })
 })
 
