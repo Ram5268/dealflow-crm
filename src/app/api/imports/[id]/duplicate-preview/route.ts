@@ -12,8 +12,10 @@ import { FILE_GONE_MESSAGE } from '@/lib/core-data/importer/progress-view'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-// One lookup per row the commit would make (Mojo IDs in bulk), well inside this.
+// One lookup per row the commit would make (Mojo IDs in bulk). The check stops
+// starting rows after PREVIEW_BUDGET_MS, well inside this limit.
 export const maxDuration = 60
+const PREVIEW_BUDGET_MS = 40_000
 
 const bodySchema = z.object({ mapping: mappingProposalSchema })
 
@@ -36,5 +38,9 @@ export const POST = withRoute(async (req: NextRequest, { correlationId, params }
     throw err
   })
   const parsed = parseFile(buffer, batch.filename)
-  return json(await previewDuplicates(prisma, organizationId, parsed.allRows, body.mapping.mapping), correlationId)
+  const preview = await previewDuplicates(prisma, organizationId, parsed.allRows, body.mapping.mapping, {
+    deadline: Date.now() + PREVIEW_BUDGET_MS,
+    signal: req.signal,
+  })
+  return json(preview, correlationId)
 })

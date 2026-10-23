@@ -106,3 +106,36 @@ describe('proposalForReview', () => {
     expect(savedProposal({ mapping: [{ column: 'A' }], likelyDuplicates: [] })).toBeNull()
   })
 })
+
+describe('custom fields that already exist (review round 1)', () => {
+  // The commit reuses a custom field by name, so a "new" field named like an
+  // existing one is that field. The picker offers no "new" choice for it, so
+  // left as "new" the screen showed "Don't import" for a column that is
+  // imported: an AI answer on a re-upload, and every new field a stopped run
+  // already made.
+  const existing = [{ definitionId: 'cf_bed', name: 'Bedrooms', type: 'number' }]
+  const withCustom = (target: unknown) => {
+    const body = structuredClone(good) as { mapping: Array<Record<string, unknown>>; likelyDuplicates: unknown[] }
+    body.mapping.push({ column: 'Beds', sampleValues: ['3'], confidence: 0.9, reasoning: '', target })
+    return body
+  }
+  const beds = (out: { mapping: Array<{ column: string; target: unknown }> }) => out.mapping.find((m) => m.column === 'Beds')!.target
+
+  it("the AI's new field named like an existing one shows as that field", async () => {
+    const out = await proposalForReview({ parsed, existing, caller: answer(withCustom({ kind: 'new_custom_field', name: 'Bedrooms', type: 'number' })), saved: null })
+    expect(beds(out)).toEqual({ kind: 'existing_custom_field', definitionId: 'cf_bed' })
+    expect(out.coercedColumns).toEqual([])
+  })
+
+  it('back to a stopped import: a new field that run made shows as that field', async () => {
+    const saved = savedProposal(withCustom({ kind: 'new_custom_field', name: 'Bedrooms', type: 'number' }))
+    const out = await proposalForReview({ parsed, existing, caller: never, saved })
+    expect(beds(out)).toEqual({ kind: 'existing_custom_field', definitionId: 'cf_bed' })
+  })
+
+  it("a custom field that doesn't exist is Don't import, flagged for a check", async () => {
+    const out = await proposalForReview({ parsed, existing, caller: answer(withCustom({ kind: 'existing_custom_field', definitionId: 'cf_gone' })), saved: null })
+    expect(beds(out)).toEqual({ kind: 'ignore' })
+    expect(out.coercedColumns).toEqual([{ column: 'Beds', from: 'cf_gone', to: 'ignore' }])
+  })
+})

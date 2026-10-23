@@ -158,10 +158,25 @@ describe('"already in your CRM" before the commit (6.6)', () => {
     expect(res).toMatchObject({ totalRows: 5, importedRows: 4, duplicateRows: 3, errorRows: 1 });
   });
 
+  it("stops starting rows at its deadline or when the request is cancelled, and says how far it got", async () => {
+    const rows = parseFile(Buffer.from(csv), "x.csv").allRows;
+    const past = await previewDuplicates(db, org, rows, PREVIEW.mapping, { deadline: 0 });
+    expect(past).toMatchObject({ totalRows: 5, checkedRows: 0, existing: 0, unidentified: 0, matches: [] });
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(await previewDuplicates(db, org, rows, PREVIEW.mapping, { signal: cancelled.signal })).toMatchObject({ totalRows: 5, checkedRows: 0 });
+    // A clock that runs out after two rows have started.
+    let ticks = 0;
+    const partway = await previewDuplicates(db, org, rows, PREVIEW.mapping, { deadline: 2, now: () => ticks++ });
+    expect(partway.checkedRows).toBe(2);
+    expect(partway.totalRows).toBe(5);
+    expect((await previewDuplicates(db, org, rows, PREVIEW.mapping, { deadline: Date.now() + 60_000 })).checkedRows).toBe(5);
+  });
+
   it("a large file is checked in full", async () => {
     const rows = Array.from({ length: 600 }, (_, i) => ({ "Contact ID": i % 50 === 0 ? `${TAG}_p1` : `${TAG}_big${i}`, Name: `Test Owner ${i}`, Address: "", Phone: "" }));
     const p = await previewDuplicates(db, org, rows, PREVIEW.mapping);
-    expect(p).toMatchObject({ totalRows: 600, existing: 12, unidentified: 0 });
+    expect(p).toMatchObject({ totalRows: 600, checkedRows: 600, existing: 12, unidentified: 0 });
     expect(p.matches.length).toBeLessThanOrEqual(20);
   }, 60_000);
 });

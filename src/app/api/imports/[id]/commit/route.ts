@@ -29,8 +29,16 @@ export const POST = withRoute(async (req: NextRequest, { correlationId, params }
   // Brief 50 PR 6: the mapping can be changed on the review screen. The
   // screen's own checks run here too, before anything starts: nothing to match
   // a row on (every row would be skipped), or one custom field fed by two
-  // columns (a merge writing both would fail the row).
-  const [problem] = checkMapping(body.mapping.mapping).problems
+  // columns (a merge writing both would fail the row) — with the org's custom
+  // fields, as on the screen, so a new field named like an existing one counts
+  // as that field.
+  const customFields = (
+    await prisma.customFieldDefinition.findMany({
+      where: { organizationId, objectType: 'lead' },
+      select: { id: true, name: true, type: true },
+    })
+  ).map((d) => ({ definitionId: d.id, name: d.name, type: d.type }))
+  const [problem] = checkMapping(body.mapping.mapping, customFields).problems
   if (problem) throw new HttpError(400, problem)
 
   const claim = await claimImportCommit(prisma, params!.id, organizationId, body.mapping)

@@ -9,6 +9,11 @@
 // The Mojo ID lookups for the whole file are made in one query per thousand
 // IDs (the column is unique, so that is the same answer as one lookup per
 // row); the rest run per row, a few at a time.
+//
+// Bounded [engineering precaution]: no new row is started after `deadline`
+// or once `signal` is aborted (the browser cancelled the request), so a big
+// file without Mojo IDs can't run into the route's time limit or keep querying
+// after Ryan has moved on. `checkedRows` says how far it got.
 import type { PrismaClient } from '@prisma/client'
 import type { ColumnMapping } from './ai-mapping'
 import { MATCH_SELECT, buildRowPlan, findExistingLead, nothingToMatch, resolveMapping, type MatchRow } from './commit-worker'
@@ -22,7 +27,10 @@ export async function previewDuplicates(
   organizationId: string,
   rows: Record<string, string>[],
   mapping: ColumnMapping[],
+  opts: { deadline?: number; signal?: AbortSignal; now?: () => number } = {},
 ): Promise<DuplicatePreviewDTO> {
+  const now = opts.now ?? Date.now
+  const stop = () => opts.signal?.aborted === true || (opts.deadline !== undefined && now() >= opts.deadline)
   // Custom fields don't decide who a row is.
   const resolved = resolveMapping(mapping, [])
   const plans = rows.map((row) => buildRowPlan(row, resolved))
@@ -39,9 +47,12 @@ export async function previewDuplicates(
   const found: Array<DuplicateMatchDTO | null> = new Array(plans.length).fill(null)
   let skipped = 0
   let cursor = 0
+  let checked = 0
   const worker = async () => {
     while (cursor < plans.length) {
+      if (stop()) return
       const i = cursor++
+      checked++
       const plan = plans[i]
       if (nothingToMatch(plan)) {
         skipped++
@@ -63,5 +74,11 @@ export async function previewDuplicates(
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, plans.length) }, worker))
 
   const matches = found.filter((m): m is DuplicateMatchDTO => m !== null)
-  return { totalRows: plans.length, existing: matches.length, unidentified: skipped, matches: matches.slice(0, MATCH_LIST_LIMIT) }
+  return {
+    totalRows: plans.length,
+    checkedRows: checked,
+    existing: matches.length,
+    unidentified: skipped,
+    matches: matches.slice(0, MATCH_LIST_LIMIT),
+  }
 }

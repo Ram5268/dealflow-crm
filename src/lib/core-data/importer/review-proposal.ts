@@ -57,6 +57,31 @@ export function manualProposal(parsed: ParsedFile): ProposeMappingResult {
   }
 }
 
+/**
+ * Custom-field targets as the screen shows them. The commit reuses a custom
+ * field by name, so a "new" field named like one that exists (the AI's answer
+ * on a re-upload, or a field a stopped run already made) is that field; left
+ * as "new", its picker (which offers no "new" choice then) showed "Don't
+ * import" for a column that is imported. A field that no longer exists, which
+ * the commit would skip, is "Don't import", flagged like any other rewrite.
+ */
+export function resolveCustomTargets(p: ProposeMappingResult, existing: ExistingCustomField[]): ProposeMappingResult {
+  const coercedColumns = [...p.coercedColumns]
+  const mapping = p.mapping.map((m) => {
+    const t = m.target
+    if (t.kind === 'new_custom_field') {
+      const def = existing.find((f) => f.name === t.name)
+      return def ? { ...m, target: { kind: 'existing_custom_field' as const, definitionId: def.definitionId } } : m
+    }
+    if (t.kind === 'existing_custom_field' && !existing.some((f) => f.definitionId === t.definitionId)) {
+      coercedColumns.push({ column: m.column, from: t.definitionId, to: 'ignore' })
+      return { ...m, target: { kind: 'ignore' as const } }
+    }
+    return m
+  })
+  return { ...p, mapping, coercedColumns }
+}
+
 export async function proposalForReview(input: {
   parsed: ParsedFile
   existing: ExistingCustomField[]
@@ -64,9 +89,9 @@ export async function proposalForReview(input: {
   /** The mapping a stopped run committed (route: a failed or stuck import). */
   saved: MappingProposal | null
 }): Promise<ReviewProposal> {
-  if (input.saved) return { ...input.saved, coercedColumns: [], source: 'last-run', notice: LAST_RUN_NOTICE }
+  if (input.saved) return { ...resolveCustomTargets({ ...input.saved, coercedColumns: [] }, input.existing), source: 'last-run', notice: LAST_RUN_NOTICE }
   try {
-    return { ...(await proposeMapping(input.parsed, input.existing, input.caller)), source: 'ai', notice: null }
+    return { ...resolveCustomTargets(await proposeMapping(input.parsed, input.existing, input.caller), input.existing), source: 'ai', notice: null }
   } catch (error) {
     // A ZodError is an answer that couldn't be read even after repair; asking
     // again usually gives the same. Anything else (no key, an outage) may pass.

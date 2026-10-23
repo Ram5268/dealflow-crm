@@ -3,6 +3,7 @@ import {
   duplicateHeadline,
   matchLine,
   moreLine,
+  partialLine,
   unidentifiedLine,
   type DuplicatePreviewDTO,
 } from '@/lib/core-data/importer/duplicate-preview-view'
@@ -50,6 +51,7 @@ export function DuplicatePreview({ state }: { state: PreviewState }) {
             </ul>
           )}
           {moreLine(state.preview) && <p className="text-sm text-muted">{moreLine(state.preview)}</p>}
+          {partialLine(state.preview) && <p className="text-sm text-muted">{partialLine(state.preview)}</p>}
           {unidentifiedLine(state.preview.unidentified) && (
             <p className="text-sm text-muted">{unidentifiedLine(state.preview.unidentified)}</p>
           )}

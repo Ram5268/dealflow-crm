@@ -97,6 +97,29 @@ describe.runIf(enabled)('Brief 50 PR 6: the import review routes', () => {
     expect(await prisma.importBatch.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: 'mapping_review', importedRows: 0 })
   })
 
+  it('the commit runs the screen\'s check with the org\'s custom fields: a new field named like an existing one is that field', async () => {
+    const def = await prisma.customFieldDefinition.create({
+      data: { organizationId: orgId, objectType: 'lead', name: `${TAG} Beds`, type: 'number', displayOrder: 9999 },
+    })
+    try {
+      const id = await makeBatch('mapping_review')
+      const mapping = {
+        mapping: [
+          col('Contact ID', 'Lead.mojoId'),
+          { ...col('Full Name', 'Lead.name'), target: { kind: 'new_custom_field', name: `${TAG} Beds`, type: 'number' } },
+          { ...col('Phone', 'Lead.name'), target: { kind: 'existing_custom_field', definitionId: def.id } },
+        ],
+        likelyDuplicates: [],
+      }
+      const r = await call(commitPOST, id, { mapping })
+      expect(r.status).toBe(400)
+      expect(r.body.error).toContain('is chosen for 2 columns')
+      expect(await prisma.importBatch.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: 'mapping_review', importedRows: 0 })
+    } finally {
+      await prisma.customFieldDefinition.delete({ where: { id: def.id } })
+    }
+  })
+
   it('"Back to the import" after a stopped run shows the mapping as committed, and keeps showing it on a reload', async () => {
     const committed = { mapping: [col('Contact ID', 'Lead.mojoId'), col('Full Name', 'Contact.name'), col('Phone', 'ContactPhone.phone')], likelyDuplicates: [] }
     const id = await makeBatch('failed', { ...committed, importRun: { id: 'run_old', beatAt: new Date(Date.now() - 3600_000).toISOString() } })

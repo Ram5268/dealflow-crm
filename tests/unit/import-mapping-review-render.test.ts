@@ -6,6 +6,7 @@ import { MappingTable } from '@/app/imports/[id]/mapping-review/MappingTable'
 import { DuplicatePreview } from '@/app/imports/[id]/mapping-review/DuplicatePreview'
 import {
   duplicateHeadline,
+  partialLine,
   matchLine,
   moreLine,
   unidentifiedLine,
@@ -79,6 +80,7 @@ describe('MappingTable', () => {
 
 const preview = (over: Partial<DuplicatePreviewDTO> = {}): DuplicatePreviewDTO => ({
   totalRows: 412,
+  checkedRows: 412,
   existing: 2,
   unidentified: 0,
   matches: [
@@ -91,10 +93,10 @@ const preview = (over: Partial<DuplicatePreviewDTO> = {}): DuplicatePreviewDTO =
 describe('the "already in your CRM" words', () => {
   it('a count of rows, and what happens to them', () => {
     expect(duplicateHeadline(preview())).toBe(
-      "2 of 412 rows look like people already in your CRM. They'll be merged into those leads (blanks filled in), not added again.",
+      "2 of 412 rows look like people already in your CRM. They'll be merged into those leads, not added again.",
     )
     expect(duplicateHeadline(preview({ existing: 1, totalRows: 1 }))).toBe(
-      "1 of 1 row looks like someone already in your CRM. It'll be merged into that lead (blanks filled in), not added again.",
+      "1 of 1 row looks like someone already in your CRM. It'll be merged into that lead, not added again.",
     )
     expect(duplicateHeadline(preview({ existing: 0, matches: [], totalRows: 1200 }))).toBe('None of the 1,200 rows match someone already in your CRM.')
   })
@@ -111,6 +113,15 @@ describe('the "already in your CRM" words', () => {
     expect(unidentifiedLine(1)).toBe('1 row has no Mojo ID, phone, name or address, so it will be skipped.')
     expect(unidentifiedLine(3)).toBe('3 rows have no Mojo ID, phone, name or address, so they will be skipped.')
     expect(unidentifiedLine(0)).toBeNull()
+  })
+})
+
+describe('a check that stopped early', () => {
+  it('says how far it got only when it stopped before the end', () => {
+    expect(partialLine(preview())).toBeNull()
+    expect(partialLine(preview({ totalRows: 9000, checkedRows: 2500 }))).toBe(
+      'Checked the first 2,500 of 9,000 rows; the counts above are for those rows only. The import itself checks every row.',
+    )
   })
 })
 
