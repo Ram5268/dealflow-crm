@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_VIEW } from '@/lib/core-data/smart-view/defaultView'
+import { IMPORT_SCORING_SOURCE } from '@/lib/core-data/dealflow-score/marker'
 import type { DerivedSignalUpsert } from './sync'
 
 // Brief 37 — applies one DealFlow batch to the CRM's OWN DB in ONE transaction,
@@ -12,6 +13,10 @@ import type { DerivedSignalUpsert } from './sync'
 // if missing. Idempotent: re-running the same batch changes nothing.
 // Brief 45 (PR F): the drop and the NULLing spare what an upload's scoring
 // wrote after DealFlow generated the batch (the morning-sync guard below).
+// Brief 50 (PR 11): only this organization's signals are written (another
+// organization's signal with the same Mojo ID is left alone), the NULLing
+// clears nothing for a batch that maps to no lead, and refuseBatch says when
+// the morning copy should write nothing at all (run.ts).
 
 // Timezone rule (planner-approved): America/New_York only when the property is
 // in NY AND the mailing state lies wholly in the Eastern zone (or is missing).
@@ -26,6 +31,14 @@ const SIGNAL_COLUMNS =
   'id text, "mojoId" text, "queueRank" int, "priorityScore" int, "queueReason" text, "primaryMatchId" text, ' +
   '"primaryMatchFit" int, "primaryCaptureStatus" text, "primaryMatchConfidence" text, "dealflowRawJson" jsonb'
 
+// Brief 50 (PR 11), engineering precaution (open item 6.10): a Mojo ID is
+// unique across the whole table, so a signal another organization holds is
+// left exactly as it is (neither moved into this organization nor
+// overwritten); the copy writes only its own organization's rows. The same
+// condition the upload scoring's upsert uses (dealflow-score/write.ts).
+export const UPSERT_SAME_ORG_SQL = `
+  WHERE "DealFlowDerivedSignal"."organizationId" = EXCLUDED."organizationId"`
+
 // $1 = batch rows (jsonb), $2 = organizationId
 export const UPSERT_SIGNALS_SQL = `
   INSERT INTO "DealFlowDerivedSignal" (id, "organizationId", "mojoId", "queueRank", "priorityScore", "queueReason",
@@ -39,7 +52,7 @@ export const UPSERT_SIGNALS_SQL = `
     "primaryMatchId" = EXCLUDED."primaryMatchId", "primaryMatchFit" = EXCLUDED."primaryMatchFit",
     "primaryCaptureStatus" = EXCLUDED."primaryCaptureStatus",
     "primaryMatchConfidence" = EXCLUDED."primaryMatchConfidence",
-    "syncedAt" = now(), "dealflowRawJson" = EXCLUDED."dealflowRawJson"`
+    "syncedAt" = now(), "dealflowRawJson" = EXCLUDED."dealflowRawJson"${UPSERT_SAME_ORG_SQL}`
 
 // Brief 45 (PR F), the morning-sync guard (CONTRACT §7): DealFlow makes its
 // list around 5:00 and this copy runs at 7:00. An upload's new people scored
@@ -84,13 +97,31 @@ export const MORNING_GUARD_LEADS_SQL = `
     AND ($3::timestamptz IS NULL OR l."dealflowSignalSyncedAt" IS NULL
          OR l."dealflowSignalSyncedAt" <= ($3::timestamptz AT TIME ZONE 'UTC'))`
 
+// Brief 50 (PR 11), engineering precaution (open item 6.10): a batch that maps
+// to no lead of the organization clears nothing. The morning copy refuses such
+// a batch before writing (refuseBatch below); this keeps the clear itself from
+// ever blanking every lead, whoever calls it.
+export const NOTHING_MAPPED_GUARD_SQL = `
+    AND EXISTS (SELECT 1 FROM mapped)`
+
 export const CLEAR_STALE_LEADS_SQL = `${MAPPED_LEADS}
   UPDATE "Lead" AS l SET "priorityScore" = NULL, "topMatchFit" = NULL, "captureStatus" = NULL,
     "matchReason" = NULL, "dealflowDeepLink" = NULL, "dealflowSignalSyncedAt" = NULL
   WHERE l."organizationId" = $2
     AND l.id NOT IN (SELECT lead_id FROM mapped)
     AND num_nonnulls(l."priorityScore", l."topMatchFit", l."captureStatus", l."matchReason",
-                     l."dealflowDeepLink", l."dealflowSignalSyncedAt") > 0${MORNING_GUARD_LEADS_SQL}`
+                     l."dealflowDeepLink", l."dealflowSignalSyncedAt") > 0${MORNING_GUARD_LEADS_SQL}${NOTHING_MAPPED_GUARD_SQL}`
+
+// Brief 50 (PR 11): how many of the organization's leads the batch reaches
+// (MAPPED_LEADS, exactly as the writes map them), and how many signals the
+// last morning copy left (an upload's scoring rows don't count:
+// dealflow-score/marker.ts). $1 = batch rows as UPDATE_LEADS_SQL takes them,
+// $2 = organizationId. Read-only.
+export const BATCH_MAPPING_SQL = `${MAPPED_LEADS}
+  SELECT (SELECT count(*) FROM mapped)::int AS "mappedLeads",
+    (SELECT count(*) FROM "DealFlowDerivedSignal" s
+      WHERE s."organizationId" = $2
+        AND (s."dealflowRawJson"->>'source') IS DISTINCT FROM '${IMPORT_SCORING_SOURCE}')::int AS "morningSignals"`
 
 const leadCustomField = (name: string) => `(
     SELECT upper(btrim(v."valueText")) FROM "CustomFieldValue" v
@@ -145,12 +176,52 @@ export function batchGeneratedAt(signals: DerivedSignalUpsert[]): string | null 
   return latest === null ? null : new Date(latest).toISOString()
 }
 
+// The batch rows as the lead statements read them (no raw JSON).
+const leadRows = (signals: DerivedSignalUpsert[]) => JSON.stringify(signals.map(({ dealflowRawJson: _raw, ...s }) => s))
+
+export interface BatchMapping {
+  mappedLeads: number // the organization's leads this batch reaches
+  morningSignals: number // the signals the last morning copy left
+}
+
+export type BatchRefusal = 'no_leads_matched' | 'too_few_leads_matched'
+
+/**
+ * Brief 50 (PR 11), engineering precaution (open item 6.10): whether the
+ * morning copy refuses this batch. The copy treats DealFlow's list as complete
+ * and clears every lead missing from it, so a list that matches no lead would
+ * blank the Queue, and one that matches only a few would blank most of it.
+ * Refused: 0 leads; or fewer than half as many leads as the last morning's
+ * list held signals (Brief 47's "fewer than half" rule for DealFlow's own
+ * nightly). Today's list (~1,490 entries, ~1,478 of them CRM leads) passes
+ * with about a 2x margin: a refusal needs fewer than ~745. A first copy (no
+ * signals yet) is refused only when it matches no lead. "The last morning's
+ * list" is the last list it actually copied: a refused morning changes nothing,
+ * so the refusal repeats each morning until DealFlow's list recovers. There is
+ * no override (as in DealFlow's own size check), so a deliberate big shrink
+ * would also be refused; the only traces are the cron's answer and a log line.
+ */
+export function refuseBatch({ mappedLeads, morningSignals }: BatchMapping): BatchRefusal | null {
+  if (mappedLeads === 0) return 'no_leads_matched'
+  if (mappedLeads * 2 < morningSignals) return 'too_few_leads_matched'
+  return null
+}
+
+export async function countBatchMapping(
+  organizationId: string,
+  signals: DerivedSignalUpsert[],
+  db: PrismaClient = prisma
+): Promise<BatchMapping> {
+  const [r] = await db.$queryRawUnsafe<BatchMapping[]>(BATCH_MAPPING_SQL, leadRows(signals), organizationId)
+  return { mappedLeads: r?.mappedLeads ?? 0, morningSignals: r?.morningSignals ?? 0 }
+}
+
 // The statements in order, with their parameters. Exported so a dry run can
 // replay exactly these inside a transaction it rolls back.
 export function syncStatements(organizationId: string, signals: DerivedSignalUpsert[]): [string, ...unknown[]][] {
   // Each statement gets only the fields it reads (the raw JSON goes up once).
   const rows = JSON.stringify(signals.map((s) => ({ id: randomUUID(), ...s })))
-  const leads = JSON.stringify(signals.map(({ dealflowRawJson: _raw, ...s }) => s))
+  const leads = leadRows(signals)
   const mojoIds = JSON.stringify(signals.map((s) => ({ mojoId: s.mojoId })))
   const generatedAt = batchGeneratedAt(signals)
   const v = DEFAULT_VIEW

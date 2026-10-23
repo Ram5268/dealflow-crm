@@ -69,7 +69,7 @@ describe.runIf(roEnabled)('dealflow RO live read (SELECT-only)', () => {
   })
   it('reads the latest CallQueueEntry batch and builds signals', async () => {
     delete process.env.DEALFLOW_SYNC_STUB
-    const batch = await fetchDealflowBatch()
+    const batch = await fetchDealflowBatch('dealflow-ryan') // Brief 50 (PR 11): Ryan's organization only
     expect(Array.isArray(batch.rows)).toBe(true)
     // Brief 37: the whole ranked list; each row should have a mojoId to be usable.
     const signals = buildSignals(batch)

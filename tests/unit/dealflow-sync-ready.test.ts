@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import pg from 'pg'
-import { fetchDealflowBatch, RO_SQL, RO_SQL_WITHOUT_PROPERTY, VALUATIONS_READY_SQL } from '@/lib/core-data/dealflow-sync/sync'
+import { fetchDealflowBatch, RO_SQL, RO_SQL_WITHOUT_PROPERTY, RUN_INFO_SQL, VALUATIONS_READY_SQL } from '@/lib/core-data/dealflow-sync/sync'
 import { assertReadOnlySql, closeDealflowRoPool } from '@/lib/core-data/dealflow-sync/ro-client'
 
 // Brief 44 (PR 5), engineering precaution: before DealFlow's valuation tables
@@ -9,15 +9,19 @@ import { assertReadOnlySql, closeDealflowRoPool } from '@/lib/core-data/dealflow
 // connect() hands out stand-in clients.
 function fakeDealflow(ready: boolean | null) {
   const sent: string[] = []
+  const values = new Map<string, unknown>()
   vi.spyOn(pg.Pool.prototype, 'connect').mockImplementation((async () => ({
     release: vi.fn(),
-    query: vi.fn(async (q: string | { text: string }) => {
+    on: vi.fn(), // a real pg client's listener methods (roQuery listens for a dropped connection)
+    removeListener: vi.fn(),
+    query: vi.fn(async (q: string | { text: string; values?: unknown }) => {
       const text = typeof q === 'string' ? q : q.text
       sent.push(text)
+      if (typeof q !== 'string') values.set(text, q.values)
       return { rows: text === VALUATIONS_READY_SQL ? [{ ready }] : [] }
     }),
   })) as never)
-  return sent
+  return Object.assign(sent, { values })
 }
 
 afterEach(async () => {
@@ -37,9 +41,13 @@ describe('the sync before and after DealFlow V1', () => {
     it(`tables there: ${ready} -> sends ${sends}`, async () => {
       process.env.DATABASE_URL_DEALFLOW_RO = 'postgresql://nobody@127.0.0.1:1/none' // an address nothing listens on
       const sent = fakeDealflow(ready)
-      await fetchDealflowBatch()
-      expect(sent).toContain(sends === 'RO_SQL' ? RO_SQL : RO_SQL_WITHOUT_PROPERTY)
+      await fetchDealflowBatch('dealflow-ryan')
+      const sql = sends === 'RO_SQL' ? RO_SQL : RO_SQL_WITHOUT_PROPERTY
+      expect(sent).toContain(sql)
       expect(sent).not.toContain(sends === 'RO_SQL' ? RO_SQL_WITHOUT_PROPERTY : RO_SQL)
+      // Brief 50 (PR 11): the call list is read for the CRM organization's slug only.
+      expect(sent.values.get(sql)).toEqual(['dealflow-ryan'])
+      expect(sent.values.get(RUN_INFO_SQL)).toEqual(['dealflow-ryan'])
     })
   }
 })

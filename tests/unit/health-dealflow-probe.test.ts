@@ -18,6 +18,8 @@ function fakeClients(fail?: RegExp) {
     clients.push({ texts, release })
     return {
       release,
+      on: vi.fn(),
+      removeListener: vi.fn(),
       query: vi.fn(async (q: string | { text: string }) => {
         const text = typeof q === 'string' ? q : q.text
         texts.push(text)

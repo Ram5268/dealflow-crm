@@ -22,9 +22,26 @@ import { logger } from '@/lib/logger'
 //   • This file is the only reader of DATABASE_URL_DEALFLOW_RO
 //     (tests/unit/dealflow-ro-setting.test.ts), and it hands out no raw client,
 //     so roQuery is the only way the CRM reads DealFlow.
+// Brief 50 (PR 11): a 60 s time limit on every read, and a connection dropped
+// mid-read fails only that read (both below).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let pool: Pool | null = null
+
+// Brief 50 (PR 11), engineering precaution (open item 6.11): a time limit on
+// every DealFlow read, enforced by Postgres. The heaviest read is the morning
+// copy's whole call list (RO_SQL, ~1,490 sellers with their buyers and
+// values): on a made-up DealFlow of that size it takes ~0.2 s on a local
+// Postgres and returns ~5 MB, so a few seconds at most over the network to
+// Railway. 60 s is far above that (20x or more), and the copy's
+// three reads (two of them in parallel) still fit the cron's 300 s with room
+// for the write. Past it Postgres cancels the statement, roQuery fails, and
+// the copy writes nothing, as for any failed read. The lead and Queue pages
+// stop waiting after 2.5 s on their own; this also ends the read they left
+// behind on the server. The same 60 s ends a session left idle inside its
+// read-only transaction (a function frozen between BEGIN and ROLLBACK), so it
+// can't hold a snapshot open on DealFlow's database.
+export const DEALFLOW_STATEMENT_TIMEOUT_MS = 60_000
 
 function getPool(): Pool {
   if (pool) return pool
@@ -36,6 +53,14 @@ function getPool(): Pool {
     // Fail fast on a dead RO host so the cron/health don't hang.
     connectionTimeoutMillis: 8_000,
     idleTimeoutMillis: 10_000,
+    // Sent as startup parameters, so they hold for the whole session (BEGIN
+    // READ ONLY and ROLLBACK included) with no extra round trip per read.
+    // Separate parameters, not `options`, so an `options` on the address
+    // can't replace them. The session needs no read-only default of its own:
+    // every statement already runs inside BEGIN READ ONLY (roQuery), and this
+    // file hands out no other way to reach DealFlow.
+    statement_timeout: DEALFLOW_STATEMENT_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: DEALFLOW_STATEMENT_TIMEOUT_MS,
   })
   // Brief 41.2 (PR F), engineering precaution (reliability): when the server or
   // the network drops a connection sitting idle in the pool, pg emits 'error'
@@ -155,6 +180,16 @@ export async function roQuery<T = Record<string, unknown>>(
   assertReadOnlySql(sql)
   const client = await getPool().connect()
   let broken = false
+  // Brief 50 (PR 11), the patch from Brief 41.2 PR F's review (r2), an
+  // engineering precaution (reliability): a connection that drops while this
+  // query holds it emits 'error' on the client as well, and with no listener
+  // that crashes the function (the pool's listener covers idle clients only).
+  // The query itself already fails with that error, so here it only marks the
+  // client to be destroyed.
+  const onError = () => {
+    broken = true
+  }
+  client.on('error', onError)
   try {
     await client.query('BEGIN READ ONLY')
     // A variable, not an inline literal: @types/pg doesn't list queryMode.
@@ -168,6 +203,7 @@ export async function roQuery<T = Record<string, unknown>>(
     await client.query('ROLLBACK').catch(() => {
       broken = true
     })
+    client.removeListener('error', onError)
     client.release(broken)
   }
 }

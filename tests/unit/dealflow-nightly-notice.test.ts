@@ -28,6 +28,8 @@ function fakeDealflow(answer: { rows?: unknown[]; fail?: Error } = {}) {
   const release = vi.fn()
   const connect = vi.spyOn(pg.Pool.prototype, 'connect').mockImplementation((async () => ({
     release,
+    on: vi.fn(), // a real pg client's listener methods (roQuery listens for a dropped connection)
+    removeListener: vi.fn(),
     query: vi.fn(async (q: string | { text: string }) => {
       const text = typeof q === 'string' ? q : q.text
       texts.push(text)
@@ -172,6 +174,8 @@ describe('the banner on the Queue page', () => {
   it('DealFlow answers too slowly: no notice once the wait is over (never the late answer), and a short log line', async () => {
     vi.spyOn(pg.Pool.prototype, 'connect').mockImplementation((async () => ({
       release: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn(),
       query: vi.fn(async (q: string | { text: string }) => {
         const text = typeof q === 'string' ? q : q.text
         if (text !== NIGHTLY_NOTICE_SQL) return { rows: [] }
