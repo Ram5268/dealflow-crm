@@ -72,6 +72,14 @@ export function putOnDoNotContactLine(phone: string, via: 'edit' | 'contact' | '
   return `${what} on Do not contact${tag ? ` (${tag})` : ''}, like another number on this lead`
 }
 
+// Brief 50 PR 17 [engineering precaution, review round 1]: the other way
+// round. A number already on the lead goes on the list when a write brings a
+// number that's on the list to the lead; the line says so, last 4 digits only.
+export function alreadyOnLeadPutOnDoNotContactLine(phone: string): string {
+  const tag = phoneTag(phone)
+  return `Put on Do not contact${tag ? ` (${tag})` : ''}, like a number just added to this lead`
+}
+
 export const NAME_CHANGED = 'Name changed'
 
 export function statusChange(from: string | null, to: string | null): string {

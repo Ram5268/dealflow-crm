@@ -330,7 +330,8 @@ export function LeadEditFormView({
         <p className="text-xs text-subtle">
           Priority, our value estimate, property facts and buyer matches come from DealFlow and can&apos;t be changed
           here. Numbers on Do not contact or with texts blocked, and opted-out emails, stay on the lead. A number you
-          add to a lead that has a Do not contact number goes on the Do not contact list too.
+          add to a lead that has a Do not contact number goes on the Do not contact list too, and adding a Do not
+          contact number puts the lead&apos;s other numbers on the list.
         </p>
 
         {error && (

@@ -83,6 +83,22 @@ describe.runIf(enabled)('the contacts API and deletes respect the Do not contact
     expect(history[0].bodyText).toBe("A new contact's phone put on Do not contact (…0162), like another number on this lead")
   })
 
+  // Review round 1: the other way round.
+  it('a new contact bringing a number on the list puts the lead\'s other numbers on it too', async () => {
+    const { lead } = await makeLead([{ phone: '+13475550155' }])
+    await optOut('+13475550156')
+    const res = await createContact(
+      req('/api/contacts', { method: 'POST', body: { leadId: lead.id, displayName: 'Test Co-Owner', phones: [{ phone: '347-555-0156' }] } }),
+    )
+    expect(res.status).toBe(201)
+    expect(await prisma.dncSuppression.findFirst({ where: { organizationId: orgId, phone: '+13475550155' } })).toMatchObject({
+      reason: TAG,
+      addedBy: 'same-lead-opt-out:contacts-api',
+    })
+    const history = await entries(lead.id)
+    expect(history.map((h) => h.bodyText)).toEqual(['Put on Do not contact (…0155), like a number just added to this lead'])
+  })
+
   it('a new contact on a lead with no Do not contact number is unaffected', async () => {
     const { lead } = await makeLead([{ phone: '+13475550163' }])
     const res = await createContact(req('/api/contacts', { method: 'POST', body: { leadId: lead.id, displayName: 'Test Co-Owner', phones: [{ phone: '347-555-0164' }] } }))

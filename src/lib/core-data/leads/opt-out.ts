@@ -1,7 +1,13 @@
 import type { Prisma } from '@prisma/client'
 import { internalDncHits, normalizeE164, storedForms, type InternalDncDb } from '@/lib/compliance/dnc/internal'
 import { toE164 } from '@/lib/shared/phone'
-import { DO_NOT_CONTACT_LABEL, TEXTS_BLOCKED_LABEL, phoneLast4 } from './edit-text'
+import {
+  DO_NOT_CONTACT_LABEL,
+  TEXTS_BLOCKED_LABEL,
+  alreadyOnLeadPutOnDoNotContactLine,
+  phoneLast4,
+  putOnDoNotContactLine,
+} from './edit-text'
 
 // Brief 50 PR 17 — a lead's numbers and the CRM's own Do not contact list
 // (DncSuppression, source 'internal': Settings → Do not contact, SMS STOP, the
@@ -13,18 +19,27 @@ import { DO_NOT_CONTACT_LABEL, TEXTS_BLOCKED_LABEL, phoneLast4 } from './edit-te
 //
 // - Whether a number is on the list is decided by the call checks' own matcher
 //   (internalDncHits, with every stored form it knows), never a second copy of
-//   it: the number the dialer refuses is the number the lead page locks. A
-//   number on the list can't be changed or removed, and a contact or lead
-//   holding one can't be deleted (the lead page's form, PUT /api/leads/[id],
-//   the contacts API, DELETE /api/leads/[id]). The "texts blocked" flag still
-//   locks too.
+//   it: the number the dialer refuses as an opt-out is the number the lead
+//   page locks. A number on the list can't be changed or removed (the lead
+//   page's form, PUT /api/leads/[id]), and a contact or lead holding one can't
+//   be deleted (the contacts API, DELETE /api/leads/[id]; engineering
+//   precaution). The "texts blocked" flag still locks too (engineering
+//   precaution).
 // - A number added to a lead that has a number on the list goes on the list
 //   too, with that entry's reason, in the same transaction as the add (the lead
 //   edit, a new contact, an upload merging into the lead, and, the executor's
 //   follow-up, an upload or "add anyway" making a new lead whose row holds a
 //   listed number and others), so a new number can't route around the
 //   opt-out. Only numbers new to the lead: a number already on it isn't
-//   touched here.
+//   touched here, except as below.
+// - The other way round [engineering precaution, PR 17 review round 1; the
+//   mirror of the planner's rule above]: a write that brings a number on the
+//   list to a lead puts the lead's other numbers on the list too, so the
+//   result is the same whichever number came first (an upload making a new
+//   lead from the same numbers already does this). Otherwise a number already
+//   on the lead isn't touched: listing the older numbers of a lead whose
+//   opt-out was there before is the retroactive data step, the planner's and
+//   Ryan's call.
 //
 // This writes to the CRM's own list only. It never contacts anyone, and it
 // never removes an entry. Emails: the CRM has no email opt-out list (nothing
@@ -51,16 +66,20 @@ export async function phonesOnDoNotContact(db: OptOutDb, organizationId: string,
 
 /** Numbers to put on the list, and the reason they get. */
 export interface OptOutFollow {
-  /** Canonical (+1 and 10 digits for a US number), in the order they were added. */
+  /** The numbers this write adds to the lead: canonical (+1 and 10 digits for a US number), in the order they were added. */
   phones: string[]
+  /** Numbers already on the lead, canonical, that go on the list because this write brought a number that's on it (else empty). */
+  alreadyOnLead: string[]
   /** The reason on the lead's earliest entry, as it is (null when it has none). */
   reason: string | null
 }
 
 /**
- * What a write that adds `adding` to a lead whose numbers are `existing` must
- * put on the Do not contact list: null when the lead (with the new numbers)
- * holds no number on the list, or every new number is already on it. One
+ * What a write that adds `adding` to a lead whose numbers are `existing` (the
+ * ones it keeps after the write) must put on the Do not contact list: null when
+ * the lead (with the new numbers) holds no number on the list, or every number
+ * to put there already is. When `adding` itself holds a number on the list,
+ * the lead's other numbers in `existing` go on it too. One
  * lookup when nothing is listed; a second only to read the reason; none when
  * nothing new is added, or when a lead with no numbers gets a single one
  * (there is no other number for it to follow, so a one-number upload row
@@ -86,20 +105,24 @@ export async function numbersToPutOnDoNotContact(
   // number added in two saves would have been covered.
   const all = [...lead.existing, ...fresh]
   const hits = await internalDncHits(organizationId, all, matcherDb(db))
-  const listed = all.filter((p) => hits.has(normalizeE164(p)))
+  const onList = (p: string) => hits.has(normalizeE164(p))
+  const listed = all.filter(onList)
   if (listed.length === 0) return null
-  const phones = fresh
-    .filter((p) => !hits.has(normalizeE164(p)))
-    .map((p) => toE164(p))
-    .filter((p): p is string => p !== null)
-  if (phones.length === 0) return null
+  const toList = (ps: string[]) => [
+    ...new Set(ps.filter((p) => !onList(p)).map((p) => toE164(p)).filter((p): p is string => p !== null)),
+  ]
+  const phones = toList(fresh)
+  // The other way round: this write brings a number that's on the list, so the
+  // lead's other numbers follow it (review round 1, see the header).
+  const alreadyOnLead = fresh.some(onList) ? toList(lead.existing).filter((p) => !phones.includes(p)) : []
+  if (phones.length === 0 && alreadyOnLead.length === 0) return null
 
   const first = await db.dncSuppression.findFirst({
     where: { organizationId, source: 'internal', phone: { in: [...new Set(listed.flatMap(storedForms))] } },
     orderBy: [{ addedAt: 'asc' }, { id: 'asc' }],
     select: { reason: true },
   })
-  return { phones: [...new Set(phones)], reason: first?.reason ?? null }
+  return { phones, alreadyOnLead, reason: first?.reason ?? null }
 }
 
 /**
@@ -112,9 +135,14 @@ export async function numbersToPutOnDoNotContact(
  */
 export async function putOnDoNotContact(db: OptOutDb, organizationId: string, follow: OptOutFollow, addedBy: string): Promise<void> {
   await db.dncSuppression.createMany({
-    data: follow.phones.map((phone) => ({ organizationId, phone, source: 'internal', addedBy, reason: follow.reason })),
+    data: [...follow.phones, ...follow.alreadyOnLead].map((phone) => ({ organizationId, phone, source: 'internal', addedBy, reason: follow.reason })),
     skipDuplicates: true,
   })
+}
+
+/** The lead's history lines for these entries, last 4 digits only; `via` is how the new numbers came in. */
+export function putOnDoNotContactLines(follow: OptOutFollow, via: 'edit' | 'contact' | 'upload'): string[] {
+  return [...follow.phones.map((p) => putOnDoNotContactLine(p, via)), ...follow.alreadyOnLead.map(alreadyOnLeadPutOnDoNotContactLine)]
 }
 
 /** The first of these phones that's locked (on the list, then "texts blocked"), with its label; null when none is. */

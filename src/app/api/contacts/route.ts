@@ -4,8 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { getCurrentOrgId } from '@/lib/shell/orgContext'
 import { withRoute, json, parseBody, HttpError } from '@/lib/shared/http'
 import { canonicalPhones } from '@/lib/shared/phone'
-import { LEAD_EDIT_ACTIVITY_TYPE, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
-import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact } from '@/lib/core-data/leads/opt-out'
+import { LEAD_EDIT_ACTIVITY_TYPE } from '@/lib/core-data/leads/edit-text'
+import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact, putOnDoNotContactLines } from '@/lib/core-data/leads/opt-out'
 
 const phoneSchema = z.object({
   phone: z.string().min(1),
@@ -55,8 +55,10 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
   // Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): a
   // new contact's numbers on a lead that has a number on the Do not contact
   // list go on the list too, with the same reason, in the same transaction as
-  // the contact, and the lead's timeline says so (last 4 digits only). The list
-  // exists because a homeowner asked not to be contacted; this contacts no one.
+  // the contact, and the lead's timeline says so (last 4 digits only); a new
+  // contact bringing a number on the list takes the lead's other numbers with
+  // it [engineering precaution, review round 1]. The list exists because a
+  // homeowner asked not to be contacted; this contacts no one.
   const contact = await prisma.$transaction(
     async (tx) => {
       const existing = phones.phones.length
@@ -89,7 +91,7 @@ export const POST = withRoute(async (req: NextRequest, { correlationId }) => {
             contactId: null,
             type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact (query-dsl TIMELINE_NOTE_TYPES)
             activityAt: new Date(),
-            bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'contact')).join('\n'),
+            bodyText: putOnDoNotContactLines(follow, 'contact').join('\n'),
           },
         })
       }

@@ -15,10 +15,16 @@ import {
   phoneAdded,
   phoneChanged,
   phoneRemoved,
-  putOnDoNotContactLine,
   statusChange,
 } from './edit-text'
-import { SAME_LEAD_ADDED_BY, lockedMessage, numbersToPutOnDoNotContact, phonesOnDoNotContact, putOnDoNotContact } from './opt-out'
+import {
+  SAME_LEAD_ADDED_BY,
+  lockedMessage,
+  numbersToPutOnDoNotContact,
+  phonesOnDoNotContact,
+  putOnDoNotContact,
+  putOnDoNotContactLines,
+} from './opt-out'
 
 // Brief 50 PR 5 — editing a lead from its page (item 6.5): the name, status,
 // address, and each contact's phones and emails, through PUT
@@ -445,12 +451,18 @@ export async function applyLeadEdit(
       }
       // Brief 50 PR 17: a number new to a lead that has a number on the Do not
       // contact list goes on the list too, in this transaction: if that write
-      // fails, the number isn't added either.
+      // fails, the number isn't added either. And the other way round
+      // [engineering precaution, review round 1]: a number on the list added to
+      // the lead takes the lead's other numbers with it, the ones this save
+      // keeps (a removed or replaced one isn't listed; a number on the list
+      // can't be removed, so the check is the same).
       const adding = phonePlans.flatMap(([, plan]) => plan.create.map((p) => p.value))
-      const follow = adding.length ? await numbersToPutOnDoNotContact(tx, organizationId, { existing: leadPhones, adding }) : null
+      const removedIds = new Set(phonePlans.flatMap(([, plan]) => plan.removeIds))
+      const kept = contacts.flatMap((c) => c.phones.filter((p) => !removedIds.has(p.id)).map((p) => p.phone))
+      const follow = adding.length ? await numbersToPutOnDoNotContact(tx, organizationId, { existing: kept, adding }) : null
       if (follow) {
         await putOnDoNotContact(tx, organizationId, follow, SAME_LEAD_ADDED_BY.leadEdit)
-        changes.push(...follow.phones.map((p) => putOnDoNotContactLine(p)))
+        changes.push(...putOnDoNotContactLines(follow, 'edit'))
       }
       for (const [contactId, plan] of emailPlans) {
         if (plan.removeIds.length) {

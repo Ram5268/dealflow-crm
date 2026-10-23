@@ -388,6 +388,40 @@ describe.runIf(enabled)('editing a lead (PUT /api/leads/[id])', () => {
     expect(await entries(lead.id)).toHaveLength(0)
   })
 
+  // Review round 1: the other way round. Adding a number that's on the list
+  // puts the lead's other numbers on it too, but not one this save removes.
+  it('adding a number that\'s on the list puts the lead\'s other numbers on it too (not one the save removes)', async () => {
+    const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550151' }, { phone: '+13475550152' }] })
+    await prisma.dncSuppression.create({
+      data: { organizationId: orgId, phone: '+13475550153', source: 'internal', addedBy: 'settings-do-not-contact', reason: TAG },
+    })
+    const keep = contact.phones.find((p) => p.phone === '+13475550151')!
+    const drop = contact.phones.find((p) => p.phone === '+13475550152')!
+    const res = await put(lead.id, {
+      contacts: [{ id: contact.id, phones: [{ id: keep.id }, { id: drop.id, remove: true }, { phone: '347-555-0153' }] }],
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.changes).toEqual([
+      'Phone added (…0153)',
+      'Phone removed (…0152)',
+      'Put on Do not contact (…0151), like a number just added to this lead',
+    ])
+    const rows = await prisma.dncSuppression.findMany({
+      where: { organizationId: orgId, phone: { in: ['+13475550151', '+13475550152', '+13475550153'] } },
+      orderBy: { phone: 'asc' },
+    })
+    expect(rows.map((r) => [r.phone, r.reason, r.addedBy])).toEqual([
+      ['+13475550151', TAG, 'same-lead-opt-out:lead-edit'],
+      ['+13475550153', TAG, 'settings-do-not-contact'],
+    ])
+    const history = await entries(lead.id)
+    expect(history).toHaveLength(1)
+    expect(history[0].bodyText).not.toMatch(/347|555/)
+    // The lead's own number is locked now.
+    const locked = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: keep.id, remove: true }] }] })
+    expect(locked.status).toBe(400)
+  })
+
   it('a lead with no Do not contact number is unaffected: the added number isn\'t put on the list', async () => {
     const { lead, contact } = await makeLead({ phones: [{ phone: '+13475550141' }] })
     const res = await put(lead.id, { contacts: [{ id: contact.id, phones: [{ id: contact.phones[0].id }, { phone: '347-555-0142' }] }] })

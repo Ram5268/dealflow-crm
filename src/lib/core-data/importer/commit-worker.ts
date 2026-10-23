@@ -18,8 +18,8 @@ import {
 } from './batch'
 import { PLACEHOLDER_NAME, isRealName, leadRealNames, namesConflict, sameName } from './names'
 import { addImportLeadsToList } from './list-membership'
-import { LEAD_EDIT_ACTIVITY_TYPE, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
-import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact, type OptOutFollow } from '@/lib/core-data/leads/opt-out'
+import { LEAD_EDIT_ACTIVITY_TYPE } from '@/lib/core-data/leads/edit-text'
+import { SAME_LEAD_ADDED_BY, numbersToPutOnDoNotContact, putOnDoNotContact, putOnDoNotContactLines, type OptOutFollow } from '@/lib/core-data/leads/opt-out'
 import type { MappingProposal, ColumnMapping } from './ai-mapping'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -702,10 +702,12 @@ async function upsertRow(
     // when the lead has a number on the Do not contact list (as the call
     // checks match it), the row's numbers new to the lead go on the list too,
     // with the same reason, in one transaction with adding them, and the
-    // lead's timeline says so (last 4 digits only). The list exists because a
-    // homeowner asked not to be contacted. A lead with none (nearly every
-    // merge) adds its numbers as before, after two small reads (the lead's
-    // numbers, then the list when the row brings a number new to the lead).
+    // lead's timeline says so (last 4 digits only); a row bringing a number on
+    // the list takes the lead's other numbers with it [engineering
+    // precaution, review round 1]. The list exists because a homeowner asked
+    // not to be contacted. A lead with none (nearly every merge) adds its
+    // numbers as before, after two small reads (the lead's numbers, then the
+    // list when the row brings a number new to the lead).
     const before = await db.contactPhone.findMany({ where: { contact: { leadId } }, select: { phone: true } })
     const follow = await numbersToPutOnDoNotContact(db, organizationId, {
       existing: before.map((p) => p.phone),
@@ -750,7 +752,7 @@ async function followOptOut(tx: Prisma.TransactionClient, organizationId: string
       contactId: null,
       type: LEAD_EDIT_ACTIVITY_TYPE, // a note about the record, never counted as contact
       activityAt: new Date(),
-      bodyText: follow.phones.map((p) => putOnDoNotContactLine(p, 'upload')).join('\n'),
+      bodyText: putOnDoNotContactLines(follow, 'upload').join('\n'),
     },
   })
 }

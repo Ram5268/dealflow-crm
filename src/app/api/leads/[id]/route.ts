@@ -37,7 +37,8 @@ export const PUT = withRoute(async (req: NextRequest, { correlationId, params })
   return json({ lead, changes }, correlationId)
 })
 
-// Brief 50 PR 17 (the planner's review, Brief 50 Revision 2, 2026-10-23): a
+// Brief 50 PR 17 [engineering precaution, reading the planner's review (Brief
+// 50 Revision 2, 2026-10-23) "can't be changed or removed" onto deletes]: a
 // lead holding a number on the Do not contact list (as the call checks match
 // it) or with texts blocked can't be deleted here, the same as the Edit form
 // can't remove that number. The list exists because a homeowner asked not to

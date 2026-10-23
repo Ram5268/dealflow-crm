@@ -195,6 +195,22 @@ describe("an upload merging into a lead that has a Do not contact number", () =>
     expect(await entries(leadId)).toHaveLength(0);
   });
 
+  // Review round 1: the other way round.
+  it("a row bringing a number on the list puts the lead's other numbers on it too", async () => {
+    const leadId = await seedLead(`${TAG}_m5`, "+13475550143");
+    await optOut("+13475550144", "Texted STOP");
+    await commitImport(await batchFor(`MojoID,Phone 1,Phone 2\n${TAG}_m5,347-555-0144,347-555-0145\n`), "merge", MOJO_PHONES, "c", { emit, db });
+    expect(await phonesOf(leadId)).toEqual(["+13475550143", "+13475550144", "+13475550145"]);
+    const rows = await db.dncSuppression.findMany({ where: { organizationId: org, phone: { in: ["+13475550143", "+13475550145"] } }, orderBy: { phone: "asc" } });
+    expect(rows.map((r) => [r.phone, r.reason, r.addedBy])).toEqual([
+      ["+13475550143", "Texted STOP", "same-lead-opt-out:import"],
+      ["+13475550145", "Texted STOP", "same-lead-opt-out:import"],
+    ]);
+    expect((await entries(leadId)).map((h) => h.bodyText)).toEqual([
+      "A phone from an upload put on Do not contact (…0145), like another number on this lead\nPut on Do not contact (…0143), like a number just added to this lead",
+    ]);
+  });
+
   it("a lead with no Do not contact number is unaffected", async () => {
     const leadId = await seedLead(`${TAG}_m4`, "+13475550177");
     await commitImport(await batchFor(`MojoID,Phone 1,Phone 2\n${TAG}_m4,347-555-0178,\n`), "merge", MOJO_PHONES, "c", { emit, db });

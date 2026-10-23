@@ -7,6 +7,7 @@ import {
   numbersToPutOnDoNotContact,
   phonesOnDoNotContact,
   putOnDoNotContact,
+  putOnDoNotContactLines,
 } from '@/lib/core-data/leads/opt-out'
 import { DO_NOT_CONTACT_LABEL, TEXTS_BLOCKED_LABEL, putOnDoNotContactLine } from '@/lib/core-data/leads/edit-text'
 import { draftFromInitial, leadEditInitialFrom, phoneLockLabel, type LeadForEdit } from '@/app/leads/[id]/lead-edit-state'
@@ -113,7 +114,7 @@ describe('a number added to a lead that has a Do not contact number', () => {
   it('goes on the list too, with the same reason', async () => {
     const { db, rows } = fakeDb([{ phone: '+13475550101', reason: 'Asked not to be called' }])
     const follow = await numbersToPutOnDoNotContact(db, ORG, { existing: ['+13475550101', '+13475550102'], adding: ['+13475550103'] })
-    expect(follow).toEqual({ phones: ['+13475550103'], reason: 'Asked not to be called' })
+    expect(follow).toEqual({ phones: ['+13475550103'], alreadyOnLead: [], reason: 'Asked not to be called' })
     await putOnDoNotContact(db, ORG, follow!, SAME_LEAD_ADDED_BY.leadEdit)
     const added = rows.find((r) => r.phone === '+13475550103')!
     // The same shape as an entry from Settings → Do not contact (addInternalDnc).
@@ -126,6 +127,7 @@ describe('a number added to a lead that has a Do not contact number', () => {
     const { db } = fakeDb([{ phone: '+13475550101' }])
     expect(await numbersToPutOnDoNotContact(db, ORG, { existing: ['+13475550101'], adding: ['+13475550103'] })).toEqual({
       phones: ['+13475550103'],
+      alreadyOnLead: [],
       reason: null,
     })
   })
@@ -148,10 +150,32 @@ describe('a number added to a lead that has a Do not contact number', () => {
     expect(follow?.phones).toEqual(['+13475550106'])
   })
 
-  it('a save that adds a listed number and another one to a lead with none: the other one goes on the list too', async () => {
+  // Review round 1: the other way round. A save that brings a listed number
+  // takes the lead's other numbers with it, whichever came first.
+  it('a save that adds a listed number and another one to a lead with none: the other one, and the lead\'s own, go on the list too', async () => {
     const { db } = fakeDb([{ phone: '+13475550107', reason: 'Asked not to be called' }])
     const follow = await numbersToPutOnDoNotContact(db, ORG, { existing: ['+13475550102'], adding: ['+13475550107', '+13475550108'] })
-    expect(follow).toEqual({ phones: ['+13475550108'], reason: 'Asked not to be called' })
+    expect(follow).toEqual({ phones: ['+13475550108'], alreadyOnLead: ['+13475550102'], reason: 'Asked not to be called' })
+  })
+
+  it('a listed number added on its own takes the lead\'s other numbers with it (canonical, once each, not the listed ones)', async () => {
+    const { db, rows } = fakeDb([{ phone: '+13475550107', reason: 'Texted STOP' }, { phone: '3475550109' }])
+    const follow = await numbersToPutOnDoNotContact(db, ORG, {
+      existing: ['(347) 555-0102', '+13475550102', '+13475550109', '+13475550110'],
+      adding: ['+13475550107'],
+    })
+    expect(follow).toEqual({ phones: [], alreadyOnLead: ['+13475550102', '+13475550110'], reason: 'Texted STOP' })
+    await putOnDoNotContact(db, ORG, follow!, SAME_LEAD_ADDED_BY.leadEdit)
+    expect(rows.filter((r) => r.addedBy === 'same-lead-opt-out:lead-edit').map((r) => [r.phone, r.reason])).toEqual([
+      ['+13475550102', 'Texted STOP'],
+      ['+13475550110', 'Texted STOP'],
+    ])
+  })
+
+  it('a lead whose opt-out was already there keeps its older numbers as they are (that is the retroactive data step)', async () => {
+    const { db } = fakeDb([{ phone: '+13475550101', reason: 'Asked not to be called' }])
+    const follow = await numbersToPutOnDoNotContact(db, ORG, { existing: ['+13475550101', '+13475550102'], adding: ['+13475550103'] })
+    expect(follow).toEqual({ phones: ['+13475550103'], alreadyOnLead: [], reason: 'Asked not to be called' })
   })
 
   it('a lead with no Do not contact number is unaffected: nothing to add, and no reason looked up', async () => {
@@ -166,6 +190,7 @@ describe('a number added to a lead that has a Do not contact number', () => {
     const { db } = fakeDb([{ phone: '+13475550185', reason: 'Asked not to be called' }])
     expect(await numbersToPutOnDoNotContact(db, ORG, { existing: [], adding: ['+13475550185', '+13475550186'] })).toEqual({
       phones: ['+13475550186'],
+      alreadyOnLead: [],
       reason: 'Asked not to be called',
     })
   })
@@ -211,6 +236,14 @@ describe('the history line', () => {
     expect(putOnDoNotContactLine('+13475550103', 'contact')).toBe('A new contact\'s phone put on Do not contact (…0103), like another number on this lead')
     expect(putOnDoNotContactLine('+13475550103', 'upload')).toBe('A phone from an upload put on Do not contact (…0103), like another number on this lead')
     for (const via of [undefined, 'contact', 'upload'] as const) expect(putOnDoNotContactLine('+13475550103', via)).not.toMatch(/347|555/)
+  })
+
+  it('a number already on the lead says it followed a number just added (review round 1)', () => {
+    expect(putOnDoNotContactLines({ phones: ['+13475550103'], alreadyOnLead: ['+13475550102'], reason: null }, 'upload')).toEqual([
+      'A phone from an upload put on Do not contact (…0103), like another number on this lead',
+      'Put on Do not contact (…0102), like a number just added to this lead',
+    ])
+    expect(putOnDoNotContactLines({ phones: [], alreadyOnLead: ['+13475550102'], reason: null }, 'edit').join('\n')).not.toMatch(/347|555/)
   })
 })
 
