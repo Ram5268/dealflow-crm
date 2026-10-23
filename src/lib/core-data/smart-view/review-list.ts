@@ -1,9 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { HttpError } from '@/lib/shared/http'
-import { compile, compileOrderBy } from '@/lib/core-data/query-dsl/compiler'
+import { compile } from '@/lib/core-data/query-dsl/compiler'
 import { execute, executeCount } from '@/lib/core-data/query-dsl/executor'
 import { sQuerySchema, sortSpecSchema, type SQuery } from '@/lib/core-data/query-dsl/schema'
-import { loadCustomFieldTypes } from './queue-service'
+import { loadCustomFieldTypes, queueOrder } from './queue-service'
 import { HAS_DEALFLOW_PRIORITY } from './defaultView'
 import { bestBuyerLookup } from '@/lib/core-data/dealflow-sync/buyer-lookup'
 import type { DealflowBuyer } from '@/lib/core-data/dealflow-sync/buyers'
@@ -50,9 +50,10 @@ export async function getReviewList(viewId: string, organizationId: string): Pro
 
   const customFieldTypes = await loadCustomFieldTypes(organizationId)
   const compiled = compile(reviewQuery(sQuerySchema.parse(view.sQuery)), { organizationId, customFieldTypes })
-  const orderBySql = compileOrderBy(sortSpecSchema.parse(view.sort ?? []))
+  // The Queue's order: DealFlow's rank (Brief 50 PR 10, queue-service.ts queueOrder).
+  const ordered = queueOrder(compiled, sortSpecSchema.parse(view.sort ?? []), organizationId)
   const [leads, total, bestBuyer] = await Promise.all([
-    execute<Omit<ReviewLead, 'bestBuyer'>>(compiled, prisma, { organizationId, selectSql: REVIEW_SELECT, orderBySql, limit: REVIEW_CAP }),
+    execute<Omit<ReviewLead, 'bestBuyer'>>(ordered.compiled, prisma, { organizationId, selectSql: REVIEW_SELECT, orderBySql: ordered.orderBySql, limit: REVIEW_CAP }),
     executeCount(compiled, prisma, organizationId),
     bestBuyerLookup(organizationId),
   ])

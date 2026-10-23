@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { HttpError } from '@/lib/shared/http'
 import { rankingTimesSql } from '@/lib/core-data/lists/sql'
-import { compile, compileOrderBy, type CompileContext } from '@/lib/core-data/query-dsl/compiler'
+import { compile, compileOrderBy, type CompileContext, type CompiledQuery } from '@/lib/core-data/query-dsl/compiler'
 import { execute } from '@/lib/core-data/query-dsl/executor'
 import {
   checkCallable,
@@ -122,6 +122,70 @@ export async function loadCustomFieldTypes(organizationId: string): Promise<Comp
   return Object.fromEntries(defs.map((d) => [d.id, d.type])) as CompileContext['customFieldTypes']
 }
 
+// ── The Queue's order (Brief 50 PR 10, open item 6.8) ──────────────────────
+// DealFlow ranks its call list by an unrounded priority (87.4 above 87.2), but
+// the CRM stores that priority as a whole number (sync.ts rounds it into an
+// Int column), so sorting by it tied sellers DealFlow had told apart and broke
+// the tie by "top match" and lead id instead. When a view is ordered by
+// DealFlow's priority, leads with the same whole-number priority now go in
+// DealFlow's own rank order (the signal's queueRank); the stored whole-number
+// priority is still what's shown, and still the first key. DealFlow numbers
+// its list by sorting on that same priority (best first), and rounding never
+// swaps two numbers, so for every ranked lead this IS DealFlow's order.
+//
+// A lead's rank is its signal's, found the way the morning copy assigns
+// signals to leads (dealflow-sync/write.ts MAPPED_LEADS): the lead DealFlow
+// names (crmLeadId), else the lead with the signal's Mojo ID; the best rank if
+// two reach one lead. Leads with no rank keep their place by priority: one an
+// upload scored since the morning copy (a priority, but no place on DealFlow's
+// list until tomorrow) sits where its score puts it, as on every list (Brief
+// 45: new people are ranked within minutes), after any ranked lead with the
+// same whole number; never-scored leads come last. Then the view's own order,
+// then lead id: lead.id is always the last key, so the order is total: the
+// same on every load, and pages neither repeat nor skip a lead.
+//
+// One read of the org's signals per query: an uncorrelated scalar subquery, so
+// Postgres runs it once (an InitPlan) and each lead is a key lookup in the
+// resulting {leadId: rank} object.
+function dealflowRankSql(org: string): string {
+  return `((SELECT jsonb_object_agg(r.lead_id, r.queue_rank) FROM (
+      SELECT COALESCE(by_id.id, by_mojo.id) AS lead_id, min(s."queueRank") AS queue_rank
+      FROM "DealFlowDerivedSignal" s
+      LEFT JOIN "Lead" by_id ON by_id.id = s."dealflowRawJson"->>'crmLeadId' AND by_id."organizationId" = ${org}
+      LEFT JOIN "Lead" by_mojo ON by_mojo."mojoId" = s."mojoId" AND by_mojo."organizationId" = ${org}
+      WHERE s."organizationId" = ${org} AND s."queueRank" IS NOT NULL AND COALESCE(by_id.id, by_mojo.id) IS NOT NULL
+      GROUP BY 1) r) ->> lead.id)::int`
+}
+
+/**
+ * The ORDER BY for a view's leads on the Queue, and the query to run it with.
+ * A view ordered first by DealFlow's priority (the "DealFlow priority" view,
+ * or no saved sort: compileOrderBy's default) gets DealFlow's rank right after
+ * the priority, in front of the rest of its sort; the rank's organization
+ * travels as one extra bound parameter, so `compiled` comes back with it
+ * appended (the caller's is left as it was). Any other sort is
+ * compileOrderBy's, unchanged.
+ */
+export function queueOrder(
+  compiled: CompiledQuery,
+  sort: SortSpec,
+  organizationId: string
+): { compiled: CompiledQuery; orderBySql: string } {
+  const orderBySql = compileOrderBy(sort)
+  const first = sort[0] ?? { field: 'priorityScore', direction: 'desc' }
+  if (first.field !== 'priorityScore') return { compiled, orderBySql }
+  const asc = first.direction === 'asc'
+  const priority = `ORDER BY lead."priorityScore" ${asc ? 'ASC' : 'DESC'} NULLS LAST, `
+  if (!orderBySql.startsWith(priority)) throw new Error('queueOrder: unexpected ORDER BY from compileOrderBy')
+  const org = `$${compiled.params.length + 1}`
+  // Rank 1 is DealFlow's top seller: best first reads the rank upwards.
+  const rank = `${dealflowRankSql(org)} ${asc ? 'DESC' : 'ASC'} NULLS LAST, `
+  return {
+    compiled: { ...compiled, params: [...compiled.params, organizationId] },
+    orderBySql: priority + rank + orderBySql.slice(priority.length),
+  }
+}
+
 export async function getQueue(
   viewId: string,
   organizationId: string,
@@ -138,14 +202,14 @@ export async function getQueue(
   const customFieldTypes = await loadCustomFieldTypes(organizationId)
   const compiled = compile(sQuery, { organizationId, customFieldTypes })
 
-  const orderBySql = compileOrderBy(sort)
+  const ordered = queueOrder(compiled, sort, organizationId)
   const poolSize = Math.min(CANDIDATE_POOL_CAP, Math.max(limit * 5, 200))
-  const candidates = await execute<LeadLike>(compiled, prisma, {
+  const candidates = await execute<LeadLike>(ordered.compiled, prisma, {
     organizationId,
     selectSql:
       'lead.id, lead."displayName", lead."primaryAddressSummary", lead."timezone", ' +
       'lead."priorityScore", lead."topMatchFit", lead."captureStatus", lead."matchReason", lead."dealflowDeepLink"',
-    orderBySql,
+    orderBySql: ordered.orderBySql,
     limit: poolSize,
   })
 
