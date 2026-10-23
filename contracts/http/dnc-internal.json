@@ -28,7 +28,7 @@
             }
           },
           "403": {
-            "description": "Brief 50 (PR 16), engineering precaution: a cross-site browser request (Sec-Fetch-Site other than same-origin, or an Origin whose host isn't this request's host). Body: {\"error\": \"cross_site_request\"}. Nothing is read or written. A request with neither header (a script sending the Basic-auth password itself) is not refused."
+            "description": "Brief 50 (PR 16, moved to the middleware for every save by PR 18), engineering precaution: a request that didn't come from the CRM's own pages (Sec-Fetch-Site cross-site or same-site; otherwise an Origin whose host isn't this request's host, or Origin null; with no Origin, a Sec-Fetch-Site other than same-origin or none, or a Referer from another host; or none of Origin, Sec-Fetch-Site and Referer). Answered by the middleware before this route runs, so nothing is read or written. Body: {\"error\": \"Refused: this change didn't come from the CRM's own pages. Open the CRM and try again.\", \"code\": \"cross_site_request\"}. A script sends the Basic-auth password and an Origin header matching the CRM's address."
           }
         }
       }
