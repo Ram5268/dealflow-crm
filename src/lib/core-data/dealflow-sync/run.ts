@@ -15,8 +15,11 @@ import { emit } from '@/lib/core-data/events/emit'
 // Brief 50 (PR 11), engineering precautions (open item 6.10): only the DealFlow
 // organization with this CRM organization's slug is read (sync.ts RO_SQL), and
 // a batch that matches no lead of the organization, or fewer than half as many
-// as the last morning's list held, writes nothing either (write.ts refuseBatch);
-// `skipped` says which, as for an empty or stale batch.
+// as the last morning's copy reached (Brief 50 PR 19: leads, not signal rows),
+// writes nothing either (write.ts refuseBatch); `skipped` says which, as for
+// an empty or stale batch.
+// Brief 50 (PR 19): such a refusal answers the cron with 409 (syncHttpStatus
+// below), and the Queue shows it (nightly-notice.ts readCopyRefusal).
 
 export interface SyncRunResult extends ApplyResult {
   skipped?: 'empty' | 'stale' | BatchRefusal
@@ -35,7 +38,23 @@ const NOTHING_WRITTEN: ApplyResult = {
 const REFUSAL_LOG: Record<BatchRefusal, string> = {
   no_leads_matched: "dealflow sync skipped: DealFlow's call list matches no CRM lead, so nothing was written",
   too_few_leads_matched:
-    "dealflow sync skipped: DealFlow's call list matches fewer than half as many CRM leads as the last morning's, so nothing was written",
+    "dealflow sync skipped: DealFlow's call list matches fewer than half as many CRM leads as the last morning's copy reached, so nothing was written",
+}
+
+// Brief 50 (PR 19), the planner's review (Revision 2): a refused copy answers
+// the cron with a non-2xx code, so Vercel's cron log shows a failed run
+// instead of a success (it answered 200 {ok:false}, which looked like one).
+// 409 Conflict: the copy ran and chose not to write, because DealFlow's list
+// conflicts with what the CRM holds (it reaches far fewer of the leads); it is
+// not an outage. A 5xx would say the CRM or DealFlow was down, and 503 already
+// means "DealFlow couldn't be read" on this route, so the log alone tells the
+// two apart. Vercel doesn't retry a cron that fails, so the code changes
+// nothing else. An empty or stale DealFlow list (DealFlow made no new list)
+// stays 200 {ok:false} as before.
+export const REFUSED_COPY_STATUS = 409
+
+export function syncHttpStatus(result: Pick<SyncRunResult, 'skipped'>): number {
+  return result.skipped === 'no_leads_matched' || result.skipped === 'too_few_leads_matched' ? REFUSED_COPY_STATUS : 200
 }
 
 export async function runDealflowSync(

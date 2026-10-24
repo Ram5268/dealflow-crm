@@ -17,6 +17,8 @@ import type { DerivedSignalUpsert } from './sync'
 // organization's signal with the same Mojo ID is left alone), the NULLing
 // clears nothing for a batch that maps to no lead, and refuseBatch says when
 // the morning copy should write nothing at all (run.ts).
+// Brief 50 (PR 19): refuseBatch's baseline is the leads the last copy reached,
+// counted the way the new batch's leads are (like with like).
 
 // Timezone rule (planner-approved): America/New_York only when the property is
 // in NY AND the mailing state lies wholly in the Eastern zone (or is missing).
@@ -113,15 +115,27 @@ export const CLEAR_STALE_LEADS_SQL = `${MAPPED_LEADS}
                      l."dealflowDeepLink", l."dealflowSignalSyncedAt") > 0${MORNING_GUARD_LEADS_SQL}${NOTHING_MAPPED_GUARD_SQL}`
 
 // Brief 50 (PR 11): how many of the organization's leads the batch reaches
-// (MAPPED_LEADS, exactly as the writes map them), and how many signals the
-// last morning copy left (an upload's scoring rows don't count:
-// dealflow-score/marker.ts). $1 = batch rows as UPDATE_LEADS_SQL takes them,
-// $2 = organizationId. Read-only.
-export const BATCH_MAPPING_SQL = `${MAPPED_LEADS}
+// (MAPPED_LEADS, exactly as the writes map them). $1 = batch rows as
+// UPDATE_LEADS_SQL takes them (only crmLeadId, mojoId and queueRank are read
+// here), $2 = organizationId. Read-only.
+// Brief 50 (PR 19), engineering precaution (the planner's review): and how
+// many of the organization's leads the last morning copy reached, counted the
+// same way (like with like; it used to count the copy's signal rows, which
+// include DealFlow's entries that are no CRM lead): the signals that copy left
+// (an upload's scoring rows don't count: dealflow-score/marker.ts), each
+// mapped to the lead its crmLeadId names, else the lead with its Mojo ID, as
+// MAPPED_LEADS maps a batch row; every lead once.
+export const BATCH_MAPPING_SQL = `${MAPPED_LEADS}, last_copy AS (
+    SELECT DISTINCT COALESCE(by_id.id, by_mojo.id) AS lead_id
+    FROM "DealFlowDerivedSignal" s
+    LEFT JOIN "Lead" by_id ON by_id.id = s."dealflowRawJson"->>'crmLeadId' AND by_id."organizationId" = $2
+    LEFT JOIN "Lead" by_mojo ON by_mojo."mojoId" = s."mojoId" AND by_mojo."organizationId" = $2
+    WHERE s."organizationId" = $2
+      AND (s."dealflowRawJson"->>'source') IS DISTINCT FROM '${IMPORT_SCORING_SOURCE}'
+      AND COALESCE(by_id.id, by_mojo.id) IS NOT NULL
+  )
   SELECT (SELECT count(*) FROM mapped)::int AS "mappedLeads",
-    (SELECT count(*) FROM "DealFlowDerivedSignal" s
-      WHERE s."organizationId" = $2
-        AND (s."dealflowRawJson"->>'source') IS DISTINCT FROM '${IMPORT_SCORING_SOURCE}')::int AS "morningSignals"`
+    (SELECT count(*) FROM last_copy)::int AS "lastCopyLeads"`
 
 const leadCustomField = (name: string) => `(
     SELECT upper(btrim(v."valueText")) FROM "CustomFieldValue" v
@@ -179,9 +193,14 @@ export function batchGeneratedAt(signals: DerivedSignalUpsert[]): string | null 
 // The batch rows as the lead statements read them (no raw JSON).
 const leadRows = (signals: DerivedSignalUpsert[]) => JSON.stringify(signals.map(({ dealflowRawJson: _raw, ...s }) => s))
 
+// What the mapping reads of a batch row: the lead DealFlow names, and the
+// Mojo ID. A built signal is one (buildSignals), and so is a seller of
+// DealFlow's newest list as the Queue's line reads it (sync.ts NEWEST_LIST_SQL).
+export type LeadKey = Pick<DerivedSignalUpsert, 'mojoId' | 'crmLeadId'> & { queueRank?: number | null }
+
 export interface BatchMapping {
   mappedLeads: number // the organization's leads this batch reaches
-  morningSignals: number // the signals the last morning copy left
+  lastCopyLeads: number // the organization's leads the last morning copy reached (Brief 50 PR 19)
 }
 
 export type BatchRefusal = 'no_leads_matched' | 'too_few_leads_matched'
@@ -192,28 +211,32 @@ export type BatchRefusal = 'no_leads_matched' | 'too_few_leads_matched'
  * and clears every lead missing from it, so a list that matches no lead would
  * blank the Queue, and one that matches only a few would blank most of it.
  * Refused: 0 leads; or fewer than half as many leads as the last morning's
- * list held signals (Brief 47's "fewer than half" rule for DealFlow's own
- * nightly). Today's list (~1,490 entries, ~1,478 of them CRM leads) passes
- * with about a 2x margin: a refusal needs fewer than ~745. A first copy (no
- * signals yet) is refused only when it matches no lead. "The last morning's
- * list" is the last list it actually copied: a refused morning changes nothing,
- * so the refusal repeats each morning until DealFlow's list recovers. There is
- * no override (as in DealFlow's own size check), so a deliberate big shrink
- * would also be refused; the only traces are the cron's answer and a log line.
+ * copy reached (Brief 47's "fewer than half" rule for DealFlow's own nightly;
+ * Brief 50 PR 19: leads against leads, both counted by the same mapping).
+ * Today's list (~1,490 entries, ~1,478 of them CRM leads) passes with about a
+ * 2x margin: a refusal needs fewer than ~739. A first copy (no signals yet) is
+ * refused only when it matches no lead. "The last morning's copy" is the last
+ * list it actually copied: a refused morning changes nothing, so the refusal
+ * repeats each morning until DealFlow's list recovers. There is no override
+ * (as in DealFlow's own size check), so a deliberate big shrink would also be
+ * refused. Brief 50 PR 19: a refusal answers the cron with 409 (run.ts), and
+ * the Queue shows a line while it is the newest copy attempt
+ * (nightly-notice.ts readCopyRefusal).
  */
-export function refuseBatch({ mappedLeads, morningSignals }: BatchMapping): BatchRefusal | null {
+export function refuseBatch({ mappedLeads, lastCopyLeads }: BatchMapping): BatchRefusal | null {
   if (mappedLeads === 0) return 'no_leads_matched'
-  if (mappedLeads * 2 < morningSignals) return 'too_few_leads_matched'
+  if (mappedLeads * 2 < lastCopyLeads) return 'too_few_leads_matched'
   return null
 }
 
 export async function countBatchMapping(
   organizationId: string,
-  signals: DerivedSignalUpsert[],
+  rows: LeadKey[],
   db: PrismaClient = prisma
 ): Promise<BatchMapping> {
-  const [r] = await db.$queryRawUnsafe<BatchMapping[]>(BATCH_MAPPING_SQL, leadRows(signals), organizationId)
-  return { mappedLeads: r?.mappedLeads ?? 0, morningSignals: r?.morningSignals ?? 0 }
+  const keys = JSON.stringify(rows.map((r) => ({ crmLeadId: r.crmLeadId, mojoId: r.mojoId, queueRank: r.queueRank ?? null })))
+  const [r] = await db.$queryRawUnsafe<BatchMapping[]>(BATCH_MAPPING_SQL, keys, organizationId)
+  return { mappedLeads: r?.mappedLeads ?? 0, lastCopyLeads: r?.lastCopyLeads ?? 0 }
 }
 
 // The statements in order, with their parameters. Exported so a dry run can
